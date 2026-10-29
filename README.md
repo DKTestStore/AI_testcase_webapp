@@ -1,35 +1,19 @@
 # AI TestCase Generator — Web App
 
-A FastAPI + static HTML/CSS/JS web UI built on the existing `ai_test_generator`
-code. It takes you through **Welcome → Input → Generate → Review → qTest (Upload + RTM)**,
-with **Settings** and **Logout** available at any point.
+An AI-assisted manual test case generator. It turns a **Jira story** (or pasted / uploaded requirements) into
+structured test cases with **Google Gemini** (default model `gemini-3.5-flash`), lets you review and edit them,
+exports them to **Excel**, and uploads them to **qTest Manager** with requirement traceability (RTM).
 
-```
-webapp/
-├── ai_test_generator/        # your existing code (copied; 2 small bug fixes, see NOTES.md)
-│   ├── .env.example          # copy to .env (or fill keys from the Settings screen)
-│   ├── ai_helpers/  prompt/  qtest_utils/  worker/  test_runner/  input/
-│   └── reports/              # outputs: Excel per run in reports/runs/<run_id>/, usage + payload JSON
-├── backend/
-│   ├── app.py                # FastAPI routes + page serving
-│   ├── services.py           # thin wrappers around the existing functions (return errors to the UI)
-│   ├── parsing.py            # markdown ⇄ 6-column table, AC splitting, TC→AC mapping for RTM
-│   ├── settings_store.py     # read/write .env, masks secrets
-│   ├── session_store.py      # per-browser "current run" state (memory + backend/sessions/*.json)
-│   └── config.py             # paths, .env loading, sys.path
-├── frontend/
-│   ├── welcome.html          # 3D welcome page (0e_welcome_3d_bots design) – Welcome button starts a session
-│   ├── app.html              # app shell: sidebar with step progress, top bar, modals
-│   ├── css/app.css           # theme reused from the mockups
-│   └── js/app.js, js/welcome.js
-├── requirements.txt
-├── README.md
-└── NOTES.md                  # assumptions, untested areas, known gaps
-```
+- **Backend:** FastAPI (`backend/`), wrapping the existing `ai_test_generator` package (Jira, Gemini/Codex/Ollama, qTest helpers).
+- **Frontend:** static HTML/CSS/vanilla JS (`frontend/`) served by FastAPI, with no build step.
+- **Integrations:** Gemini (generation + optional AI reviewer), Jira (story fetch), qTest (module, test cases, requirement links).
 
-## Setup & run (Windows / macOS / Linux)
+---
 
-Run these from the `webapp/` folder (the one containing `backend/` and `frontend/`).
+## 1. Setup
+
+**Requirements:** Python **3.10+** (the existing `jira_worker.py` uses `str | None` syntax), pip. Dependencies are in `requirements.txt`
+(FastAPI, uvicorn, python-dotenv, requests, google-genai, openai, ollama, jira, fastmcp, pandas, openpyxl).
 
 ```bash
 python -m venv .venv
@@ -37,44 +21,143 @@ python -m venv .venv
 # macOS/Linux:  source .venv/bin/activate
 pip install -r requirements.txt
 
-# configuration: copy the example env file (or fill values later from Settings)
+# configuration (or fill the values later on the Settings page)
 # Windows:      copy ai_test_generator\.env.example ai_test_generator\.env
 # macOS/Linux:  cp ai_test_generator/.env.example ai_test_generator/.env
 
-uvicorn backend.app:app --reload
+# run from the repo root (the folder containing backend/ and frontend/)
+python -m uvicorn backend.app:app --port 8000        # add --reload while developing
 ```
 
-Then open **http://localhost:8000** and click **Welcome →**.
+Open **http://localhost:8000** and click **Welcome →**. No username or password is needed; the button starts a browser session.
 
-> Python 3.10+ is required (the existing `jira_worker.py` uses `str | None` type syntax).
+### Configuration keys (`ai_test_generator/.env`)
+`.env` holds secrets. **Never commit it** (it is in `.gitignore`); only `.env.example` (empty values) is tracked.
 
-### Minimum configuration
 | Feature | Keys |
 |---|---|
-| Generate with Gemini | `GEMINI_API_KEY`, `GEMINI_MODEL` (e.g. `gemini-2.5-pro`) |
-| Generate with Codex | `OPENAI_API_KEY` (model is `MODEL` in `test_generator_codex.py`) |
-| Generate with Ollama | running `ollama serve`, `OLLAMA_MODEL` (default `gemma3:4b`), optional `OLLAMA_HOST` |
-| Jira fetch | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
-| qTest upload | `QTEST_BASE_URL` (e.g. `https://<site>.qtestnet.com/api/v3/projects`), `QTEST_TOKEN` (e.g. `Bearer xxxx`), `QTEST_PROJECT_ID`; optional `QTEST_REQUIREMENT_ID`, `QTEST_PARENT_MODULE_ID` |
+| Generate with Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` (e.g. `gemini-3.5-flash`) |
+| Generate with Codex (optional) | `OPENAI_API_KEY` |
+| Generate with Ollama (optional) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (default `http://localhost:11434`) |
+| Jira story input | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
+| qTest upload | `QTEST_BASE_URL` (`https://<site>.qtestnet.com/api/v3/projects`), `QTEST_TOKEN` (`Bearer …`), `QTEST_PROJECT_ID`; optional `QTEST_REQUIREMENT_ID`, `QTEST_PARENT_MODULE_ID` |
+| Original CLI only | `ENABLE_JIRA_REQURIMENT`, `STORY_ID` |
 
-All of these can be entered on the **Settings** screen; they are written to
-`ai_test_generator/.env` on the server and secrets are only ever shown masked.
+All keys can be edited on the **Settings** page. They are written to `.env` on the server, and secrets are only ever shown masked.
 
-## Flow
-1. **Welcome** – no username/password; the button creates a session cookie.
-2. **Input** – *Jira Story*: enter a Story ID → **Fetch** (`pull_jira_story` + `analyze_story`); the extracted
-   Scenarios / Acceptance Criteria are shown and editable. *Local text*: paste text or drop a `.txt` file → **Use this description**.
-3. **Generate** – pick Gemini / Codex / Ollama, choose **Default prompt** (read-only `test_cases_generator_prompt.md`)
-   or **Custom prompt** (load from file, save as template, reset to default), optionally **Also run AI Reviewer**.
-   Token usage card reads `reports/gemini_usage.json`.
-4. **Review** – editable 6-column table (Test case Id, Name, Description, Precondition, Step Description, Expected Result);
-   add/delete steps and test cases; **Run AI Reviewer** (apply or dismiss its version); **Save & Download Excel** (`save_to_excel`).
-5. **qTest** – *Upload*: project / requirement / module (new or existing), **Preview payload**, **Confirm Upload**
-   (`create_module_for_test_design` → `qtest_create_testcase` → `collect_testcase_ids` → link to requirement), results summary.
-   *RTM*: Story → AC → TC → qTest IDs, upload + link status, search/filter, AC mapping dropdowns, **Export RTM (Excel)**, **Retry failed**.
-6. **Logout** – confirm dialog that warns about unsaved edits / not-uploaded test cases, then returns to Welcome.
+---
 
-The **Next** button and sidebar steps unlock only when the previous step has data. **＋ New run** clears the current run.
+## 2. Workflow
+
+The sidebar shows the four steps with progress. A step unlocks once the previous one has data. Each step page shows
+the current **Ticket / Story ID** as a pill next to the title (for example `🎫 Ticket CX-196`). The pill is hidden when there is no ticket.
+The sidebar footer shows `Run RUN-YYYYMMDD-NNN` and `Story <id>`.
+
+1. **Input:** three options:
+   - *Jira Story*: enter a Story ID → **Fetch**. The scenarios and acceptance criteria are extracted and can be edited.
+   - *Local text*: paste text or drop a `.txt` file.
+   - *⬆ Upload test cases (Excel)*: import existing test cases and go straight to Review. **Generate is skipped**
+     (the sidebar marks it "skipped"), and you can continue to qTest without generating anything.
+2. **Generate:** choose a model (Gemini / Codex / Ollama), then the **Default prompt** (`test_cases_generator_prompt.md`) or a **Custom prompt**.
+   You can also run the **AI Reviewer**. A token usage card is shown.
+3. **Review:** edit and curate the test cases (see below), then **Save & Download Excel**.
+4. **qTest Upload:**
+   - *Upload*: choose project / requirement / module (new or existing), then **Preview payload** (paginated JSON, nothing is sent)
+     and **Confirm Upload**. A results summary is shown.
+   - *RTM*: Story → AC → TC → qTest IDs, search/filter, AC mapping, **Export RTM (Excel)** and **Retry failed**.
+
+**＋ New run** starts a fresh run. The previous run stays in Run history. **Log out** clears only the session.
+
+### Review UI
+- Every field can be edited inline: name, description, precondition, step descriptions and expected results.
+- **Priority** (High / Medium / Low) and **AC tags** per test case, with filters by status, priority and AC.
+- **Reorder** test cases and steps (drag or ▲▼). IDs and step numbers are re-sequenced automatically.
+- **Review status** pill (Not reviewed / Reviewed / Needs changes), a reviewed x/n progress bar, and bulk actions.
+- **Pagination** (25 / 50 / 100 per page), "Jump to TC…", search, expand/collapse all, and internal scrolling for long lists.
+- Unsaved-edit indicator with a leave/navigation guard. **Run AI Reviewer** lets you apply or dismiss the reviewed version.
+
+### Excel download and upload
+- **Excel export** contains the 6 qTest columns: *Test Case ID, Test Case Name, Test Case Description, Precondition,
+  Step Description, Expected Result*. It adds **AC Tags, Priority, Review Status** and an **AC List** sheet.
+  The extra columns are for review only and are **never sent to qTest** (the payload builder reads only the 6 mapped columns).
+- **Upload Excel** is available on the Review page (toolbar button) and on the Input page. Rules:
+  - `.xlsx` only, max 5 MB, first sheet is read. Header names are matched flexibly.
+  - Required columns: name, step and expected result. A missing column is reported clearly.
+  - Validation preview: counts, warnings (for example an invalid priority or status falls back to the default),
+    and highlighted cells. Import is disabled while there are errors.
+  - Modes: **Replace all**, **Append** (renumbered), **Merge by TC ID** (update matching IDs, add new ones).
+  - **Download template** gives a sample workbook with an Instructions sheet (`GET /api/excel/template`).
+
+---
+
+## 3. Run history
+
+- Each browser keeps a rolling list of its most recent runs. The browser is identified by a long-lived `atg_history` cookie,
+  separate from the `atg_session` session cookie, so **Logout and New run never clear history**.
+- Readable run IDs: **`RUN-YYYYMMDD-NNN`**, a daily sequence in IST (e.g. `RUN-20261029-003`). The Story ID is shown in its own column.
+- Columns: Run ID + date/time (IST), Story + title, Source (Jira / Local text / Excel upload), Test cases, Reviewed x/n,
+  Status (Draft / Reviewed / Uploaded to qTest). Actions: **Open** (resume into the session), **Download Excel**, **Delete** (with a confirm).
+- **Rolling FIFO:** when a new run is saved beyond the limit, **only the oldest run is removed**. History is never cleared all at once.
+  The oldest row is tagged "will be replaced next" when the list is full.
+- **Configurable limit:** set it in **Settings → Run history limit** (whole number **1–100**, default **5**). Lowering it removes only
+  the oldest runs beyond the new limit; raising it keeps everything. The banner ("Keeps your last N runs…") and the "x of N runs" footer follow it.
+- Shown in the sidebar (**Run history** with a count badge) and as a **Recent runs** panel below the Setup checklist.
+- A run is recorded when it has test cases and something is saved (generate, review save, AI review accept, Excel import/save,
+  qTest upload) or when you switch runs. The list reads only a small index; full run details load lazily on Open or Excel.
+- **Storage:** `backend/history/<history-id>/history.json` (index) and `backend/history/<history-id>/runs/<run_id>.json` (snapshots).
+  Excel files are written to `ai_test_generator/reports/runs/<run_id>/`.
+
+## 4. Setup checklist, Settings, logs
+
+- **Setup checklist** (first screen after Welcome) has a progress ring (x/5) and five cards: Gemini API key, Gemini model (required),
+  Jira, qTest (optional), and **Default prompt** (required). The Default prompt card is set when `test_cases_generator_prompt.md` exists and is not empty.
+  Its **View / Edit in Settings →** link opens the **Default prompt editor** on the Settings page, which saves to `ai_test_generator/prompt/test_cases_generator_prompt.md` and rejects empty text.
+- **Settings:** `.env` keys (secrets masked), the Default prompt editor, and the **Run history limit**.
+- **App settings file:** non-secret app settings (such as `history_limit`) are stored in `backend/app_settings.json`, not in `.env`.
+- **Logs:** `backend/logs/app.log`, a rotating log (**5 MB × 3** backups) covering session start/logout, history open/delete,
+  limit changes, prompt updates and unexpected errors.
+
+Runtime data is git-ignored: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/sessions/`, `backend/history/`,
+`backend/logs/`, `backend/app_settings.json`.
+
+---
+
+## 5. Project structure
+
+```
+.
+├── ai_test_generator/          # existing package (Jira worker, AI helpers, qTest utils, CLI pipeline)
+│   ├── .env.example            # copy to .env (never commit .env)
+│   ├── prompt/                 # test_cases_generator_prompt.md, test_cases_reviewer_prompt.md
+│   ├── ai_helpers/  qtest_utils/  worker/  test_runner/  input/
+│   └── reports/                # outputs: runs/<run_id>/*.xlsx, gemini_usage.json, payload JSON
+├── backend/
+│   ├── app.py                  # FastAPI routes, page serving, rotating log setup
+│   ├── services.py             # wrappers around the existing functions (errors returned to the UI)
+│   ├── parsing.py              # markdown ⇄ test cases, AC splitting / TC→AC mapping
+│   ├── excel_io.py             # review columns + AC List sheet, template, Excel import (validate / modes)
+│   ├── history_store.py        # rolling run history (index + snapshots, FIFO)
+│   ├── session_store.py        # per-browser current run (memory + backend/sessions/*.json)
+│   ├── settings_store.py       # .env settings (masked) + app_settings.json (history limit)
+│   └── config.py               # paths, .env loading, data folders
+├── frontend/
+│   ├── welcome.html  app.html  css/app.css
+│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js
+├── requirements.txt
+├── README.md
+└── NOTES.md                    # assumptions and known gaps
+```
+
+## 6. Testing notes
+
+- End-to-end checks were run with Playwright (Chromium / Google Chrome) against `http://127.0.0.1:8000`. They cover:
+  - Review editing, pagination and qTest payload preview.
+  - Excel export columns and upload in each mode, plus error cases.
+  - Run history: FIFO, logout/re-login, Open, Delete, New run.
+  - Ticket ID pill and history limit changes, including invalid values.
+- Test data can be created **without Gemini calls** through Excel import (`POST /api/excel/import`) or by saving test cases
+  (`PUT /api/review/test_cases`) after a Local text input. Use **Preview payload** to check qTest output without uploading.
+- Useful endpoints: `GET /api/health`, `GET /api/setup/status`, `GET /api/history`, `GET|PUT /api/settings/history_limit`.
 
 ## Original CLI pipeline
-`python -m ai_test_generator.test_runner.main_pipeline` still works as before (run from `webapp/`).
+`python -m ai_test_generator.test_runner.main_pipeline` still works as before (run from the repo root).
