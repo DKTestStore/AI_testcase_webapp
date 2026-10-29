@@ -218,7 +218,23 @@ def generate(model: str, feature_text: str, prompt: str) -> Dict[str, Any]:
         if today.get("requests_used", 0) >= g.DAILY_REQUEST_LIMIT:
             raise ServiceError(f"Gemini daily request limit ({g.DAILY_REQUEST_LIMIT}) reached.", 429)
         before = _today_tokens()
-        text = g.generate_test_cases(feature_text, prompt)
+        # Bug 03: capture usage_metadata from the response the helper receives
+        captured: Dict[str, Any] = {}
+        models = g.client.models
+        orig = models.generate_content
+
+        def _capture(*a, **k):
+            r = orig(*a, **k)
+            captured["um"] = getattr(r, "usage_metadata", None)
+            return r
+        models.generate_content = _capture
+        try:
+            text = g.generate_test_cases(feature_text, prompt)
+        finally:
+            try:
+                del models.generate_content
+            except AttributeError:
+                models.generate_content = orig
         if not text:
             # The original function swallows exceptions; repeat the same call here to surface the real error.
             model_id = (env("GEMINI_MODEL") or "").strip().strip("\"'")
@@ -227,14 +243,18 @@ def generate(model: str, feature_text: str, prompt: str) -> Dict[str, Any]:
                     model=model_id, contents=feature_text,
                     config=g.types.GenerateContentConfig(system_instruction=prompt, temperature=0.2))
                 text = getattr(resp, "text", None)
+                captured["um"] = getattr(resp, "usage_metadata", None)
             except Exception as ex:
                 print(f"Gemini API error: {type(ex).__name__}: {ex}")
                 raise ServiceError(f"Gemini API error (model '{model_id}'): {type(ex).__name__}: {ex}", 502)
             if not text:
                 fb = getattr(resp, "prompt_feedback", None)
                 raise ServiceError(f"Gemini returned an empty response (possibly blocked). Feedback: {fb}", 502)
-        usage["total_tokens"] = max(_today_tokens() - before, 0)
-        usage["model_name"] = env("GEMINI_MODEL")
+        um = captured.get("um")
+        usage["input_tokens"] = getattr(um, "prompt_token_count", None) or 0
+        usage["output_tokens"] = getattr(um, "candidates_token_count", None) or 0
+        usage["total_tokens"] = (getattr(um, "total_token_count", None) or 0) or max(_today_tokens() - before, 0)
+        usage["model_name"] = (env("GEMINI_MODEL") or "").strip().strip("\"'")
     elif model == "codex":
         c = _codex_module()
         text = c.generate_test_cases(feature_text, prompt)

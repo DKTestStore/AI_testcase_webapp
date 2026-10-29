@@ -55,7 +55,7 @@ def _steps(run) -> Dict[str, bool]:
     return {
         "input": bool(run.get("feature_text")),
         "generate": bool(run.get("test_cases")),
-        "review": bool(run.get("excel_path")) and not run.get("dirty"),
+        "review": bool(run.get("test_cases")),  # Bug 01: Excel download no longer required
         "qtest": bool(run.get("upload")),
     }
 
@@ -100,7 +100,7 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 def start_session(request: Request):
     sess = session_store.get(request.cookies.get(COOKIE))
     sid = sess["sid"] if sess else session_store.create()
-    resp = JSONResponse({"ok": True, "redirect": "/app"})
+    resp = JSONResponse({"ok": True, "redirect": "/app#setup"})  # Enh 02: setup checklist first
     resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7)
     return resp
 
@@ -193,6 +193,9 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         _save(sess)
         raise ServiceError("The model responded, but no test cases could be parsed from its output "
                            "(expected the 'Test Case ID: … | Step Description | Expected Result |' template).", 422)
+    run["ac_list"] = _ac_list(run)
+    parsing.suggest_acs(cases, run["ac_list"])
+    cases = parsing.sanitize_cases(cases)
     run.update({"markdown": result["markdown"], "test_cases": cases, "dirty": True, "excel_path": "",
                 "review": None, "upload": None, "rtm": [], "last_usage": result["usage"]})
     review_info = None
@@ -249,7 +252,9 @@ def accept_review(sess=Depends(current)):
     rv = run.get("review") or {}
     if not rv.get("test_cases"):
         raise ServiceError("No reviewed test cases to apply.")
-    run.update({"test_cases": rv["test_cases"], "dirty": True, "review": None})
+    rv_cases = rv["test_cases"]
+    parsing.suggest_acs(rv_cases, run.get("ac_list") or _ac_list(run))
+    run.update({"test_cases": parsing.sanitize_cases(rv_cases), "dirty": True, "review": None})
     _save(sess)
     return {"ok": True, "run": _public_run(run)}
 
@@ -304,10 +309,14 @@ def qtest_preview(data: Dict[str, Any] = Body(default={}), sess=Depends(current)
     return {"ok": True, "count": len(payloads), "payloads": payloads}
 
 
-def _build_rtm(run) -> List[Dict[str, Any]]:
+def _ac_list(run) -> List[Dict[str, str]]:
     jira = run.get("jira") or {}
     ac_source = jira.get("acceptance_criteria") or jira.get("scenarios") or run.get("feature_text", "")
-    acs = parsing.split_acceptance_criteria(ac_source)
+    return parsing.split_acceptance_criteria(ac_source)
+
+
+def _build_rtm(run) -> List[Dict[str, Any]]:
+    acs = _ac_list(run)
     run["ac_list"] = acs
     mapping = parsing.map_cases_to_acs(run["test_cases"], acs)
     titles = {a["id"]: a["title"] for a in acs}
@@ -431,6 +440,25 @@ def delete_setting(key: str, sess=Depends(current)):
     if not settings_store.clear_setting(key):
         raise ServiceError("Unknown setting.")
     return {"ok": True, "fields": settings_store.get_settings()}
+
+
+@app.get("/api/setup/status")
+def setup_status(sess=Depends(current)):
+    """Enh 02 - what is configured (booleans only, no secret values)."""
+    v = lambda k: bool((env(k) or "").strip().strip("\"'"))
+    items = [
+        {"key": "gemini_key", "label": "Gemini API key", "required": True, "ok": v("GEMINI_API_KEY"),
+         "hint": "Required to generate test cases"},
+        {"key": "gemini_model", "label": "Gemini model", "required": True, "ok": v("GEMINI_MODEL"),
+         "hint": (env("GEMINI_MODEL") or "").strip().strip("\"'") or "Required to generate test cases"},
+        {"key": "jira", "label": "Jira", "required": False,
+         "ok": v("JIRA_URL") and v("JIRA_EMAIL") and v("JIRA_API_TOKEN"),
+         "hint": "Needed only for Jira story input (Local text works without it)"},
+        {"key": "qtest", "label": "qTest", "required": False,
+         "ok": v("QTEST_BASE_URL") and v("QTEST_TOKEN") and v("QTEST_PROJECT_ID"),
+         "hint": "Needed only for qTest Upload (Excel download works without it)"},
+    ]
+    return {"ok": True, "items": items}
 
 
 @app.get("/api/health")

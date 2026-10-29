@@ -56,6 +56,10 @@ def test_cases_to_markdown(cases: List[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+PRIORITIES = ("High", "Medium", "Low")
+STATUSES = ("not", "reviewed", "changes")
+
+
 def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
     out = []
     for tc in cases or []:
@@ -69,6 +73,10 @@ def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
             "steps": [{"description": str(s.get("description", "")).strip(),
                        "expected": str(s.get("expected", "")).strip()}
                       for s in (tc.get("steps") or []) if isinstance(s, dict)],
+            # Review-only metadata (display only, never written to Excel / qTest payload)
+            "priority": tc.get("priority") if tc.get("priority") in PRIORITIES else "Medium",
+            "acs": [str(a)[:20] for a in (tc.get("acs") or []) if str(a).strip()][:30],
+            "status": tc.get("status") if tc.get("status") in STATUSES else "not",
         })
     return out
 
@@ -127,3 +135,25 @@ def map_cases_to_acs(cases: List[Dict[str, Any]], acs: List[Dict[str, str]]) -> 
                 best, score = a["id"], sc
         mapping[tc["id"]] = best
     return mapping
+
+
+def suggest_acs(cases: List[Dict[str, Any]], acs: List[Dict[str, str]]) -> None:
+    """Fill tc['acs'] (display-only) with explicit AC references found in the test case text,
+    falling back to the best keyword match. Existing non-empty mappings are kept."""
+    if not acs:
+        return
+    ids = {a["id"] for a in acs}
+    best = map_cases_to_acs(cases, acs)
+    for tc in cases:
+        if tc.get("acs"):
+            continue
+        blob = " ".join([tc.get("name", ""), tc.get("description", ""), tc.get("precondition", "")]
+                        + [s.get("description", "") for s in tc.get("steps", [])])
+        found = []
+        for m in re.finditer(r"(?i)\b(?:AC|acceptance\s+criteria)\s*[-#]?\s*0*(\d+)", blob):
+            a = f"AC-{int(m.group(1)):02d}"
+            if a in ids and a not in found:
+                found.append(a)
+        tc["acs"] = found or ([best[tc["id"]]] if best.get(tc["id"]) else [])
+        tc.setdefault("priority", "Medium")
+        tc.setdefault("status", "not")

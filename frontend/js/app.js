@@ -75,7 +75,26 @@ function bindNext(nextView) { const b = $("#nextBtn"); if (b) b.onclick = () => 
 function render() {
   renderNav();
   const v = $("#view");
-  ({ input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  ({ setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+}
+
+
+// ------------------------------------------------------------------ 0. SETUP CHECKLIST (Enh 02)
+async function viewSetup(v) {
+  v.innerHTML = `<h1>Setup checklist</h1><div class="sub">Check your configuration before starting a run.</div><div id="setupBody" class="sub">Loading…</div>`;
+  let j; try { j = await api("/api/setup/status"); } catch (e) { $("#setupBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  const it = j.items; const done = it.filter((x) => x.ok).length; const reqOk = it.filter((x) => x.required).every((x) => x.ok);
+  const icon = { gemini_key: "🔑", gemini_model: "🤖", jira: "🧩", qtest: "🧪" };
+  const pct = (done / it.length) * 100;
+  $("#setupBody").outerHTML = `<div class="card setup-top"><div class="ring" style="background:conic-gradient(#4361ee ${pct}%,#e5e7eb 0)"><div><b>${done}/${it.length}</b><span>configured</span></div></div>
+      <div><h3 style="margin:0 0 4px">Let's get you set up</h3><div class="sub" style="margin:0">Required items must be configured to generate. Optional items unlock Jira input and qTest upload.</div></div></div>
+    <div class="setup-grid">${it.map((x) => `<div class="card setup-item ${x.ok ? "ok" : "no"}" data-key="${x.key}"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:22px">${icon[x.key] || "⚙"}</span><span class="tag ${x.required ? "req" : "opt"}">${x.required ? "Required" : "Optional"}</span></div>
+      <div class="si-name">${esc(x.label)}</div><div class="sub" style="margin:2px 0 8px">${esc(x.hint)}</div>
+      <div class="si-st">${x.ok ? "✔ Set" : "⚠ Not set"}</div><a href="#settings" class="si-link">Open Settings →</a></div>`).join("")}</div>
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <span>${reqOk ? "✔ All required items are configured — you can start now." : '<b style="color:#a36b00">⚠ Configure the required Gemini settings before generating.</b>'} <span class="sub" style="margin:0">(Jira and qTest are optional: use Local text input and Save &amp; Download Excel without them.)</span></span>
+      <button class="btn" id="startRun">Start run ▸</button></div>`;
+  $("#startRun").onclick = () => go("input");
 }
 
 // ------------------------------------------------------------------ 1. INPUT
@@ -116,6 +135,7 @@ function viewInput(v) {
   v.innerHTML = `<h1>Input Source</h1><div class="sub">${S.inputMode === "jira" ? "Fetch a Jira story and extract its acceptance criteria" : "Paste or upload a feature description"}</div>${body}${nextBar("input", "generate", "Continue to Generate")}`;
   $$(".seg button", v).forEach((b) => (b.onclick = () => { S.inputMode = b.dataset.m; render(); }));
   bindNext("generate");
+  const nb = $("#nextBtn"); if (nb && S.inputMode === "local") { nb.disabled = false; nb.onclick = () => guarded(nb, async () => { await saveLocalIfChanged(); if (!stepDone("input")) throw new Error("Enter a feature description first."); go("generate"); }); }
   if (S.inputMode === "jira") {
     const f = () => guarded($("#fetchBtn"), async () => { await api("/api/input/jira", { method: "POST", body: { story_id: $("#storyId").value } }); toast("Story fetched"); render(); });
     $("#fetchBtn").onclick = f; $("#storyId").onkeydown = (e) => e.key === "Enter" && f();
@@ -136,6 +156,7 @@ function viewInput(v) {
         <div style="margin-top:8px">${S.run.source === "local" && S.run.feature_text === ta.value.trim() ? '<span class="pill">Ready ✓</span>' : '<span class="pill y">Click “Use this description”</span>'}</div>` : '<span class="muted">Nothing entered yet.</span>';
     };
     ta.oninput = upd; upd();
+    ta.onchange = () => { if (ta.value.trim()) saveLocalIfChanged().then(() => { upd(); renderNav(); bindNextState(); }).catch((e) => toast(e.message, true)); };
     $("#clearBtn").onclick = () => { ta.value = ""; S.localFile = null; $("#fileInfo").innerHTML = ""; upd(); };
     $("#useBtn").onclick = () => guarded($("#useBtn"), async () => {
       await api("/api/input/local", { method: "POST", body: { text: ta.value, filename: S.localFile ? S.localFile.name : "", story_id: $("#localStory").value } });
@@ -155,6 +176,15 @@ function viewInput(v) {
       rd.readAsText(file);
     }
   }
+}
+async function saveLocalIfChanged() {
+  // Bug: editing the input after a run already has test cases was ignored unless "Use this description" was clicked.
+  const ta = $("#localText"); if (!ta || !ta.value.trim()) return false;
+  const story = $("#localStory") ? $("#localStory").value : "";
+  if (S.run.source === "local" && S.run.feature_text === ta.value.trim() && (S.run.story_id || "") === story.trim()) return false;
+  await api("/api/input/local", { method: "POST", body: { text: ta.value, filename: S.localFile ? S.localFile.name : "", story_id: story } });
+  toast((S.run.test_cases || []).length ? "Input updated — click Generate to regenerate test cases" : "Description saved for generation");
+  return true;
 }
 function fileInfoHtml(f) { return `<div style="background:#fff;border:1px solid #e3e7f0;border-radius:8px;padding:8px;text-align:left">✅ <b>${esc(f.name)}</b><div class="sub" style="margin:2px 0 0">${(f.size / 1024).toFixed(1)} KB · ${f.lines} lines · loaded</div></div>`; }
 function bindNextState() { const b = $("#nextBtn"); if (b) b.disabled = !stepDone(S.view); }
@@ -179,6 +209,7 @@ function viewGenerate(v) {
     <div id="genStatus"></div>
   </div></div>
   <div style="flex:.8"><div class="card" id="tokenCard"><h3>Token Usage</h3><div class="sub">Loading…</div></div>
+    ${(r.test_cases || []).length ? `<div class="note" style="margin:0 0 14px">ℹ This run already has ${(r.test_cases || []).length} test cases. Edit the Input and click Generate again to regenerate them.</div>` : ""}
     <div class="card"><h3>Run summary</h3><div class="sub" style="margin:0;line-height:1.8">Prompt: <b style="color:#1e2433">${lbl} prompt</b><br>Model: ${esc(r.model)}<br>AI Reviewer: ${r.run_reviewer ? '<b style="color:#12a150">On</b>' : "Off"}<br>Test cases: <b style="color:#1e2433">${(r.test_cases || []).length}</b></div></div></div></div>
   ${nextBar("generate", "review", "Continue to Review")}`;
   bindNext("review");
@@ -187,14 +218,19 @@ function viewGenerate(v) {
   $("#runRev").onchange = (e) => (S.run.run_reviewer = e.target.checked);
   renderPromptArea(custom);
   loadTokens();
-  $("#genBtn").onclick = () => guarded($("#genBtn"), async () => {
+  $("#genBtn").onclick = () => {
+    const n = (S.run.test_cases || []).length;
+    if (n && (S.localDirty || S.run.dirty) && !confirm(`Regenerate? This replaces the current ${n} test cases (including unsaved review edits).`)) return;
+    genRun();
+  };
+  const genRun = () => guarded($("#genBtn"), async () => {
     saveCustomDraft();
     const st = $("#genStatus"); const t0 = Date.now();
     st.innerHTML = `<div style="margin-top:12px"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0" id="elapsed">Generating… 0s</div></div>`;
     const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
     try {
       const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked } });
-      S.cases = JSON.parse(JSON.stringify(S.run.test_cases)); S.localDirty = false;
+      S.localDirty = false; S.cases = []; if (typeof RV !== "undefined") { RV.open.clear(); RV.sel.clear(); RV.page = 0; }
       let msg = `<div class="note">✅ Generated <b>${j.count}</b> test cases in ${Math.round((Date.now() - t0) / 1000)}s.${j.template_appended ? " (Required output template was appended to your custom prompt.)" : ""}</div>`;
       if (j.review) msg += j.review.error ? `<div class="warn">AI Reviewer failed: ${esc(j.review.error)}</div>` : `<div class="note">🤖 AI Reviewer produced ${j.review.test_cases.length} test cases — compare and apply them on the Review step.</div>`;
       viewGenerate(v); $("#genStatus").innerHTML = msg;
@@ -248,58 +284,7 @@ async function loadTokens() {
 }
 
 // ------------------------------------------------------------------ 3. REVIEW
-function viewReview(v) {
-  const r = S.run;
-  if (!S.localDirty) S.cases = JSON.parse(JSON.stringify(r.test_cases || []));
-  const rv = r.review;
-  let rows = "";
-  S.cases.forEach((tc, ti) => {
-    const steps = tc.steps.length ? tc.steps : [{ description: "", expected: "" }];
-    steps.forEach((st, si) => {
-      const first = si === 0;
-      const ce = (f, val) => `<div contenteditable="true" data-t="${ti}" data-f="${f}">${esc(val)}</div>`;
-      const cs = (f, val) => `<div contenteditable="true" data-t="${ti}" data-s="${si}" data-f="${f}">${esc(val)}</div>`;
-      rows += `<tr class="${first ? "tcstart" : ""}">
-        <td style="width:90px">${first ? ce("id", tc.id) : ""}</td><td style="width:15%">${first ? ce("name", tc.name) : ""}</td>
-        <td style="width:18%">${first ? ce("description", tc.description) : ""}</td><td style="width:15%">${first ? ce("precondition", tc.precondition) : ""}</td>
-        <td>${cs("description", st.description)}</td><td>${cs("expected", st.expected)}</td>
-        <td style="width:62px;white-space:nowrap"><button class="icon-btn" title="Add step below" data-addstep="${ti}:${si}">＋</button><button class="icon-btn" title="Delete step" data-delstep="${ti}:${si}">✕</button>
-        ${first ? `<br><button class="icon-btn" title="Delete whole test case" data-deltc="${ti}" style="font-size:11px">🗑 TC</button>` : ""}</td></tr>`;
-    });
-  });
-  v.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px"><div><h1>Review Test Cases</h1>
-    <div class="sub">${S.cases.length} test cases · ${S.cases.reduce((a, t) => a + t.steps.length, 0)} steps · click any cell to edit${r.story_id ? " · " + esc(r.story_id) : ""}</div></div>
-    <div><button class="btn g" id="addTc">＋ Test case</button> <button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button> <button class="btn g" id="aiRev">🤖 Run AI Reviewer</button> <button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button></div></div>
-    ${S.localDirty ? '<div class="warn" style="margin:0 0 12px">You have unsaved edits in this table.</div>' : r.dirty ? '<div class="note" style="margin:0 0 12px">Changes are saved, but the Excel file has not been regenerated yet. Use “Save &amp; Download Excel” before uploading to qTest.</div>' : r.excel_name ? `<div class="note" style="margin:0 0 12px">✅ Excel saved: <b>${esc(r.excel_name)}</b></div>` : ""}
-    <div id="reviewPanel">${reviewPanel(rv)}</div>
-    <div class="card" style="padding:8px"><div class="tablewrap"><table><thead><tr><th>Test case Id</th><th>Test Case Name</th><th>Test Case Description</th><th>Precondition</th><th>Step Description</th><th>Expected Result</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="muted">No test cases yet.</td></tr>'}</tbody></table></div></div>
-    ${nextBar("review", "qtest", "Continue to qTest Upload")}`;
-  bindNext("qtest");
-  const markDirty = () => { if (!S.localDirty) { S.localDirty = true; $("#saveCases").disabled = false; renderNav(); } };
-  $$("[contenteditable]", v).forEach((el) => (el.oninput = () => {
-    const tc = S.cases[+el.dataset.t]; const val = el.innerText.replace(/\n+/g, " ").trim();
-    if (el.dataset.s !== undefined) { if (!tc.steps.length) tc.steps.push({ description: "", expected: "" }); tc.steps[+el.dataset.s][el.dataset.f] = val; } else tc[el.dataset.f] = val;
-    markDirty();
-  }));
-  $$("[data-addstep]", v).forEach((b) => (b.onclick = () => { const [t, s] = b.dataset.addstep.split(":").map(Number); S.cases[t].steps.splice(s + 1, 0, { description: "", expected: "" }); S.localDirty = true; viewReview(v); renderNav(); }));
-  $$("[data-delstep]", v).forEach((b) => (b.onclick = () => { const [t, s] = b.dataset.delstep.split(":").map(Number); S.cases[t].steps.splice(s, 1); S.localDirty = true; viewReview(v); renderNav(); }));
-  $$("[data-deltc]", v).forEach((b) => (b.onclick = () => { const t = +b.dataset.deltc; if (!confirm(`Delete ${S.cases[t].id || "this test case"}?`)) return; S.cases.splice(t, 1); S.localDirty = true; viewReview(v); renderNav(); }));
-  $("#addTc").onclick = () => { const n = S.cases.length + 1; S.cases.push({ id: `TC${String(n).padStart(3, "0")}`, name: "New test case", description: "", precondition: "", steps: [{ description: "", expected: "" }] }); S.localDirty = true; viewReview(v); renderNav(); };
-  $("#saveCases").onclick = () => guarded($("#saveCases"), async () => { await saveCases(); toast("Changes saved"); viewReview(v); renderNav(); });
-  $("#aiRev").onclick = () => guarded($("#aiRev"), async () => {
-    if (S.localDirty) await saveCases();
-    $("#reviewPanel").innerHTML = `<div class="card"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0">AI Reviewer is checking the test cases…</div></div>`;
-    try { await api("/api/review/ai", { method: "POST" }); } catch (e) { $("#reviewPanel").innerHTML = `<div class="error">${esc(e.message)}</div>`; throw e; }
-    viewReview(v);
-  });
-  $("#dlExcel").onclick = () => guarded($("#dlExcel"), async () => {
-    if (S.localDirty) await saveCases();
-    await api("/api/review/save_excel", { method: "POST" });
-    download("/api/review/excel"); toast("Excel saved"); viewReview(v); renderNav();
-  });
-  bindReviewPanel(v);
-}
-async function saveCases() { await api("/api/review/test_cases", { method: "PUT", body: { test_cases: S.cases } }); S.localDirty = false; S.cases = JSON.parse(JSON.stringify(S.run.test_cases)); }
+/* viewReview / saveCases live in review.js (v6 Review UI) */
 function reviewPanel(rv) {
   if (!rv) return "";
   if (rv.error) return `<div class="warn" style="margin:0 0 12px">AI Reviewer failed: ${esc(rv.error)}</div>`;
@@ -341,11 +326,11 @@ async function qUpload(el) {
     <div id="modExisting" class="hidden"><label>Existing Module ID</label><input id="qModId" style="width:100%" placeholder="numeric module id"></div>
     <div style="margin-top:14px"><button class="btn g" id="previewBtn">👁 Preview payload</button> <button class="btn" id="uploadBtn">⬆ Confirm Upload (${(r.test_cases || []).length})</button></div></div>
     <div class="card" id="resultCard">${uploadSummary(up)}</div></div>
-    <div><div class="card"><h3>Payload Preview</h3><div id="payload">${S.payloadPreview ? payloadHtml(S.payloadPreview) : '<div class="muted">Click “Preview payload” to build the qTest JSON from the saved Excel (nothing is sent).</div>'}</div></div></div></div>
+    <div><div class="card pl-card"><h3>Payload Preview</h3><div id="payload">${S.payloadPreview ? payloadHtml(S.payloadPreview) : '<div class="muted">Click “Preview payload” to build the qTest JSON from the saved Excel (nothing is sent).</div>'}</div></div></div></div>
   ${nextBar("qtest", null, "")}`;
   let modMode = "new";
   $$("#modSeg button").forEach((b) => (b.onclick = () => { modMode = b.dataset.m; $$("#modSeg button").forEach((x) => x.classList.toggle("a", x === b)); $("#modNew").classList.toggle("hidden", modMode !== "new"); $("#modExisting").classList.toggle("hidden", modMode === "new"); }));
-  $("#previewBtn").onclick = () => guarded($("#previewBtn"), async () => { const j = await api("/api/qtest/preview", { method: "POST", body: { module_id: modMode === "existing" ? $("#qModId").value : "" } }); S.payloadPreview = j; $("#payload").innerHTML = payloadHtml(j); renderNav(); });
+  $("#previewBtn").onclick = () => guarded($("#previewBtn"), async () => { const j = await api("/api/qtest/preview", { method: "POST", body: { module_id: modMode === "existing" ? $("#qModId").value : "" } }); S.payloadPreview = j; PL.page = 0; $("#payload").innerHTML = payloadHtml(j); renderNav(); });
   $("#uploadBtn").onclick = () => {
     const body = { project_id: $("#qProject").value, requirement_id: $("#qReq").value, parent_module_id: $("#qParent").value,
       module_id: modMode === "existing" ? $("#qModId").value : "", module_name: modMode === "new" ? $("#qModName").value : "" };
@@ -362,7 +347,27 @@ async function qUpload(el) {
     });
   };
 }
-function payloadHtml(j) { const p = j.payloads || []; return `<div class="sub" style="margin:0 0 6px">${p.length} payloads · POST …/test-cases/</div><pre>${esc(JSON.stringify(p.slice(0, 3), null, 2))}${p.length > 3 ? `\n… ${p.length - 3} more` : ""}</pre>`; }
+function jsonHl(obj) {
+  return esc(JSON.stringify(obj, null, 2)).replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (m, str, colon, lit, num) => str ? (colon ? `<span class="jk">${str}</span>${colon}` : `<span class="js">${str}</span>`) : lit ? `<span class="jl">${lit}</span>` : `<span class="jn">${num}</span>`);
+}
+const PL = { page: 0, size: 25 };
+function payloadHtml(j) {
+  const p = j.payloads || []; const ids = (S.run.test_cases || []).map((t) => t.id);
+  const pages = Math.max(1, Math.ceil(p.length / PL.size)); if (PL.page >= pages) PL.page = pages - 1;
+  const start = PL.page * PL.size; const slice = p.slice(start, start + PL.size);
+  setTimeout(() => {
+    const box = $("#payload"); if (!box) return;
+    const t = $("#plToggle"); if (t) t.onclick = () => { const all = $$("#plList details"); const open = !all.every((d) => d.open); all.forEach((d) => (d.open = open)); t.textContent = open ? "Collapse all" : "Expand all"; };
+    const c = $("#plCopy"); if (c) c.onclick = async () => { const txt = JSON.stringify(p, null, 2); try { await navigator.clipboard.writeText(txt); } catch { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } toast(`Copied all ${p.length} payloads as JSON`); };
+    $$("[data-plp]", box).forEach((x) => (x.onclick = () => { PL.page = +x.dataset.plp; box.innerHTML = payloadHtml(j); $("#plList").scrollTop = 0; }));
+  }, 0);
+  const nums = []; for (let i = 0; i < pages; i++) nums.push(`<button class="btn g sm ${i === PL.page ? "pg-a" : ""}" data-plp="${i}">${i + 1}</button>`);
+  const pager = p.length ? `<div class="rv-pager pl-pager"><span class="pg-info">Showing <b>${start + 1}–${Math.min(p.length, start + PL.size)}</b> of <b>${p.length}</b></span><span style="flex:1"></span>
+    <button class="btn g sm" data-plp="${PL.page - 1}" ${PL.page ? "" : "disabled"}>‹ Prev</button>${nums.join("")}<button class="btn g sm" data-plp="${PL.page + 1}" ${PL.page < pages - 1 ? "" : "disabled"}>Next ›</button></div>` : "";
+  return `<div class="pl-head"><span class="sub" style="margin:0"><b>${p.length}</b> payloads · POST …/test-cases/</span><span><button class="btn g sm" id="plCopy" title="Copies all ${p.length} payloads">📋 Copy JSON (all)</button> <button class="btn g sm" id="plToggle">Expand all</button></span></div>
+    ${pager}<div id="plList" class="pl-list">${slice.map((x, k) => { const i = start + k; return `<details ${k === 0 ? "open" : ""}><summary><b>#${i + 1}</b> ${esc(ids[i] || "")} · ${esc(x.name)} <span class="sub" style="margin:0">(${(x.test_steps || []).length} steps)</span></summary><pre class="json">${jsonHl(x)}</pre></details>`; }).join("")}</div>`;
+}
 function uploadSummary(up) {
   if (!up) return `<h3>Results Summary</h3><div class="muted">Not uploaded yet.</div>`;
   const pct = up.total ? Math.round((up.created / up.total) * 100) : 0; const failed = up.items.filter((i) => i.status === "Failed");
@@ -462,6 +467,6 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
 (async function boot() {
   try { await api("/api/state"); } catch (e) { return; }
   const h = location.hash.slice(1);
-  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : h === "settings") ? h : "input";
+  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup")) ? h : "input";
   render();
 })();
