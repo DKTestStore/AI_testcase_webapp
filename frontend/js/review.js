@@ -52,7 +52,7 @@ function viewReview(v) {
   if (!S.localDirty) loadCasesFromRun();
   const acs = r.ac_list || [];
   v.innerHTML = `<div class="rv-head"><div><h1>Review Test Cases</h1><div class="sub" id="rvSub" style="margin:0"></div></div>
-    <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button></div></div>
+    <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn g" id="upExcel" title="Import test cases from an .xlsx file">⬆ Upload Excel</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button><a class="tpl-link" href="/api/excel/template" title="Excel template with all supported columns">Download template</a></div></div>
     <div class="warn rv-unsaved ${S.localDirty ? "" : "hidden"}" id="unsavedBar">⚠ You have unsaved edits in this table. <span class="sub" style="margin:0">Save changes (or Continue — it saves automatically).</span></div>
     ${!S.localDirty && r.excel_name && !r.dirty ? `<div class="note" style="margin:0 0 10px">✅ Excel saved: <b>${esc(r.excel_name)}</b></div>` : ""}
     <div id="reviewPanel">${reviewPanel(r.review)}</div>
@@ -90,6 +90,7 @@ function viewReview(v) {
     try { await api("/api/review/ai", { method: "POST" }); } catch (e) { $("#reviewPanel").innerHTML = `<div class="error">${esc(e.message)}</div>`; throw e; }
     viewReview(v);
   });
+  $("#upExcel").onclick = () => { if (S.localDirty && !confirm("You have unsaved edits. Uploading may replace them. Continue?")) return; openUploadModal(); };
   $("#dlExcel").onclick = () => guarded($("#dlExcel"), async () => {
     if (S.localDirty) await saveCases();
     await api("/api/review/save_excel", { method: "POST" });

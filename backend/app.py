@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 
 from . import config  # noqa: F401  (sys.path + .env)
-from . import parsing, services, session_store, settings_store
+from . import excel_io, parsing, services, session_store, settings_store
 from .config import FRONTEND_DIR, RUNS_DIR, env
 from .services import ServiceError
 
@@ -53,7 +53,7 @@ def _save(sess):
 def _steps(run) -> Dict[str, bool]:
     """Which steps have data (used to enable Next / sidebar progress)."""
     return {
-        "input": bool(run.get("feature_text")),
+        "input": bool(run.get("feature_text")) or bool(run.get("imported")),
         "generate": bool(run.get("test_cases")),
         "review": bool(run.get("test_cases")),  # Bug 01: Excel download no longer required
         "qtest": bool(run.get("upload")),
@@ -196,7 +196,7 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run["ac_list"] = _ac_list(run)
     parsing.suggest_acs(cases, run["ac_list"])
     cases = parsing.sanitize_cases(cases)
-    run.update({"markdown": result["markdown"], "test_cases": cases, "dirty": True, "excel_path": "",
+    run.update({"imported": False, "markdown": result["markdown"], "test_cases": cases, "dirty": True, "excel_path": "",
                 "review": None, "upload": None, "rtm": [], "last_usage": result["usage"]})
     review_info = None
     if run_reviewer:
@@ -267,6 +267,8 @@ def _write_excel(run) -> Path:
     name = (run.get("story_id") or "LOCAL").replace("/", "_")
     path = RUNS_DIR / run["run_id"] / f"Manual_test_cases_{name}.xlsx"
     services.save_excel(md, path)
+    # Review-only columns (AC Tags / Priority / Review Status) + 'AC List' sheet; never read by the qTest payload builder
+    excel_io.add_review_columns(path, run["test_cases"], run.get("ac_list"))
     run.update({"excel_path": str(path), "dirty": False})
     return path
 
@@ -288,6 +290,54 @@ def download_excel(sess=Depends(current)):
     p = Path(run["excel_path"])
     return FileResponse(p, filename=p.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# --------------------------------------------------------------------------- #
+# Excel upload (Review + Input) and template
+# --------------------------------------------------------------------------- #
+@app.get("/api/excel/template")
+def excel_template(sess=Depends(current)):
+    return StreamingResponse(io.BytesIO(excel_io.template_bytes()),
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": 'attachment; filename="Test_Case_Upload_Template.xlsx"'})
+
+
+def _parse_upload(data: Dict[str, Any]) -> Dict[str, Any]:
+    raw = excel_io.decode_upload(str(data.get("filename", "")), str(data.get("data", "")))
+    return excel_io.parse_workbook(raw)
+
+
+@app.post("/api/excel/import/preview")
+def excel_import_preview(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    res = _parse_upload(data)
+    res.pop("cases")
+    return {"ok": True, **res}
+
+
+@app.post("/api/excel/import")
+def excel_import(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    res = _parse_upload(data)
+    mode = str(data.get("mode", "replace"))
+    if mode not in ("replace", "append", "merge"):
+        raise ServiceError("Unknown import mode.")
+    run = _run(sess)
+    current = run.get("test_cases") or []
+    cases = parsing.sanitize_cases(excel_io.apply_mode(current, res["cases"], mode if current else "replace",
+                                                       res["needs_renumber"]))
+    _validate_cases(cases)
+    # AC list: keep the run's ACs (from the input) and add any new tags from the file
+    acs = {a["id"]: a for a in (run.get("ac_list") or [])}
+    for a in res["ac_list"]:
+        acs.setdefault(a["id"], a)
+    run.update({"test_cases": cases, "dirty": True, "excel_path": "", "review": None, "upload": None, "rtm": [],
+                "imported": True, "import_info": {"filename": str(data.get("filename", ""))[:200], "mode": mode,
+                                                  "count": len(res["cases"])},
+                "ac_list": sorted(acs.values(), key=lambda a: (len(a["id"]), a["id"]))})
+    if not run.get("story_id") and data.get("story_id"):
+        run["story_id"] = str(data.get("story_id")).strip()
+    _save(sess)
+    return {"ok": True, "count": len(cases), "imported": len(res["cases"]), "warnings": res["warnings"],
+            "run": _public_run(run)}
 
 
 # --------------------------------------------------------------------------- #

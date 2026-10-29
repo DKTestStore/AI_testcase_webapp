@@ -147,3 +147,16 @@ pre.json .jk{color:#93c5fd}pre.json .js{color:#86efac}pre.json .jn{color:#fbbf24
 .pl-pager{margin:0 0 8px;padding:6px 8px}
 .row>div:has(>.pl-card){position:sticky;top:12px;align-self:flex-start}
 .pl-card{max-height:calc(100vh - 240px);min-height:320px}
+/* ---------- Excel upload ---------- */
+.tpl-link{font-size:11.5px;color:#4361ee;text-decoration:underline;align-self:center;white-space:nowrap}
+.modal.wide{width:min(1040px,94vw);max-height:calc(100vh - 40px);overflow:auto;padding:22px}
+.up-dz{border:2px dashed #9fb0f5;background:#f7f9ff;border-radius:12px;padding:16px;text-align:center;cursor:pointer}.up-dz.over{background:#e8edff;border-color:#4361ee}
+.up-dz a{color:#4361ee;text-decoration:underline;cursor:pointer}
+.up-file{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #e3e7f0;border-radius:8px;padding:8px 12px;margin-top:10px;text-align:left}.up-file a{color:#d33!important;font-size:12px}
+.up-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:4px 0 10px}
+.up-mode{border:1.5px solid #e3e7f0;border-radius:10px;padding:10px;font-size:12px;cursor:pointer}.up-mode.a{border-color:#4361ee;background:#eef2ff}.up-mode b{display:block;font-size:13px;margin-bottom:2px}
+.up-sum{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 8px}.up-sum .pill{font-size:12px}
+.up-warn{margin:0 0 8px;font-size:12px;line-height:1.6}
+.up-table{max-height:260px;border:1px solid #e3e7f0}.up-table td{padding:5px 7px;font-size:11.5px}.up-table tr.err td{background:#fef2f2}.up-table td.bad{outline:1.5px solid #dc2626;outline-offset:-2px;color:#b91c1c;font-weight:700}
+.up-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.nav a.skipped .num{background:#94a3b8;border-color:#94a3b8;color:#fff}.nav a.skipped::after{content:"skipped";margin-left:auto;font-size:10px;background:#334155;color:#cbd5e1;padding:1px 6px;border-radius:8px}

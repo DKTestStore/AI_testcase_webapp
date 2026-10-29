@@ -64,7 +64,8 @@ function renderNav() {
     a.classList.toggle("locked", STEPS.includes(v) && !stepUnlocked(v));
   });
   const r = S.run || {};
-  $("#runinfo").innerHTML = `Run <b>${esc(r.run_id || "")}</b><br>${r.story_id ? "Story " + esc(r.story_id) + "<br>" : ""}${(r.test_cases || []).length} test cases${r.dirty || S.localDirty ? '<br><span style="color:#f5c26b">● unsaved changes</span>' : ""}`;
+  const g = $('#nav a[data-view="generate"]'); if (g) { const sk = r.imported && !r.markdown; g.classList.toggle("skipped", !!sk); g.title = sk ? "Skipped — test cases were uploaded from Excel" : ""; }
+  $("#runinfo").innerHTML = `Run <b>${esc(r.run_id || "")}</b><br>${r.story_id ? "Story " + esc(r.story_id) + "<br>" : ""}${(r.test_cases || []).length} test cases${r.imported && r.import_info ? '<br>📄 from ' + esc(r.import_info.filename) : ""}${r.dirty || S.localDirty ? '<br><span style="color:#f5c26b">● unsaved changes</span>' : ""}`;
 }
 function nextBar(cur, nextView, nextLabel, extraLeft = "") {
   const ok = stepDone(cur);
@@ -99,9 +100,9 @@ async function viewSetup(v) {
 
 // ------------------------------------------------------------------ 1. INPUT
 function viewInput(v) {
-  const r = S.run; if (!S.inputMode) S.inputMode = r.source || "jira";
+  const r = S.run; if (!S.inputMode) S.inputMode = r.source || (r.imported ? "excel" : "jira");
   const jira = r.jira;
-  const seg = `<div class="seg"><button data-m="jira" class="${S.inputMode === "jira" ? "a" : ""}">Jira Story</button><button data-m="local" class="${S.inputMode === "local" ? "a" : ""}">Local text</button></div>`;
+  const seg = `<div class="seg"><button data-m="jira" class="${S.inputMode === "jira" ? "a" : ""}">Jira Story</button><button data-m="local" class="${S.inputMode === "local" ? "a" : ""}">Local text</button><button data-m="excel" class="${S.inputMode === "excel" ? "a" : ""}">⬆ Upload test cases (Excel)</button></div>`;
   let body = "";
   if (S.inputMode === "jira") {
     body = `<div class="card">${seg}
@@ -119,6 +120,10 @@ function viewInput(v) {
           : `<div class="warn">${esc(jira.message)}<br><br>Switch to <b>Local text</b> and paste the requirements to continue.</div>`}
         <details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Full Jira description</summary><pre class="ro">${esc(jira.description)}</pre></details></div>`;
     }
+  } else if (S.inputMode === "excel") {
+    body = `<div class="card">${seg}<div class="sub" style="margin:10px 0 0">Already have test cases? Upload an .xlsx and go straight to <b>Review</b> — Generate is skipped. You can still continue to qTest Upload.</div>
+      <label>Story ID (optional, used for RTM / qTest module name)</label><input id="xlStory" value="${esc(r.story_id || "")}" placeholder="e.g. MTG-1427" style="width:240px"></div>
+      <div class="card" id="xlRoot"></div>`;
   } else {
     const text = S.localText || (r.source === "local" ? r.feature_text : "");
     S.localText = text;
@@ -132,7 +137,12 @@ function viewInput(v) {
       <div id="fileInfo">${S.localFile ? fileInfoHtml(S.localFile) : (r.local_filename ? `<div class="sub">Last used: ${esc(r.local_filename)}</div>` : "")}</div></div>
       <div class="card"><h3>Will be sent to generator</h3><div id="preview"></div></div></div></div>`;
   }
-  v.innerHTML = `<h1>Input Source</h1><div class="sub">${S.inputMode === "jira" ? "Fetch a Jira story and extract its acceptance criteria" : "Paste or upload a feature description"}</div>${body}${nextBar("input", "generate", "Continue to Generate")}`;
+  v.innerHTML = `<h1>Input Source</h1><div class="sub">${S.inputMode === "jira" ? "Fetch a Jira story and extract its acceptance criteria" : S.inputMode === "excel" ? "Import existing test cases from Excel and skip generation" : "Paste or upload a feature description"}</div>${body}${S.inputMode === "excel" ? "" : nextBar("input", "generate", "Continue to Generate")}`;
+  if (S.inputMode === "excel") {
+    $$(".seg button", v).forEach((b) => (b.onclick = () => { S.inputMode = b.dataset.m; render(); }));
+    uploadUI($("#xlRoot"), { storyId: () => $("#xlStory").value, done: () => { S.view = "review"; location.hash = "review"; render(); } });
+    return;
+  }
   $$(".seg button", v).forEach((b) => (b.onclick = () => { S.inputMode = b.dataset.m; render(); }));
   bindNext("generate");
   const nb = $("#nextBtn"); if (nb && S.inputMode === "local") { nb.disabled = false; nb.onclick = () => guarded(nb, async () => { await saveLocalIfChanged(); if (!stepDone("input")) throw new Error("Enter a feature description first."); go("generate"); }); }
