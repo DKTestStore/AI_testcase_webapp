@@ -176,3 +176,6 @@ table.rh tr:hover td{background:#f0f4ff}table.rh tr:hover td:first-child{box-sha
 .setup-grid{grid-template-columns:repeat(5,minmax(0,1fr))}
 @media (max-width:1250px){.setup-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .setup-item .sub{overflow-wrap:anywhere}
+/* ticket id pill on step headers */
+.ticket-pill{display:inline-flex;align-items:center;margin-left:12px;padding:3px 11px;border-radius:12px;background:#e8ecff;color:#3046b8;border:1px solid #c9d3ff;font-size:13px;font-weight:700;vertical-align:middle;letter-spacing:.01em}
+.ticket-pill::before{content:"🎫";margin-right:6px;font-size:12px}

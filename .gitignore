@@ -6,3 +6,4 @@ ai_test_generator/reports/*
 backend/sessions/
 backend/history/
 backend/logs/
+backend/app_settings.json

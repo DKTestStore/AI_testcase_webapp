@@ -73,6 +73,17 @@ function nextBar(cur, nextView, nextLabel, extraLeft = "") {
 }
 function bindNext(nextView) { const b = $("#nextBtn"); if (b) b.onclick = () => go(nextView); }
 
+// Ticket / Story ID pill next to the page title on every step page (hidden when unknown)
+function ensureTicketPill() {
+  if (!STEPS.includes(S.view)) return;
+  const h = $("#view h1"); if (!h) return;
+  const id = ((S.run || {}).story_id || "").trim();
+  let p = h.querySelector(".ticket-pill");
+  if (!id) { if (p) p.remove(); return; }
+  if (!p) { p = document.createElement("span"); p.className = "ticket-pill"; h.appendChild(p); }
+  const t = "Ticket " + id; if (p.textContent !== t) { p.textContent = t; p.title = "Ticket / Story ID"; }
+}
+new MutationObserver(() => ensureTicketPill()).observe(document.getElementById("view"), { childList: true, subtree: true });
 function render() {
   renderNav();
   const v = $("#view");
@@ -431,12 +442,24 @@ async function viewSettings(v) {
       <input data-key="${f.key}" ${f.secret ? 'type="password" autocomplete="new-password"' : ""} placeholder="${f.secret ? esc(f.value || "not set") : ""}" value="${f.secret ? "" : esc(f.value)}" style="width:100%">
       ${f.secret && f.is_set ? `<button class="btn g sm" data-clear="${f.key}" style="margin-top:6px">Clear</button>` : ""}</div>`).join("")}</div></div>`).join("") +
     `<button class="btn" id="saveSettings">Save Settings</button>
+    <div class="card" id="histCard" style="margin-top:18px"><h3>🕘 Run history</h3>
+      <label for="histLimit">Run history limit</label>
+      <div class="row" style="align-items:center;gap:10px"><input id="histLimit" type="number" min="1" max="100" step="1" style="width:120px;flex:none"><button class="btn" id="saveHist" style="flex:none">Save limit</button><span class="sub" id="histHint" style="margin:0;flex:none"></span></div>
+      <div class="sub" style="margin:8px 0 0">How many recent runs to keep on this browser (1–100, default 5). Lowering it removes only the oldest runs beyond the new limit; raising it keeps everything.</div></div>
     <div class="card" id="promptCard" style="margin-top:18px"><h3>📝 Default prompt <span class="sub" id="promptFile" style="font-weight:400"></span></h3>
       <div class="sub" style="margin:0 0 8px">Used by Generate when "Default prompt" is selected. It must not be empty.</div>
       <textarea id="promptText" style="width:100%;min-height:220px;font-family:ui-monospace,monospace;font-size:12px"></textarea>
       <div style="margin-top:8px"><button class="btn" id="savePrompt">Save prompt</button></div></div>`;
   api("/api/prompt/default").then((pj) => { $("#promptText").value = pj.text; $("#promptFile").textContent = "· " + pj.filename; }).catch((e) => { $("#promptFile").textContent = "· " + e.message; });
   $("#savePrompt").onclick = () => guarded($("#savePrompt"), async () => { await api("/api/prompt/default", { method: "PUT", body: { text: $("#promptText").value } }); toast("Default prompt saved"); });
+  api("/api/settings/history_limit").then((h) => { $("#histLimit").value = h.value; $("#histHint").textContent = `Current: ${h.value}`; });
+  $("#saveHist").onclick = () => guarded($("#saveHist"), async () => {
+    const raw = $("#histLimit").value.trim();
+    if (!/^\d+$/.test(raw) || +raw < 1 || +raw > 100) throw new Error("Run history limit must be a whole number between 1 and 100.");
+    const r = await api("/api/settings/history_limit", { method: "PUT", body: { value: +raw } });
+    $("#histHint").textContent = `Current: ${r.value}`; toast(`Run history limit set to ${r.value}${r.pruned ? ` · removed ${r.pruned} oldest run${r.pruned > 1 ? "s" : ""}` : ""}`);
+    if (window.refreshHistoryCount) refreshHistoryCount();
+  });
   if (S.focusPrompt) { S.focusPrompt = false; $("#promptCard").scrollIntoView({ block: "start" }); }
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
     const values = {}; $$("[data-key]").forEach((i) => { if (i.type !== "password" || i.value.trim()) values[i.dataset.key] = i.value; });

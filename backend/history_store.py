@@ -16,8 +16,9 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from .config import HISTORY_DIR, RUNS_DIR
+from .settings_store import get_history_limit
 
-MAX_RUNS = 5
+MAX_RUNS = 5  # default; the live value comes from Settings (get_history_limit)
 IST = ZoneInfo("Asia/Kolkata")
 _LOCK = threading.Lock()
 
@@ -98,7 +99,8 @@ def record(hid: str, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             ent = {"run_id": run["run_id"], "rid": run.get("rid") or f"RUN-{day}-{n:03d}",
                    "created": now.isoformat(timespec="seconds")}
             items.insert(0, ent)
-            while len(items) > MAX_RUNS:          # FIFO: drop ONLY the single oldest
+            limit = get_history_limit()
+            while len(items) > limit:             # FIFO: drop only the oldest beyond the limit
                 old = items.pop()                 # list is kept newest-first
 
                 _drop_files(hid, old["run_id"], keep=run["run_id"])
@@ -153,3 +155,25 @@ def delete(hid, run_id) -> bool:
         _write(hid, idx)
         _drop_files(hid, run_id)
         return True
+
+
+def prune_all(limit: int, hid: Optional[str] = None) -> int:
+    """Limit lowered in Settings: drop only the oldest runs beyond `limit` in every browser's
+    history (FIFO). Never removes runs within the limit; raising the limit removes nothing."""
+    removed = 0
+    if not HISTORY_DIR.exists():
+        return 0
+    with _LOCK:
+        for d in HISTORY_DIR.iterdir():
+            if not (d.is_dir() and valid(d.name)):
+                continue
+            idx = _load(d.name)
+            if len(idx["items"]) <= limit:
+                continue
+            drop = idx["items"][limit:]
+            idx["items"] = idx["items"][:limit]
+            _write(d.name, idx)
+            for e in drop:
+                _drop_files(d.name, e["run_id"])
+                removed += d.name == hid
+    return removed
