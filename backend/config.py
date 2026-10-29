@@ -16,6 +16,8 @@ REPORTS_DIR = PKG_DIR / "reports"
 RUNS_DIR = REPORTS_DIR / "runs"
 GEMINI_USAGE_FILE = REPORTS_DIR / "gemini_usage.json"
 SESSIONS_DIR = Path(__file__).resolve().parent / "sessions"
+HISTORY_DIR = Path(__file__).resolve().parent / "history"
+LOG_DIR = Path(__file__).resolve().parent / "logs"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
 # Make "import ai_test_generator...." work no matter where uvicorn is started.
@@ -33,7 +35,7 @@ def env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
-for _d in (REPORTS_DIR, RUNS_DIR, SESSIONS_DIR):
+for _d in (REPORTS_DIR, RUNS_DIR, SESSIONS_DIR, HISTORY_DIR, LOG_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 reload_env()

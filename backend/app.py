@@ -5,6 +5,8 @@ Run from the project root (the folder containing backend/ and frontend/):
 then open http://localhost:8000
 """
 import io
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -13,12 +15,24 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 
 from . import config  # noqa: F401  (sys.path + .env)
-from . import excel_io, parsing, services, session_store, settings_store
-from .config import FRONTEND_DIR, RUNS_DIR, env
+from . import excel_io, history_store, parsing, services, session_store, settings_store
+from .config import FRONTEND_DIR, GENERATOR_PROMPT_FILE, LOG_DIR, RUNS_DIR, env
 from .services import ServiceError
+
+# Rotating server log: backend/logs/app.log, 5 MB x 3 backups
+log = logging.getLogger("atg")
+if not log.handlers:
+    _h = RotatingFileHandler(LOG_DIR / "app.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    log.addHandler(_h)
+    log.setLevel(logging.INFO)
+    for _n in ("uvicorn.error", "uvicorn.access"):
+        logging.getLogger(_n).addHandler(_h)
 
 app = FastAPI(title="AI TestCase Generator")
 COOKIE = "atg_session"
+HCOOKIE = "atg_history"   # long-lived, separate from the session cookie; survives Logout / New run
+HMAX_AGE = 60 * 60 * 24 * 365
 MAX_TEXT = 200_000
 
 
@@ -29,6 +43,7 @@ async def _service_error(_: Request, exc: ServiceError):
 
 @app.exception_handler(Exception)
 async def _unexpected(_: Request, exc: Exception):
+    log.exception("Unexpected server error")
     return JSONResponse({"ok": False, "error": f"Unexpected server error: {exc}"}, status_code=500)
 
 
@@ -39,6 +54,9 @@ def current(request: Request) -> Dict[str, Any]:
     sess = session_store.get(request.cookies.get(COOKIE))
     if not sess:
         raise ServiceError("Session expired. Please start again from the Welcome page.", 401)
+    hid = request.cookies.get(HCOOKIE)
+    if history_store.valid(hid) and sess.get("hid") != hid:
+        sess["hid"] = hid
     return sess
 
 
@@ -46,7 +64,14 @@ def _run(sess) -> Dict[str, Any]:
     return sess["run"]
 
 
-def _save(sess):
+def _save(sess, history=False):
+    """Persist the session. history=True also upserts the run into the rolling Run history
+    (only on real saves: generate / review save / import / Excel / qTest upload)."""
+    if history and sess.get("hid"):
+        try:
+            history_store.record(sess["hid"], sess["run"])
+        except Exception:
+            log.exception("history record failed")
     session_store.save(sess["sid"])
 
 
@@ -102,6 +127,11 @@ def start_session(request: Request):
     sid = sess["sid"] if sess else session_store.create()
     resp = JSONResponse({"ok": True, "redirect": "/app#setup"})  # Enh 02: setup checklist first
     resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7)
+    hid = request.cookies.get(HCOOKIE)
+    if not history_store.valid(hid):
+        hid = history_store.new_hid()
+    resp.set_cookie(HCOOKIE, hid, httponly=True, samesite="lax", max_age=HMAX_AGE)  # refresh expiry
+    log.info("session start")
     return resp
 
 
@@ -111,7 +141,8 @@ def logout(request: Request):
     if sid and session_store.get(sid):
         session_store.delete(sid)
     resp = JSONResponse({"ok": True, "redirect": "/welcome"})
-    resp.delete_cookie(COOKIE)
+    resp.delete_cookie(COOKIE)  # history cookie is intentionally kept
+    log.info("session logout")
     return resp
 
 
@@ -122,6 +153,7 @@ def state(sess=Depends(current)):
 
 @app.post("/api/run/new")
 def new_run(sess=Depends(current)):
+    _save(sess, history=True)  # keep the finished run in history; history itself is never cleared
     run = session_store.reset_run(sess["sid"])
     return {"ok": True, "run": _public_run(run)}
 
@@ -170,6 +202,18 @@ def default_prompt(sess=Depends(current)):
     return {"ok": True, "filename": config.GENERATOR_PROMPT_FILE.name, "text": services.read_default_prompt()}
 
 
+@app.put("/api/prompt/default")
+def put_default_prompt(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    text = str(data.get("text") or "")
+    if not text.strip():
+        raise ServiceError("The default prompt cannot be empty.")
+    if len(text) > MAX_TEXT:
+        raise ServiceError("Prompt is too long.")
+    GENERATOR_PROMPT_FILE.write_text(text, encoding="utf-8")
+    log.info("default prompt updated (%d chars)", len(text))
+    return {"ok": True, "filename": GENERATOR_PROMPT_FILE.name}
+
+
 @app.get("/api/usage")
 def usage(sess=Depends(current)):
     return {"ok": True, "usage": services.read_gemini_usage(), "last": _run(sess).get("last_usage")}
@@ -207,7 +251,7 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         except ServiceError as ex:
             review_info = {"error": ex.message}
         run["review"] = review_info
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "count": len(cases), "template_appended": appended,
             "usage": result["usage"], "review": review_info, "run": _public_run(run)}
 
@@ -230,7 +274,7 @@ def save_cases(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     _validate_cases(cases)
     run = _run(sess)
     run.update({"test_cases": cases, "dirty": True})
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "run": _public_run(run)}
 
 
@@ -255,7 +299,7 @@ def accept_review(sess=Depends(current)):
     rv_cases = rv["test_cases"]
     parsing.suggest_acs(rv_cases, run.get("ac_list") or _ac_list(run))
     run.update({"test_cases": parsing.sanitize_cases(rv_cases), "dirty": True, "review": None})
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "run": _public_run(run)}
 
 
@@ -277,7 +321,7 @@ def _write_excel(run) -> Path:
 def save_excel(sess=Depends(current)):
     run = _run(sess)
     _write_excel(run)
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "run": _public_run(run)}
 
 
@@ -286,7 +330,7 @@ def download_excel(sess=Depends(current)):
     run = _run(sess)
     if not run.get("excel_path") or run.get("dirty") or not Path(run["excel_path"]).exists():
         _write_excel(run)
-        _save(sess)
+        _save(sess, history=True)
     p = Path(run["excel_path"])
     return FileResponse(p, filename=p.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -335,7 +379,7 @@ def excel_import(data: Dict[str, Any] = Body(...), sess=Depends(current)):
                 "ac_list": sorted(acs.values(), key=lambda a: (len(a["id"]), a["id"]))})
     if not run.get("story_id") and data.get("story_id"):
         run["story_id"] = str(data.get("story_id")).strip()
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "count": len(cases), "imported": len(res["cases"]), "warnings": res["warnings"],
             "run": _public_run(run)}
 
@@ -401,7 +445,7 @@ def qtest_upload(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         str(data.get("module_name", "")).strip())
     run["upload"] = result
     run["rtm"] = _build_rtm(run)
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "upload": result, "rtm": run["rtm"], "ac_list": run["ac_list"], "run": _public_run(run)}
 
 
@@ -412,7 +456,7 @@ def qtest_retry(sess=Depends(current)):
         raise ServiceError("Nothing uploaded yet.")
     run["upload"] = services.qtest_retry_failed(run["upload"], run["test_cases"])
     run["rtm"] = _build_rtm(run)
-    _save(sess)
+    _save(sess, history=True)
     return {"ok": True, "upload": run["upload"], "rtm": run["rtm"], "run": _public_run(run)}
 
 
@@ -492,6 +536,13 @@ def delete_setting(key: str, sess=Depends(current)):
     return {"ok": True, "fields": settings_store.get_settings()}
 
 
+def _prompt_ok() -> bool:
+    try:
+        return GENERATOR_PROMPT_FILE.exists() and bool(GENERATOR_PROMPT_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        return False
+
+
 @app.get("/api/setup/status")
 def setup_status(sess=Depends(current)):
     """Enh 02 - what is configured (booleans only, no secret values)."""
@@ -507,8 +558,68 @@ def setup_status(sess=Depends(current)):
         {"key": "qtest", "label": "qTest", "required": False,
          "ok": v("QTEST_BASE_URL") and v("QTEST_TOKEN") and v("QTEST_PROJECT_ID"),
          "hint": "Needed only for qTest Upload (Excel download works without it)"},
+        {"key": "default_prompt", "label": "Default prompt", "required": True, "ok": _prompt_ok(),
+         "hint": GENERATOR_PROMPT_FILE.name, "link": "View / Edit in Settings →"},
     ]
     return {"ok": True, "items": items}
+
+
+# --------------------------------------------------------------------------- #
+# Run history (rolling last 5 per browser)
+# --------------------------------------------------------------------------- #
+def _hid(sess):
+    hid = sess.get("hid")
+    if not history_store.valid(hid):
+        raise ServiceError("Run history is not available in this browser (cookies blocked?).")
+    return hid
+
+
+@app.get("/api/history")
+def history_list(sess=Depends(current)):
+    items = history_store.list_items(sess.get("hid"))
+    return {"ok": True, "items": items, "max": history_store.MAX_RUNS, "current": _run(sess)["run_id"]}
+
+
+@app.post("/api/history/{run_id}/open")
+def history_open(run_id: str, sess=Depends(current)):
+    hid = _hid(sess)
+    snap = history_store.load_run(hid, run_id)
+    if not snap:
+        raise ServiceError("This run is no longer in history.", 404)
+    if _run(sess)["run_id"] != run_id:
+        _save(sess, history=True)  # keep the run we are leaving
+    sess["run"] = snap
+    _save(sess)
+    log.info("history open %s", snap.get("rid"))
+    return {"ok": True, "run": _public_run(snap)}
+
+
+@app.get("/api/history/{run_id}/excel")
+def history_excel(run_id: str, sess=Depends(current)):
+    hid = _hid(sess)
+    run = _run(sess) if _run(sess)["run_id"] == run_id else history_store.load_run(hid, run_id)
+    if not run:
+        raise ServiceError("This run is no longer in history.", 404)
+    if not run.get("excel_path") or run.get("dirty") or not Path(run["excel_path"]).exists():
+        _write_excel(run)
+        if run is _run(sess):
+            _save(sess)
+        else:
+            history_store.save_snapshot(hid, run)
+    p = Path(run["excel_path"])
+    return FileResponse(p, filename=p.name,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.delete("/api/history/{run_id}")
+def history_delete(run_id: str, sess=Depends(current)):
+    hid = _hid(sess)
+    if not history_store.delete(hid, run_id):
+        raise ServiceError("Run not found in history.", 404)
+    log.info("history delete %s", run_id)
+    if _run(sess)["run_id"] == run_id:   # deleting the open run -> start a fresh empty run
+        session_store.reset_run(sess["sid"])
+    return {"ok": True, "items": history_store.list_items(hid), "run": _public_run(_run(sess))}
 
 
 @app.get("/api/health")

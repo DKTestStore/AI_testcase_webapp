@@ -4,3 +4,5 @@ ai_test_generator/.env
 ai_test_generator/reports/*
 !ai_test_generator/reports/.gitkeep
 backend/sessions/
+backend/history/
+backend/logs/
