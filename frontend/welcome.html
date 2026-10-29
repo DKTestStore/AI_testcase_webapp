@@ -1,17 +1,113 @@
 <!doctype html><html lang=en><head><meta charset=utf-8><title>AI TestCase Generator</title><style>
 *{box-sizing:border-box;margin:0;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif}
-body{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f6fb}
-.card{background:#fff;border-radius:16px;padding:48px 40px;box-shadow:0 8px 30px rgba(0,0,0,.06);text-align:center;max-width:420px}
-h1{font-size:28px;margin-bottom:8px;color:#1e2433}.h1 span{color:#7c9cff}
-p{color:#5b6690;margin-bottom:28px;line-height:1.5}
-.btn{background:#2b3a6b;color:#fff;border:none;padding:12px 28px;border-radius:8px;font-size:15px;cursor:pointer}
-.err{color:#d32f2f;margin-top:12px;font-size:13px;min-height:20px}
+body{width:100vw;height:100vh;min-width:1180px;min-height:760px;overflow:hidden;background:radial-gradient(ellipse at 30% 20%,#3b1d7a 0%,#1a1446 40%,#070a1f 100%);perspective:1200px;color:#fff;position:relative}
+.floor{position:absolute;left:-50%;width:200%;height:700px;bottom:-200px;transform:rotateX(72deg);transform-origin:bottom;
+background-image:linear-gradient(#7c5cff88 1px,transparent 1px),linear-gradient(90deg,#7c5cff88 1px,transparent 1px);background-size:60px 60px;
+opacity:.9}
+.scene3d{position:absolute;inset:0;perspective:600px;perspective-origin:50% 30%;-webkit-mask-image:linear-gradient(transparent 45%,#000 75%)}.fade{position:absolute;left:0;right:0;top:380px;height:200px;background:linear-gradient(#070a1f,#070a1f00)}.horizon{position:absolute;left:0;right:0;top:470px;height:120px;background:radial-gradient(ellipse at center,#7c5cff55,transparent 70%)}
+.sph{position:absolute;border-radius:50%;animation:fl 6s ease-in-out infinite}
+.s1{width:150px;height:150px;left:110px;top:120px;background:radial-gradient(circle at 32% 28%,#fff 0,#9db4ff 8%,#4361ee 40%,#1b1f6b 80%);box-shadow:0 40px 60px #0008,0 0 60px #4361ee66}
+.s2{width:90px;height:90px;right:150px;top:470px;background:radial-gradient(circle at 32% 28%,#fff 0,#f7b3ff 10%,#b14cff 45%,#3c0e6b 85%);box-shadow:0 30px 40px #0008,0 0 50px #b14cff66;animation-delay:-2s}
+.s3{width:46px;height:46px;left:300px;top:560px;background:radial-gradient(circle at 32% 28%,#fff,#7ff0ff 15%,#16b6d6 50%,#08405a 90%);box-shadow:0 0 30px #16b6d688;animation-delay:-4s}
+.ring{position:absolute;right:170px;top:110px;width:190px;height:190px;border-radius:50%;background:conic-gradient(#ff7ae0,#7c5cff,#26d0ff,#ff7ae0);-webkit-mask:radial-gradient(circle,transparent 58%,#000 60%,#000 70%,transparent 72%);transform:rotateX(62deg) rotateY(-18deg);
+filter:drop-shadow(0 0 16px #b14cff);animation:sp 10s linear infinite}
+.cube{position:absolute;left:190px;top:390px;width:80px;height:80px;transform-style:preserve-3d;transform:rotateX(-25deg) rotateY(40deg);animation:cr 14s linear infinite}
+.cube div{position:absolute;width:80px;height:80px;border:1.5px solid #26d0ffcc;background:#26d0ff18;box-shadow:inset 0 0 18px #26d0ff55}
+.f1{transform:translateZ(40px)}.f2{transform:rotateY(180deg) translateZ(40px)}.f3{transform:rotateY(90deg) translateZ(40px)}.f4{transform:rotateY(-90deg) translateZ(40px)}.f5{transform:rotateX(90deg) translateZ(40px)}.f6{transform:rotateX(-90deg) translateZ(40px)}
+.stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transform-style:preserve-3d}
+.card{width:570px;padding:42px 40px 34px;border-radius:24px;text-align:center;background:linear-gradient(145deg,#ffffff26,#ffffff0d);
+border:1px solid #ffffff40;backdrop-filter:blur(18px);transform:rotateX(8deg) rotateY(-10deg) translateZ(20px);
+box-shadow:0 2px 0 #ffffff30 inset,0 40px 80px #0009,0 15px 30px #0006,-25px 30px 60px #4361ee30,25px 0 80px #b14cff30;animation:cf 7s ease-in-out infinite}
+.logo{font-size:64px;line-height:1;filter:drop-shadow(0 0 14px #ffd84d) drop-shadow(2px 4px 0 #b8860b) drop-shadow(4px 8px 0 #7a5600) drop-shadow(0 14px 14px #0008)}
+h1{font-size:30px;font-weight:800;margin-top:16px;text-shadow:0 2px 0 #0006,0 0 24px #7c5cff99}h1 span{text-shadow:none;filter:drop-shadow(0 0 10px #7ff0ff88);background:linear-gradient(90deg,#7ff0ff,#9d8cff);-webkit-background-clip:text;color:transparent}
+.tag{color:#d4d8ff;margin:10px 0 26px;font-size:14.5px}
+.chips{display:flex;justify-content:center;align-items:center;gap:10px}
+.chip{padding:8px 11px;border-radius:12px;font-weight:700;font-size:12px;background:linear-gradient(180deg,#ffffff30,#ffffff10);border:1px solid #ffffff45;
+box-shadow:0 5px 0 #2a1f6b,0 9px 16px #0008,inset 0 1px 0 #ffffff60;transform:translateZ(30px)}
+.arr{color:#9d8cff;font-weight:700}
+.btn{display:block;margin-top:34px;padding:17px;border-radius:14px;font-size:19px;font-weight:800;letter-spacing:.3px;
+background:linear-gradient(180deg,#6d8bff,#4361ee 55%,#3b2fd0);box-shadow:0 7px 0 #241c8a,0 14px 30px #4361eeaa,0 0 50px #7c5cff88,inset 0 1px 0 #ffffffa0;transition:.2s}
+.btn:hover{transform:translateY(3px);box-shadow:0 4px 0 #241c8a,0 8px 20px #4361eeaa,0 0 70px #7c5cffcc}
+a.btn{color:#fff;text-decoration:none;cursor:pointer}.err{color:#ff8fa0;margin-top:10px;font-size:13px;min-height:16px}.note{color:#b9bfe6;margin-top:16px;font-size:13px}
+.foot{position:absolute;bottom:16px;width:100%;text-align:center;color:#ffffff70;font-size:12px}
+
+.el{position:absolute;animation:fl 6s ease-in-out infinite}
+.glass{background:linear-gradient(145deg,#ffffff22,#ffffff08);border:1px solid #ffffff35;border-radius:14px;backdrop-filter:blur(10px);box-shadow:0 25px 50px #0009,0 0 30px #7c5cff30,inset 0 1px 0 #ffffff40}
+.nn{left:40px;top:50px;transform:rotateY(18deg) rotateX(8deg)}
+.chk{right:50px;top:70px;width:250px;padding:16px 18px;transform:rotateY(-22deg) rotateX(6deg);animation-delay:-2s}
+.chk h4{font-size:13px;color:#cfd3ff;margin-bottom:10px;letter-spacing:.5px}
+.chk div{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:6px 0;border-top:1px solid #ffffff15}
+.ok,.no{width:20px;height:20px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-weight:900;font-size:12px}
+.ok{background:#12c26a;box-shadow:0 0 12px #12c26a}.no{background:#ff3d5a;box-shadow:0 0 12px #ff3d5a}
+.donut{right:70px;top:345px;padding:12px 16px;display:flex;align-items:center;gap:12px;transform:rotateY(-18deg);animation-delay:-3s}
+.code{right:16px;bottom:96px;width:292px;padding:14px 16px;font-family:Consolas,Menlo,monospace;font-size:12.5px;line-height:1.7;transform:rotateY(-20deg) rotateX(10deg);animation-delay:-1s;background:linear-gradient(145deg,#0b1030dd,#140f3acc)}
+.bug{left:70px;bottom:110px;transform:rotateY(20deg);animation-delay:-4s}
+.pulse{animation:pu 2.4s ease-in-out infinite}@keyframes pu{50%{opacity:.45}}
+.lbl{position:absolute;font-size:11px;font-weight:700;letter-spacing:1px;color:#9fe8ff;text-shadow:0 0 8px #26d0ff}
+
+.bot{position:absolute;animation:bob 3.2s ease-in-out infinite}.bot .eye{animation:bl 4s infinite;transform-box:fill-box;transform-origin:center}
+@keyframes bob{50%{transform:translateY(-10px)}}@keyframes bl{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+.bub{position:absolute;white-space:nowrap;font-size:12px;font-weight:700;padding:6px 11px;border-radius:12px;background:#fff;color:#1e2433;box-shadow:0 6px 16px #0007}
+.bub:after{content:"";position:absolute;bottom:-6px;left:18px;border:6px solid transparent;border-top-color:#fff;border-bottom:0}
+@keyframes fl{50%{transform:translateY(-18px)}}@keyframes cf{50%{transform:rotateX(6deg) rotateY(-7deg) translateZ(20px) translateY(-8px)}}
+@keyframes sp{to{transform:rotateX(62deg) rotateY(-18deg) rotateZ(360deg)}}@keyframes cr{to{transform:rotateX(-25deg) rotateY(400deg)}}
 </style></head><body>
-<div class=card>
-  <h1>⚡ AI <span>TestCase</span> Generator</h1>
-  <p>Generate, review and upload test cases with AI.</p>
-  <button class=btn id=welcomeBtn>Get started</button>
-  <div class=err id=err></div>
-</div>
-<script src=/static/js/welcome.js></script>
-</body></html>
+<div class=scene3d><div class=floor></div></div><div class=horizon></div>
+
+<svg style="position:absolute;inset:0" width=1280 height=800><g fill=none stroke="#26d0ff" stroke-opacity=".35" stroke-width="1.5" stroke-dasharray="6 6">
+<path d="M300 170 H345 V300 H380"/><path d="M920 300 H950 V50 H962"/><path d="M925 470 H990 V575"/></g>
+<g fill="#26d0ff"><circle cx=300 cy=170 r=4 /><circle cx=380 cy=300 r=4 /><circle cx=920 cy=300 r=4 /><circle cx=962 cy=50 r=4 /></g></svg>
+<div class=lbl style="left:322px;top:142px">JIRA → AI</div><div class=lbl style="left:968px;top:40px">AI → qTEST</div>
+<div class="el nn"><svg width=270 height=230 viewBox="0 0 270 230">
+<defs><radialGradient id=g><stop offset=0 stop-color="#fff"/><stop offset=.35 stop-color="#c39bff"/><stop offset=1 stop-color="#7c5cff" stop-opacity="0"/></radialGradient></defs>
+<g stroke="#a98bff" stroke-opacity=".55" stroke-width="1.3">
+<line x1=30 y1=50 x2=105 y2=25 /><line x1=30 y1=50 x2=105 y2=80 /><line x1=30 y1=50 x2=105 y2=135 /><line x1=30 y1=50 x2=105 y2=190 /><line x1=30 y1=110 x2=105 y2=25 /><line x1=30 y1=110 x2=105 y2=80 /><line x1=30 y1=110 x2=105 y2=135 /><line x1=30 y1=110 x2=105 y2=190 /><line x1=30 y1=170 x2=105 y2=25 /><line x1=30 y1=170 x2=105 y2=80 /><line x1=30 y1=170 x2=105 y2=135 /><line x1=30 y1=170 x2=105 y2=190 /><line x1=105 y1=25 x2=175 y2=50 /><line x1=105 y1=25 x2=175 y2=110 /><line x1=105 y1=25 x2=175 y2=170 /><line x1=105 y1=80 x2=175 y2=50 /><line x1=105 y1=80 x2=175 y2=110 /><line x1=105 y1=80 x2=175 y2=170 /><line x1=105 y1=135 x2=175 y2=50 /><line x1=105 y1=135 x2=175 y2=110 /><line x1=105 y1=135 x2=175 y2=170 /><line x1=105 y1=190 x2=175 y2=50 /><line x1=105 y1=190 x2=175 y2=110 /><line x1=105 y1=190 x2=175 y2=170 /><line x1=175 y1=50 x2=240 y2=110 /><line x1=175 y1=110 x2=240 y2=110 /><line x1=175 y1=170 x2=240 y2=110 /></g><circle cx=30 cy=50 r=16 fill="url(#g)"/><circle cx=30 cy=50 r=5 fill="#fff" class=pulse style="animation-delay:-0.5s"/><circle cx=30 cy=110 r=16 fill="url(#g)"/><circle cx=30 cy=110 r=5 fill="#fff" class=pulse style="animation-delay:-0.2s"/><circle cx=30 cy=170 r=16 fill="url(#g)"/><circle cx=30 cy=170 r=5 fill="#fff" class=pulse style="animation-delay:-0.8s"/><circle cx=105 cy=25 r=16 fill="url(#g)"/><circle cx=105 cy=25 r=5 fill="#fff" class=pulse style="animation-delay:-0.3s"/><circle cx=105 cy=80 r=16 fill="url(#g)"/><circle cx=105 cy=80 r=5 fill="#fff" class=pulse style="animation-delay:-0.1s"/><circle cx=105 cy=135 r=16 fill="url(#g)"/><circle cx=105 cy=135 r=5 fill="#fff" class=pulse style="animation-delay:-0.8s"/><circle cx=105 cy=190 r=16 fill="url(#g)"/><circle cx=105 cy=190 r=5 fill="#fff" class=pulse style="animation-delay:-1.8s"/><circle cx=175 cy=50 r=16 fill="url(#g)"/><circle cx=175 cy=50 r=5 fill="#fff" class=pulse style="animation-delay:-1.6s"/><circle cx=175 cy=110 r=16 fill="url(#g)"/><circle cx=175 cy=110 r=5 fill="#fff" class=pulse style="animation-delay:-1.5s"/><circle cx=175 cy=170 r=16 fill="url(#g)"/><circle cx=175 cy=170 r=5 fill="#fff" class=pulse style="animation-delay:-0.4s"/><circle cx=240 cy=110 r=16 fill="url(#g)"/><circle cx=240 cy=110 r=5 fill="#fff" class=pulse style="animation-delay:-1.1s"/>
+<text x=135 y=222 fill="#d9ccff" font-size=12 font-weight=700 text-anchor=middle font-family=Inter,Arial letter-spacing="2">AI MODEL</text></svg></div>
+<div class="el glass chk"><h4>✓ TEST RUN · MTG-1427</h4>
+<div><span class=ok>✓</span>TC-001 Button enabled</div><div><span class=ok>✓</span>TC-003 Pricing fields</div>
+<div><span class=no>✕</span>TC-005 Block 4th scenario</div><div><span class=ok>✓</span>TC-007 Credit error</div><div><span class=ok>✓</span>TC-008 Audit trail</div></div>
+<div class="el glass donut"><svg width=52 height=52 viewBox="0 0 36 36"><circle cx=18 cy=18 r=15 fill=none stroke="#ff3d5a" stroke-width=5 />
+<circle cx=18 cy=18 r=15 fill=none stroke="#12c26a" stroke-width=5 stroke-dasharray="86.7 94.2" transform="rotate(-90 18 18)" style="filter:drop-shadow(0 0 3px #12c26a)"/></svg>
+<div><div style="font-size:20px;font-weight:800;color:#5dff9e">Pass 92%</div><div style="font-size:11px;color:#b9bfe6">23 passed · 2 failed</div></div></div>
+<div class="el glass code"><div style="color:#7d86b8"># test_scenario_docs.py</div>
+<div><span style="color:#ff7ae0">def</span> <span style="color:#7ff0ff">test_generate_docs</span>():</div>
+<div>&nbsp;&nbsp;response = api.post(<span style="color:#ffd27f">"/scenario-docs"</span>)</div>
+<div>&nbsp;&nbsp;<span style="color:#ff7ae0">assert</span> response.status == <span style="color:#5dff9e">200</span></div></div>
+<div class="el bug"><svg width=230 height=200 viewBox="0 0 230 200">
+<g transform="translate(95 92)" class=pulse><ellipse rx=22 ry=28 fill="#ff3d5a" style="filter:drop-shadow(0 0 10px #ff3d5a)"/><circle cy=-32 r=12 fill="#ff6b80"/>
+<g stroke="#ff8fa0" stroke-width=3 stroke-linecap=round><path d="M-22 -8 L-40 -18M-22 6 L-42 6M-20 18 L-36 32M22 -8 L40 -18M22 6 L42 6M20 18 L36 32M-6 -42 L-12 -54M6 -42 L12 -54"/></g>
+<path d="M0 -20 V26" stroke="#7a0f20" stroke-width=2 /></g>
+<circle cx=95 cy=88 r=58 fill="#7ff0ff18" stroke="#9fe8ff" stroke-width=7 style="filter:drop-shadow(0 0 12px #26d0ff)"/>
+<circle cx=80 cy=70 r=30 fill="#ffffff14"/>
+<path d="M137 130 L185 178" stroke="#c9d1ff" stroke-width=15 stroke-linecap=round />
+<text x=95 y=196 fill="#ffb3c0" font-size=12 font-weight=700 text-anchor=middle font-family=Inter,Arial letter-spacing="2">BUG FOUND</text></svg></div>
+
+<div class=bot style="left:70px;top:340px"><svg width=100 height=125.0 viewBox="0 0 120 150"><defs><radialGradient id=h1 cx=.35 cy=.3 r=.8><stop offset=0 stop-color="#fff"/><stop offset=.25 stop-color="#9db4ff"/><stop offset=1 stop-color="#3a46c8"/></radialGradient></defs>
+<ellipse cx=60 cy=145 rx=34 ry=5 fill="#000" opacity=".35"/>
+<line x1=60 y1=22 x2=60 y2=6 stroke="#c9d1ff" stroke-width=3 /><circle cx=60 cy=6 r=6 fill="#7ff0ff" style="filter:drop-shadow(0 0 6px #7ff0ff)"/>
+<rect x=34 y=92 width=52 height=42 rx=16 fill="url(#h1)"/><circle cx=60 cy=112 r=7 fill="#7ff0ff" opacity=".9" style="filter:drop-shadow(0 0 6px #7ff0ff)"/>
+<rect x=20 y=98 width=12 height=26 rx=6 fill="#3a46c8"/><rect x=88 y=98 width=12 height=26 rx=6 fill="#3a46c8"/>
+<rect x=12 y=22 width=96 height=72 rx=30 fill="url(#h1)"/><rect x=22 y=36 width=76 height=42 rx=20 fill="#0b1030"/>
+<ellipse class=eye cx=45 cy=56 rx=8 ry=10 fill="#7ff0ff" style="filter:drop-shadow(0 0 6px #7ff0ff)"/><ellipse class=eye cx=75 cy=56 rx=8 ry=10 fill="#7ff0ff" style="filter:drop-shadow(0 0 6px #7ff0ff)"/>
+<path d="M50 70 Q60 76 70 70" stroke="#7ff0ff" stroke-width=3 fill=none stroke-linecap=round /><ellipse cx=36 cy=32 rx=12 ry=5 fill="#fff" opacity=".55"/></svg><div class=bub style="left:92px;top:-4px">Generating tests…</div></div>
+<div class=bot style="left:440px;top:628px;animation-delay:-1s"><svg width=90 height=112.5 viewBox="0 0 120 150"><defs><radialGradient id=h2 cx=.35 cy=.3 r=.8><stop offset=0 stop-color="#fff"/><stop offset=.25 stop-color="#d9b3ff"/><stop offset=1 stop-color="#7a2fd0"/></radialGradient></defs>
+<ellipse cx=60 cy=145 rx=34 ry=5 fill="#000" opacity=".35"/>
+<line x1=60 y1=22 x2=60 y2=6 stroke="#c9d1ff" stroke-width=3 /><circle cx=60 cy=6 r=6 fill="#5dff9e" style="filter:drop-shadow(0 0 6px #5dff9e)"/>
+<rect x=34 y=92 width=52 height=42 rx=16 fill="url(#h2)"/><circle cx=60 cy=112 r=7 fill="#5dff9e" opacity=".9" style="filter:drop-shadow(0 0 6px #5dff9e)"/>
+<rect x=20 y=98 width=12 height=26 rx=6 fill="#7a2fd0"/><rect x=88 y=98 width=12 height=26 rx=6 fill="#7a2fd0"/>
+<rect x=12 y=22 width=96 height=72 rx=30 fill="url(#h2)"/><rect x=22 y=36 width=76 height=42 rx=20 fill="#0b1030"/>
+<ellipse class=eye cx=45 cy=56 rx=8 ry=10 fill="#5dff9e" style="filter:drop-shadow(0 0 6px #5dff9e)"/><ellipse class=eye cx=75 cy=56 rx=8 ry=10 fill="#5dff9e" style="filter:drop-shadow(0 0 6px #5dff9e)"/>
+<path d="M50 70 Q60 76 70 70" stroke="#5dff9e" stroke-width=3 fill=none stroke-linecap=round /><ellipse cx=36 cy=32 rx=12 ry=5 fill="#fff" opacity=".55"/></svg><div class=bub style="left:84px;top:4px">Reviewing ✓</div></div>
+<div class=bot style="left:740px;top:628px;animation-delay:-2s"><svg width=90 height=112.5 viewBox="0 0 120 150"><defs><radialGradient id=h3 cx=.35 cy=.3 r=.8><stop offset=0 stop-color="#fff"/><stop offset=.25 stop-color="#ffc2cc"/><stop offset=1 stop-color="#d0304d"/></radialGradient></defs>
+<ellipse cx=60 cy=145 rx=34 ry=5 fill="#000" opacity=".35"/>
+<line x1=60 y1=22 x2=60 y2=6 stroke="#c9d1ff" stroke-width=3 /><circle cx=60 cy=6 r=6 fill="#ffd84d" style="filter:drop-shadow(0 0 6px #ffd84d)"/>
+<rect x=34 y=92 width=52 height=42 rx=16 fill="url(#h3)"/><circle cx=60 cy=112 r=7 fill="#ffd84d" opacity=".9" style="filter:drop-shadow(0 0 6px #ffd84d)"/>
+<rect x=20 y=98 width=12 height=26 rx=6 fill="#d0304d"/><rect x=88 y=98 width=12 height=26 rx=6 fill="#d0304d"/>
+<rect x=12 y=22 width=96 height=72 rx=30 fill="url(#h3)"/><rect x=22 y=36 width=76 height=42 rx=20 fill="#0b1030"/>
+<ellipse class=eye cx=45 cy=56 rx=8 ry=10 fill="#ffd84d" style="filter:drop-shadow(0 0 6px #ffd84d)"/><ellipse class=eye cx=75 cy=56 rx=8 ry=10 fill="#ffd84d" style="filter:drop-shadow(0 0 6px #ffd84d)"/>
+<path d="M50 70 Q60 76 70 70" stroke="#ffd84d" stroke-width=3 fill=none stroke-linecap=round /><ellipse cx=36 cy=32 rx=12 ry=5 fill="#fff" opacity=".55"/></svg><div class=bub style="left:84px;top:4px">Bug spotted!</div></div>
+<div class=stage><div class=card><div class=logo>⚡</div><h1>AI <span>TestCase</span> Generator</h1>
+<div class=tag>Generate, review and upload test cases from Jira stories</div>
+<div class=chips><span class=chip>⚡ Generate in seconds</span><span class=chip>🤖 AI-reviewed</span><span class=chip>📋 Full RTM traceability</span></div>
+<a class=btn id=welcomeBtn href="#" role=button>Welcome →</a><div class=err id=err></div><div class=note>Click to continue to the app</div></div></div>
+<div class=foot>v1.0.0 · AI TestCase Generator</div><script src="/static/js/welcome.js"></script></body></html>

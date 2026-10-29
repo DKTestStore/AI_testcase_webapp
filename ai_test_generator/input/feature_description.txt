@@ -1,4 +1,249 @@
-User can log in with email and password.
-After successful login the user is redirected to the dashboard.
-Invalid credentials show an error message.
-Session expires after 30 minutes of inactivity.
+Acceptance Criteria:
+
+User Story
+
+As a LO, I want the option to select generate and view multiple scenario options
+
+So that I can view them all individually or as a group
+
+And email them to the borrower to review.
+
+Acceptance Criteria 01 – Generate Scenario Docs Button  
+
+Given an LO has created scenario(s) in SB and is ‘Fee Worksheet Ready’
+
+When I click on the Generate Scenario Docs button
+
+Then the system will navigate me to the new Generate Scenario Documents page.  
+
+Acceptance Criteria 02 – Selecting Pre-Qual Letter  
+
+Given an LO has selected a Scenario under the Pre-Qual Letter section
+
+And the LO has completed the required steps to generate a Pre qual letter.
+
+When user selects the ‘Preview Email & Docs’ button
+
+Then the Pre-qual letter will open on the Preview-Generated Documents page  
+
+And the LO will have the option to view and email docs to the borrower
+
+Acceptance Criteria 03 – Selecting Initial Fee Worksheet
+
+Given an LO has selected a Scenario under the Initial Fee Worksheet section
+
+When user selects the ‘Preview Email & Docs’ button
+
+Then the Initial Fee Worksheet letter will open on the Preview-Generated Documents page  
+
+And the LO will have the option to view and email docs to the borrower
+
+Acceptance Criteria 04 – Loan Comparison Worksheet  
+
+Given an LO has selected multiple Scenarios under the Initial Fee Worksheet section
+
+When user selects the ‘Preview Email & Docs’ button
+
+Then the Loan Comparison page will open on the Preview-Generated Documents page  
+
+And the LO will have the option to view and email docs to the borrower
+
+Acceptance Criteria 05– Selecting Amortization Schedule
+
+Given an LO has selected a Scenario under the Amortization Schedule section
+
+When user selects the ‘Preview Email & Docs’ button
+
+Then the Amortization letter(s) will open on the Preview-Generated Documents page  
+
+And the LO will have the option to view and email docs to the borrower
+
+Acceptance Criteria 06 – Enabling Download Docs Button  
+
+Given an LO has not made any selections on the Generate Scenario Documents page
+
+And the Preview Email & Docs button is disabled (greyed out)
+
+When the LO makes any selection (check a box) on the page
+
+Then the Preview Email & Docs button will be enabled (button will be blue)
+
+Acceptance Criteria 07– Download Docs Button 
+
+Given an LO has not made any selections on the Generate Scenario Documents page
+
+And the Download Docs button is disabled (greyed outline)
+
+When the LO makes any selection (check a box) on the page
+
+Then the Download Docs button will be enabled (button will be outlined in blue with blue font)
+
+Acceptance Criteria 08– Dropdown Banner with Scenarios
+
+Given an LO has selected Scenario(s) on the Generate Scenario Documents page
+
+When user selects the ‘Preview Email & Docs’ button
+
+And the Preview-Generated Documents page appears
+
+Then a Dropdown section will appear in a banner with all the selected Scenarios from previous page
+
+Acceptance Criteria 9– Dropdown Banner Defaults to Loan Comparison
+
+Given an LO has selected Scenario(s) on the Generate Scenario Documents page
+
+When user selects the ‘Preview Email & Docs’ button
+
+And the Preview-Generated Documents page appears
+
+Then a Dropdown section will appear in a banner with all the selected Scenarios from previous page
+
+And the Dropdown button will default based on previous selection (Left to Right, Top to Bottom)
+
+Acceptance Criteria 10– Email Capacity cannot exceed 27mb message  
+
+Given an LO has selected Scenario(s) on the Generate Scenario Documents page
+
+When user selects the ‘Preview Email & Docs’ button
+
+And the Preview-Generated Documents page appears
+
+When the LO attempts to email the borrower and the attachment capacity exceeds 27MB
+
+Then an error message will appear (in red font) stating “Email attachment(s) cannot exceed 27mb)”
+
+ 
+
+Testing Notes:
+
+Since this will now be a zip file that’s sent over to LO.  Based on Dev Analysis, and the docs we’ll be sending.  We will not exceed the Max number.  27MB  -  So we will NOT test this AC…
+
+Acceptance Criteria 11– Previous button                                         
+
+Given an LO is on the Generate Scenario Documents page
+
+When user selects the Previous button at the bottom of the page
+
+Then page will navigate back to Scenario Builder Default page
+
+ 
+
+Testing Notes:
+
+If you are on the Preview-Generated Documents page.  When you select previous.  It will take you back to the previous page ‘Generate Scenario Documents’ Page
+
+Acceptance Criteria 12 – Remove Preview Fee Worksheet Button
+
+Given an LO has come to the SB home page
+
+When I review the button above the “Send to Mortgage Coach” button
+
+Then I need the Preview Worksheet button to no longer be visible on the page.
+
+Acceptance Criteria 13 – Remove Preview Amortization Schedule button  
+
+Given an LO has come to the SB home page
+
+When I review the button above the “Send to Mortgage Coach” button.
+
+Then I need the Preview Amortization Schedule button  to no longer be visible on the page.
+
+Acceptance Criteria 14 – Texas Prequal
+
+Given an LO has a Texas loan and has selected a Scenario under the Pre-Qual/Pre-Approval Letter section
+
+And the LO has completed the required steps to generate a Pre-qual letter.
+
+Then LO will generate the Pre-Qual from the Scenario Builder Quote Page as normal
+
+When user selects the ‘Preview Email & Docs’ button
+
+Then the Texas Pre-qual letter will open on the Preview-Generated Documents page  
+
+And the LO will have the option to view and email docs to the borrower
+
+ 
+
+Testing Purposes: 
+
+For Texas:  If pre-approval letter is available, then that will appear over the Pre-Qual letter in the Generate Scenario Docs screen.   LO Will still be able to Generate Pre-Qual or Pre-Approval from Scenario Builder Quote Page.  
+
+Acceptance Criteria 15 – Texas Pre-Approval
+
+Given an LO has a Texas loan and has selected a Scenario under the Pre-Qual/Pre-Approval Letter section
+
+And the LO has completed the required steps to generate a Pre-Approval letter.
+
+When user selects the ‘Preview Email & Docs’ button
+
+Then the Texas Pre-Approval letter will open on the Preview-Generated Documents page  
+
+And the LO will have the option to view and email Pre-Approval Letter to the borrower
+
+ 
+
+Testing Purposes: 
+
+For Texas: When LO goes to Generate Scenario Docs screen, it will always default to the Pre-Approval letter over the Pre-Qual letter.   Pre-Qual letter will have to be generated and printed from the Scenario Builder Quote page. 
+
+Acceptance Criteria 16 – Arizona -Pre-Qual & Pre-Approval Letters.  Custom Text
+
+Given an LO has a Arizona loan and wants to generate Pre-Qual & Pre-Approval letters
+
+When user goes to “Generate Scenario Documents” page.  
+
+Then under the Pre-Qual/Pre-Approval Letter section.  User will receive text verbiage explaining unable to generate docs.   
+
+Acceptance Criteria 17 – Comments for Generated Docs (Text Box)   
+
+Given an LO is attempting to Generate Scenarios to Preview. 
+
+And user has selected any scenario from provided sections. 
+
+Then when user enters comments in the “Comments for Generated Letters” Text box
+
+Then Comments will appear when user selects “Preview Email & Docs” Button  
+
+When user selects the ‘Preview Email & Docs’ button
+
+ ·         Notes
+
+Comment Text box field is optional
+
+Acceptance Criteria 18 – IFW Multiple Scenario Check Box  
+
+Given an LO has multiple scenarios prepared to Generate.
+
+When “Multiple Scenarios” Check box is selected.
+
+Then System will select up to three scenario boxes. 
+
+And if LO already has a box checked, then system will select remaining available boxes, max 3.
+
+And if user unchecks “Multiple Scenarios” Box. 
+
+Then system will only keep 1st scenario checked, while unchecking remaining boxes.
+
+ 
+
+Acceptance Criteria 19 – Send Email Only Button 
+
+Given an LO has successfully Generated their documents
+
+And want to email them to borrower.
+
+When LO hit’s Send Email Only button, 
+
+Then email and attached docs will be sent to requested borrower.
+
+Acceptance Criteria 20 – NO Dropdown - Generate Letter Button (Regression Testing)  
+
+Given an LO has is on Scenario Builder Home Page
+
+And LO attempts to just generate a letter, the way we currently do today.
+
+When user selects “Generate Letter” Button from Home screen
+
+Then they will be brought to Preview page, and Dropdown will not appear.
+
+ 
