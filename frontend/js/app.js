@@ -161,7 +161,7 @@ function viewInput(v) {
   const nb = $("#nextBtn"); if (nb && S.inputMode === "local") { nb.disabled = false; nb.onclick = () => guarded(nb, async () => { await saveLocalIfChanged(); if (!stepDone("input")) throw new Error("Enter a feature description first."); go("generate"); }); }
   if (S.inputMode === "jira") {
     const f = () => guarded($("#fetchBtn"), async () => { await api("/api/input/jira", { method: "POST", body: { story_id: $("#storyId").value } }); toast("Story fetched"); render(); });
-    $("#fetchBtn").onclick = f; $("#storyId").onkeydown = (e) => e.key === "Enter" && f();
+    $("#fetchBtn").onclick = f; $("#storyId").onkeydown = (e) => { if (e.key === "Enter") f(); };
     const ft = $("#featureText");
     if (ft) {
       const cnt = () => ($("#ftCount").textContent = `${ft.value.length.toLocaleString()} characters`); cnt();
