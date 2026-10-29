@@ -75,6 +75,8 @@ def fetch_jira(story_id: str) -> Dict[str, Any]:
     story_id = (story_id or "").strip().upper()
     if not story_id:
         raise ServiceError("Enter a Jira Story ID (e.g. MTG-1427).")
+    if os.environ.get("ATG_MOCK_JIRA") == "1":
+        return _mock_jira(story_id)
     reload_env()
     try:
         jw = importlib.import_module("ai_test_generator.worker.jira_worker")
@@ -210,6 +212,8 @@ def _today_tokens() -> int:
 def generate(model: str, feature_text: str, prompt: str) -> Dict[str, Any]:
     if not (feature_text or "").strip():
         raise ServiceError("No feature description. Complete the Input step first.")
+    if os.environ.get("ATG_MOCK_GEMINI") == "1":
+        return _mock_generate(feature_text)
     model = (model or "gemini").lower()
     usage: Dict[str, Any] = {"model": model}
     if model == "gemini":
@@ -498,6 +502,8 @@ def _error_text(result: Dict[str, Any]) -> str:
 def qtest_upload(excel_path: Path, test_cases: List[Dict[str, Any]], story_id: str,
                  project_id: str, requirement_id: str, parent_module_id: str,
                  module_id: str, module_name: str) -> Dict[str, Any]:
+    if os.environ.get("ATG_MOCK_QTEST") == "1":
+        return _mock_qtest_upload(test_cases, story_id, project_id, requirement_id, module_id, module_name)
     qw = _qtest_worker(project_id, requirement_id, parent_module_id)
     if not excel_path or not Path(excel_path).exists():
         raise ServiceError("Excel file not found. Save the Excel on the Review step first.")
@@ -548,6 +554,8 @@ def qtest_upload(excel_path: Path, test_cases: List[Dict[str, Any]], story_id: s
 
 def qtest_retry_failed(upload: Dict[str, Any], test_cases: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Re-POST only the failed test cases (same payload builder + client), then link them."""
+    if os.environ.get("ATG_MOCK_QTEST") == "1":
+        return _mock_qtest_retry(upload)
     qw = _qtest_worker(upload.get("project_id", ""), upload.get("requirement_id", ""), "")
     from ai_test_generator.qtest_utils.qtest_client import create_test_case
     from ai_test_generator.qtest_utils.qtest_helpers import build_payload
@@ -584,5 +592,115 @@ def qtest_retry_failed(upload: Dict[str, Any], test_cases: List[Dict[str, Any]])
                 item["linked"] = True
     upload["created"] = sum(1 for i in upload["items"] if i["status"] == "Created")
     upload["retry_link"] = link
+    upload["uploaded_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return upload
+
+
+# --------------------------------------------------------------------------- #
+# Batch: requirement lookup by story ID
+# --------------------------------------------------------------------------- #
+def find_requirement(project_id: str, story_id: str) -> Optional[str]:
+    """Find the qTest requirement whose name starts with the Jira/Excel story ID (qTest search API).
+    Returns the requirement id or None. Never raises - batch upload continues without a link."""
+    story_id = (story_id or "").strip()
+    if not story_id:
+        return None
+    if os.environ.get("ATG_MOCK_QTEST") == "1":
+        missing = [x.strip().upper() for x in os.environ.get("ATG_MOCK_QTEST_NOREQ", "").split(",") if x.strip()]
+        return None if story_id.upper() in missing else str(880000 + sum(map(ord, story_id)))
+    try:
+        reload_env()
+        base = (env("QTEST_BASE_URL") or "").rstrip("/")
+        token = env("QTEST_TOKEN") or ""
+        project_id = project_id or env("QTEST_PROJECT_ID") or ""
+        if not (base and token and project_id):
+            return None
+        auth = token if token.lower().startswith("bearer ") else f"Bearer {token}"
+        url = base if "/api/v3" in base else f"{base}/api/v3"
+        r = requests.post(f"{url}/projects/{project_id}/search", timeout=20,
+                          headers={"Authorization": auth, "Content-Type": "application/json"},
+                          json={"object_type": "requirements", "fields": ["id", "name"],
+                                "query": f"'name' ~ '{story_id}'"})
+        if r.status_code != 200:
+            print(f"qTest requirement search {story_id}: HTTP {r.status_code}")
+            return None
+        for item in (r.json() or {}).get("items", []):
+            if str(item.get("name", "")).upper().startswith(story_id.upper()):
+                return str(item.get("id"))
+    except Exception as ex:
+        print(f"qTest requirement search {story_id} failed: {ex}")
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Offline mocks - only when the PROCESS env sets ATG_MOCK_* = 1 (tests). Never read from .env.
+# --------------------------------------------------------------------------- #
+def _mock_delay():
+    import time
+    try:
+        time.sleep(float(os.environ.get("ATG_MOCK_DELAY", "0")))
+    except ValueError:
+        pass
+
+
+def _mock_jira(story_id: str) -> Dict[str, Any]:
+    _mock_delay()
+    missing = [x.strip().upper() for x in os.environ.get("ATG_MOCK_JIRA_MISSING", "MTG-1427").split(",") if x.strip()]
+    if story_id in missing:
+        raise ServiceError(f"Jira pull failed: Issue {story_id} does not exist or you do not have permission (404)")
+    n = 2 + sum(map(ord, story_id)) % 3
+    ac = "\n".join(f"Acceptance Criteria 0{i} – {story_id} rule {i}\nThe system handles rule {i} for {story_id}."
+                   for i in range(1, n + 1))
+    return {"issue_key": story_id, "summary": f"Mock story {story_id}", "description": ac, "status": "OK",
+            "message": "", "acceptance_criteria": ac, "scenarios": "", "scenario_list": [], "brd_links": [],
+            "screenshot_count": 0, "usable": True, "feature_text": ac, "feature_source": "acceptance_criteria"}
+
+
+def _mock_generate(feature_text: str) -> Dict[str, Any]:
+    _mock_delay()
+    if "[mock-gen-fail]" in feature_text:
+        raise ServiceError("Gemini API error (mock): 503 model overloaded", 502)
+    from . import parsing
+    acs = parsing.split_acceptance_criteria(feature_text) or [{"id": "AC-01", "title": "Feature"}]
+    cases = []
+    for a in acs:
+        for k in (1, 2):
+            cases.append({"id": f"TC{len(cases) + 1:03d}", "name": f"Verify {a['title'][:60]} - case {k}",
+                          "description": f"Covers {a['id']} ({'positive' if k == 1 else 'negative'})",
+                          "precondition": "User is logged in",
+                          "steps": [{"description": f"Perform step {j} for {a['id']}", "expected": f"Result {j} as per {a['id']}"}
+                                    for j in (1, 2)]})
+    md = parsing.test_cases_to_markdown(cases)
+    return {"markdown": md, "usage": {"model": "gemini", "model_name": "mock", "input_tokens": len(feature_text) // 4,
+                                      "output_tokens": len(md) // 4, "total_tokens": len(feature_text) // 4 + len(md) // 4}}
+
+
+def _mock_qtest_upload(test_cases, story_id, project_id, requirement_id, module_id, module_name):
+    _mock_delay()
+    fail = [x.strip().upper() for x in os.environ.get("ATG_MOCK_QTEST_FAIL", "").split(",") if x.strip()]
+    items = []
+    for i, tc in enumerate(test_cases):
+        bad = (story_id or "").upper() in fail and i < 2
+        items.append({"tc_id": tc["id"], "name": tc.get("name", ""), "status": "Failed" if bad else "Created",
+                      "status_code": 500 if bad else 200, "qtest_id": None if bad else 5000 + i,
+                      "qtest_pid": None if bad else f"TC-{5000 + i}", "error": "HTTP 500 (mock)" if bad else "",
+                      "linked": bool(requirement_id) and not bad})
+    link = ({"ok": True, "message": f"Linked to requirement {requirement_id} (mock)"} if requirement_id
+            else {"ok": False, "message": "No requirement ID - not linked."})
+    return {"module_id": module_id or "770001", "module_created": not module_id,
+            "module_name": module_name or story_id, "project_id": project_id or "1",
+            "requirement_id": requirement_id, "created": sum(1 for i in items if i["status"] == "Created"),
+            "total": len(items), "link": link, "items": items, "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mock": True}
+
+
+def _mock_qtest_retry(upload):
+    _mock_delay()
+    for i, it in enumerate(upload.get("items", [])):
+        if it["status"] == "Failed":
+            it.update(status="Created", status_code=200, qtest_id=6000 + i, qtest_pid=f"TC-{6000 + i}", error="",
+                      linked=bool(upload.get("requirement_id")))
+    upload["created"] = sum(1 for i in upload["items"] if i["status"] == "Created")
+    upload["retry_link"] = {"ok": True, "message": "mock"}
     upload["uploaded_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return upload

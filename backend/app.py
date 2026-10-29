@@ -5,13 +5,19 @@ Run from the project root (the folder containing backend/ and frontend/):
 then open http://localhost:8000
 """
 import io
+import json
 import logging
+import re
+import time
+import uuid
+import zipfile
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, Depends, FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config  # noqa: F401  (sys.path + .env)
@@ -61,7 +67,17 @@ def current(request: Request) -> Dict[str, Any]:
 
 
 def _run(sess) -> Dict[str, Any]:
+    """The run the step endpoints work on: the single run, or (in Batch mode) the open batch item's run.
+    The single run itself is never touched while Batch mode is on."""
+    if sess.get("mode") == "batch":
+        it = _bitem(sess.get("batch"), (sess.get("batch") or {}).get("active"))
+        if it:
+            return it["run"]
     return sess["run"]
+
+
+def _bitem(batch, key):
+    return next((i for i in (batch or {}).get("items", []) if i["key"] == key), None) if key else None
 
 
 def _save(sess, history=False):
@@ -69,7 +85,10 @@ def _save(sess, history=False):
     (only on real saves: generate / review save / import / Excel / qTest upload)."""
     if history and sess.get("hid"):
         try:
-            history_store.record(sess["hid"], sess["run"])
+            if sess.get("mode") == "batch" and sess.get("batch"):
+                history_store.record_batch(sess["hid"], sess["batch"])
+            else:
+                history_store.record(sess["hid"], sess["run"])
         except Exception:
             log.exception("history record failed")
     session_store.save(sess["sid"])
@@ -148,7 +167,7 @@ def logout(request: Request):
 
 @app.get("/api/state")
 def state(sess=Depends(current)):
-    return {"ok": True, "run": _public_run(_run(sess))}
+    return {"ok": True, "run": _public_run(sess["run"]), "mode": sess.get("mode") or "single"}
 
 
 @app.post("/api/run/new")
@@ -599,7 +618,8 @@ def _hid(sess):
 @app.get("/api/history")
 def history_list(sess=Depends(current)):
     items = history_store.list_items(sess.get("hid"))
-    return {"ok": True, "items": items, "max": settings_store.get_history_limit(), "current": _run(sess)["run_id"]}
+    cur = sess["batch"]["batch_id"] if sess.get("mode") == "batch" and sess.get("batch") else sess["run"]["run_id"]
+    return {"ok": True, "items": items, "max": settings_store.get_history_limit(), "current": cur}
 
 
 @app.get("/api/settings/history_limit")
@@ -625,8 +645,17 @@ def history_open(run_id: str, sess=Depends(current)):
     snap = history_store.load_run(hid, run_id)
     if not snap:
         raise ServiceError("This run is no longer in history.", 404)
+    if snap.get("kind") == "batch":
+        if (sess.get("batch") or {}).get("batch_id") != run_id:
+            _save(sess, history=True)
+        sess.update(mode="batch", batch=snap)
+        snap["active"] = None
+        _save(sess)
+        log.info("history open batch %s", snap.get("rid"))
+        return {"ok": True, "mode": "batch", "batch": _public_batch(snap), "run": _public_run(sess["run"])}
     if _run(sess)["run_id"] != run_id:
         _save(sess, history=True)  # keep the run we are leaving
+    sess["mode"] = "single"
     sess["run"] = snap
     _save(sess)
     log.info("history open %s", snap.get("rid"))
@@ -634,9 +663,22 @@ def history_open(run_id: str, sess=Depends(current)):
 
 
 @app.get("/api/history/{run_id}/excel")
-def history_excel(run_id: str, sess=Depends(current)):
+def history_excel(run_id: str, item: str = "", sess=Depends(current)):
     hid = _hid(sess)
-    run = _run(sess) if _run(sess)["run_id"] == run_id else history_store.load_run(hid, run_id)
+    live = (sess.get("batch") or {}).get("batch_id") == run_id
+    run = sess["batch"] if live else (_run(sess) if _run(sess)["run_id"] == run_id else history_store.load_run(hid, run_id))
+    if run and run.get("kind") == "batch":
+        if item:   # one story run inside a batch
+            it = next((i for i in run["items"] if i["run"]["run_id"] == item), None)
+            if not it or not it["run"].get("test_cases"):
+                raise ServiceError("This story run is no longer in history.", 404)
+            r = it["run"]
+            if not r.get("excel_path") or r.get("dirty") or not Path(r["excel_path"]).exists():
+                _write_excel(r)
+            p = Path(r["excel_path"])
+            return FileResponse(p, filename=p.name,
+                                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        return _batch_zip(run, sess if live else None, None if live else hid)
     if not run:
         raise ServiceError("This run is no longer in history.", 404)
     if not run.get("excel_path") or run.get("dirty") or not Path(run["excel_path"]).exists():
@@ -656,9 +698,398 @@ def history_delete(run_id: str, sess=Depends(current)):
     if not history_store.delete(hid, run_id):
         raise ServiceError("Run not found in history.", 404)
     log.info("history delete %s", run_id)
-    if _run(sess)["run_id"] == run_id:   # deleting the open run -> start a fresh empty run
+    if (sess.get("batch") or {}).get("batch_id") == run_id:  # deleting the open batch -> fresh empty batch
+        sess["batch"] = _new_batch()
+        session_store.save(sess["sid"])
+    elif sess["run"]["run_id"] == run_id:   # deleting the open run -> start a fresh empty run
         session_store.reset_run(sess["sid"])
     return {"ok": True, "items": history_store.list_items(hid), "run": _public_run(_run(sess))}
+
+
+
+
+# --------------------------------------------------------------------------- #
+# Batch mode - a separate workspace; the single run (sess["run"]) is never touched here.
+# --------------------------------------------------------------------------- #
+BATCH_MAX = 10
+_ID_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+
+
+def _new_batch() -> Dict[str, Any]:
+    return {"kind": "batch", "batch_id": uuid.uuid4().hex[:12], "rid": "",
+            "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "active": None, "items": [], "seq": 0}
+
+
+def _batch(sess) -> Dict[str, Any]:
+    if not sess.get("batch"):
+        sess["batch"] = _new_batch()
+    return sess["batch"]
+
+
+def _item_summary(it) -> Dict[str, Any]:
+    run = it["run"]
+    cases = run.get("test_cases") or []
+    up = run.get("upload") or {}
+    return {k: it.get(k) for k in ("key", "source", "item_id", "title", "fetch", "ac_count", "gen", "ready",
+                                    "target", "qtest", "filename")} | {
+        "run_id": run["run_id"], "rid": run.get("rid", ""), "count": len(cases),
+        "reviewed": sum(1 for c in cases if c.get("status") == "reviewed"), "dirty": bool(run.get("dirty")),
+        "steps": sum(len(c.get("steps") or []) for c in cases),
+        "uploaded": up.get("created", 0) if up else 0, "upload_total": up.get("total", 0) if up else 0}
+
+
+def _public_batch(b) -> Dict[str, Any]:
+    return {"batch_id": b["batch_id"], "rid": b.get("rid") or "", "created": b.get("created"),
+            "active": b.get("active"), "max": BATCH_MAX, "items": [_item_summary(i) for i in b["items"]]}
+
+
+def _bresp(sess, with_run=True, **extra):
+    b = _batch(sess)
+    out = {"ok": True, "mode": sess.get("mode") or "single", "batch": _public_batch(b),
+           "single": {"rid": sess["run"].get("rid", ""), "story_id": sess["run"].get("story_id", ""),
+                      "count": len(sess["run"].get("test_cases") or [])}}
+    it = _bitem(b, b.get("active"))
+    if it and with_run:
+        out["run"] = _public_run(it["run"])
+    out.update(extra)
+    return out
+
+
+def _need_item(sess, key) -> Dict[str, Any]:
+    it = _bitem(_batch(sess), key)
+    if not it:
+        raise ServiceError("Batch item not found.", 404)
+    return it
+
+
+def _new_item(b, source, item_id="", title="") -> Dict[str, Any]:
+    if len(b["items"]) >= BATCH_MAX:
+        raise ServiceError(f"A batch holds at most {BATCH_MAX} items.")
+    b["seq"] = b.get("seq", 0) + 1
+    run = session_store._new_run()
+    run.update(source="jira" if source == "jira" else "local", story_id=item_id)
+    it = {"key": f"i{b['seq']}", "source": source, "item_id": item_id, "title": title,
+          "fetch": {"status": "pending", "error": ""}, "ac_count": 0,
+          "gen": {"status": "waiting", "error": "", "tokens": 0, "secs": 0}, "ready": False,
+          "target": {"module_name": "", "module_id": "", "requirement_id": ""}, "qtest": {"status": "", "error": ""},
+          "filename": "", "run": run}
+    b["items"].append(it)
+    return it
+
+
+def _next_local_id(b) -> str:
+    used = {i["item_id"] for i in b["items"]}
+    n = 1
+    while f"LOCAL-{n:03d}" in used:
+        n += 1
+    return f"LOCAL-{n:03d}"
+
+
+@app.get("/api/batch")
+def batch_get(sess=Depends(current)):
+    return _bresp(sess, with_run=False)   # status refresh only; never swaps the open run in the browser
+
+
+@app.post("/api/batch/enter")
+def batch_enter(sess=Depends(current)):
+    sess["mode"] = "batch"
+    _batch(sess)
+    _save(sess)
+    log.info("batch mode on")
+    return _bresp(sess)
+
+
+@app.post("/api/batch/exit")
+def batch_exit(sess=Depends(current)):
+    sess["mode"] = "single"
+    _save(sess)
+    log.info("batch mode off")
+    return {"ok": True, "mode": "single", "run": _public_run(sess["run"])}
+
+
+@app.post("/api/batch/new")
+def batch_new(sess=Depends(current)):
+    sess["mode"] = "batch"
+    _save(sess, history=True)   # the finished batch stays in history as one entry
+    sess["batch"] = _new_batch()
+    _save(sess)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/items")
+def batch_add(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    b = _batch(sess)
+    src = str(data.get("source", ""))
+    added, errors = [], []
+    if src == "jira":
+        raw = data.get("ids") or []
+        if isinstance(raw, str):
+            raw = re.split(r"[\s,;]+", raw)
+        for x in [str(r).strip().upper() for r in raw if str(r).strip()]:
+            if not _ID_RE.match(x):
+                errors.append(f"{x}: not a valid Jira ID")
+            elif any(i["item_id"] == x for i in b["items"]):
+                errors.append(f"{x}: already in this batch")
+            elif len(b["items"]) >= BATCH_MAX:
+                errors.append(f"{x}: batch is full ({BATCH_MAX} max)")
+            else:
+                added.append(_new_item(b, "jira", x)["key"])
+    elif src == "local":
+        text = str(data.get("text", "")).strip()
+        if not text:
+            raise ServiceError("Feature description is empty.")
+        if len(text) > MAX_TEXT:
+            raise ServiceError(f"Feature description is too long (max {MAX_TEXT:,} characters).")
+        item_id = str(data.get("item_id", "")).strip().upper() or _next_local_id(b)
+        if any(i["item_id"] == item_id for i in b["items"]):
+            raise ServiceError(f"{item_id} is already in this batch.")
+        title = str(data.get("title", "")).strip()[:120] or next((l.strip()[:90] for l in text.splitlines() if l.strip()), item_id)
+        it = _new_item(b, "local", item_id, title)
+        it["run"].update(feature_text=text, local_filename=str(data.get("filename", ""))[:200])
+        acs = _ac_list(it["run"])
+        it["run"]["ac_list"] = acs
+        it.update(ac_count=len(acs), fetch={"status": "ok", "error": ""})
+        it["gen"]["status"] = "queued"
+        added.append(it["key"])
+    elif src == "excel":
+        fname = str(data.get("filename", ""))[:200]
+        res = _parse_upload(data)
+        if not res["cases"]:
+            raise ServiceError(f"{fname}: no test cases found in the workbook.")
+        m = re.search(r"[A-Za-z][A-Za-z0-9]+-\d+", fname)
+        item_id = (str(data.get("item_id", "")).strip() or (m.group(0) if m else "")).upper() or _next_local_id(b)
+        if any(i["item_id"] == item_id for i in b["items"]):
+            raise ServiceError(f"{item_id} is already in this batch.")
+        it = _new_item(b, "excel", item_id, f"Imported from {fname}")
+        cases = parsing.sanitize_cases(excel_io.apply_mode([], res["cases"], "replace", res["needs_renumber"]))
+        _validate_cases(cases)
+        it["run"].update(test_cases=cases, imported=True, dirty=True, ac_list=res["ac_list"],
+                         import_info={"filename": fname, "mode": "replace", "count": len(cases)})
+        it.update(filename=fname, ac_count=len(res["ac_list"]), fetch={"status": "ok", "error": ""},
+                  gen={"status": "imported", "error": "", "tokens": 0, "secs": 0})
+        added.append(it["key"])
+        _save(sess, history=True)
+    else:
+        raise ServiceError("Unknown batch source.")
+    _save(sess)
+    return _bresp(sess, added=added, errors=errors)
+
+
+@app.post("/api/batch/items/{key}/fetch")
+def batch_fetch(key: str, sess=Depends(current)):
+    it = _need_item(sess, key)
+    if it["source"] != "jira":
+        raise ServiceError("Only Jira items are fetched.")
+    try:
+        info = services.fetch_jira(it["item_id"])
+    except ServiceError as ex:
+        it["fetch"] = {"status": "failed", "error": ex.message}
+        it["gen"]["status"] = "waiting"
+        _save(sess)
+        return _bresp(sess)
+    run = it["run"]
+    run.update(source="jira", story_id=info["issue_key"], jira=info, feature_text=info["feature_text"])
+    run["ac_list"] = _ac_list(run)
+    it.update(title=info.get("summary") or it["item_id"], ac_count=len(run["ac_list"]))
+    if info.get("usable") and info.get("feature_text"):
+        it["fetch"] = {"status": "ok", "error": ""}
+        if it["gen"]["status"] in ("waiting", "failed", "skipped", "cancelled"):
+            it["gen"] = {"status": "queued", "error": "", "tokens": 0, "secs": 0}
+    else:
+        it["fetch"] = {"status": "failed", "error": info.get("message") or "Story has no usable acceptance criteria."}
+    _save(sess)
+    return _bresp(sess)
+
+
+@app.patch("/api/batch/items/{key}")
+def batch_patch(key: str, data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    it = _need_item(sess, key)
+    if "ready" in data:
+        if data["ready"] and not it["run"].get("test_cases"):
+            raise ServiceError("This item has no test cases yet.")
+        it["ready"] = bool(data["ready"])
+    if "item_id" in data and it["source"] != "jira":
+        new = str(data["item_id"]).strip().upper()
+        if not new:
+            raise ServiceError("ID cannot be empty.")
+        if any(i["item_id"] == new and i is not it for i in _batch(sess)["items"]):
+            raise ServiceError(f"{new} is already in this batch.")
+        it["item_id"] = new
+        it["run"]["story_id"] = new
+    if isinstance(data.get("target"), dict):
+        for k in ("module_name", "module_id", "requirement_id"):
+            if k in data["target"]:
+                it["target"][k] = str(data["target"][k] or "").strip()[:200]
+    if "gen" in data and data["gen"] in ("queued", "skipped") and it["gen"]["status"] in ("queued", "skipped", "failed", "cancelled", "waiting"):
+        if data["gen"] == "queued" and it["fetch"]["status"] != "ok":
+            raise ServiceError("Fetch this item first.")
+        it["gen"] = {"status": data["gen"], "error": "", "tokens": 0, "secs": 0}
+    _save(sess, history=bool(it["run"].get("test_cases")))
+    return _bresp(sess)
+
+
+@app.delete("/api/batch/items/{key}")
+def batch_remove(key: str, sess=Depends(current)):
+    b = _batch(sess)
+    it = _need_item(sess, key)
+    if it["gen"]["status"] == "generating":
+        raise ServiceError("Cancel generation before removing this item.")
+    b["items"].remove(it)
+    if b.get("active") == key:
+        b["active"] = None
+    _save(sess, history=True)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/active")
+def batch_active(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    b = _batch(sess)
+    key = data.get("key")
+    if key and not _bitem(b, key):
+        raise ServiceError("Batch item not found.", 404)
+    b["active"] = key or None
+    _save(sess)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/items/{key}/generate")
+def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
+    """Generate one item. The frontend drives the queue sequentially (one request at a time)."""
+    it = _need_item(sess, key)
+    if it["fetch"]["status"] != "ok" or it["source"] == "excel":
+        raise ServiceError("This item cannot be generated.")
+    if it["gen"]["status"] == "generating":
+        raise ServiceError("Already generating.")
+    run = it["run"]
+    model = str(data.get("model", "gemini")).lower()
+    mode = "custom" if data.get("prompt_mode") == "custom" else "default"
+    custom = str(data.get("custom_prompt", ""))[:50_000]
+    run.update({"model": model, "prompt_mode": mode, "custom_prompt": custom})
+    token = uuid.uuid4().hex
+    it["gen"] = {"status": "generating", "error": "", "tokens": 0, "secs": 0, "token": token}
+    _save(sess)
+    t0 = time.time()
+    try:
+        prompt, _ = services.build_prompt(mode, custom)
+        result = services.generate(model, run["feature_text"], prompt)
+        cases = parsing.markdown_to_test_cases(result["markdown"])
+        if not cases:
+            raise ServiceError("The model responded, but no test cases could be parsed from its output.", 422)
+    except ServiceError as ex:
+        if it["gen"].get("token") == token:
+            it["gen"] = {"status": "failed", "error": ex.message, "tokens": 0, "secs": round(time.time() - t0, 1)}
+            _save(sess)
+        return _bresp(sess)
+    if it["gen"].get("token") != token or _bitem(_batch(sess), key) is not it:   # cancelled / removed meanwhile
+        return _bresp(sess, discarded=True)
+    run["ac_list"] = _ac_list(run)
+    parsing.suggest_acs(cases, run["ac_list"])
+    cases = parsing.sanitize_cases(cases)
+    run.update({"imported": False, "markdown": result["markdown"], "test_cases": cases, "dirty": True,
+                "excel_path": "", "review": None, "upload": None, "rtm": [], "last_usage": result["usage"]})
+    it["gen"] = {"status": "done", "error": "", "tokens": result["usage"].get("total_tokens") or 0,
+                 "secs": round(time.time() - t0, 1)}
+    it["ready"] = False
+    _save(sess, history=True)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/items/{key}/cancel")
+def batch_cancel(key: str, sess=Depends(current)):
+    it = _need_item(sess, key)
+    if it["gen"]["status"] in ("generating", "queued"):
+        it["gen"] = {"status": "cancelled", "error": "Cancelled", "tokens": 0, "secs": 0}
+        _save(sess)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/cancel_all")
+def batch_cancel_all(sess=Depends(current)):
+    for it in _batch(sess)["items"]:
+        if it["gen"]["status"] in ("generating", "queued"):
+            it["gen"] = {"status": "cancelled", "error": "Cancelled", "tokens": 0, "secs": 0}
+    _save(sess)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/items/{key}/qtest")
+def batch_qtest(key: str, data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
+    it = _need_item(sess, key)
+    run = it["run"]
+    if not run.get("test_cases"):
+        raise ServiceError("No test cases.")
+    tgt = it["target"]
+    msg = ""
+    if it["source"] == "local" and not (tgt.get("module_id") or tgt.get("module_name")):
+        raise ServiceError(f"{it['item_id']}: choose a module (name or ID) for local items.")
+    req = tgt.get("requirement_id") or ""
+    if not req and it["source"] in ("jira", "excel"):
+        req = services.find_requirement(str(data.get("project_id", "")), it["item_id"]) or ""
+        msg = (f"Requirement {req} found for {it['item_id']}" if req
+               else f"No qTest requirement found for {it['item_id']} — uploaded without a link")
+    if run.get("dirty") or not run.get("excel_path") or not Path(run["excel_path"]).exists():
+        _write_excel(run)
+    it["qtest"] = {"status": "uploading", "error": ""}
+    try:
+        result = services.qtest_upload(Path(run["excel_path"]), run["test_cases"], it["item_id"],
+                                       str(data.get("project_id", "")), req, str(data.get("parent_module_id", "")),
+                                       tgt.get("module_id", ""), tgt.get("module_name") or it["item_id"])
+    except ServiceError as ex:
+        it["qtest"] = {"status": "failed", "error": ex.message}
+        _save(sess)
+        return _bresp(sess)
+    run["upload"] = result
+    run["rtm"] = _build_rtm(run)
+    full = result["created"] == result["total"]
+    it["qtest"] = {"status": "done" if full else "partial", "error": "" if full else f"{result['total'] - result['created']} failed",
+                   "message": msg, "requirement_id": req, "module_id": result.get("module_id")}
+    _save(sess, history=True)
+    return _bresp(sess)
+
+
+@app.post("/api/batch/items/{key}/qtest/retry")
+def batch_qtest_retry(key: str, sess=Depends(current)):
+    it = _need_item(sess, key)
+    run = it["run"]
+    if not run.get("upload"):
+        return batch_qtest(key, {}, sess)
+    run["upload"] = services.qtest_retry_failed(run["upload"], run["test_cases"])
+    run["rtm"] = _build_rtm(run)
+    up = run["upload"]
+    full = up["created"] == up["total"]
+    it["qtest"].update(status="done" if full else "partial", error="" if full else f"{up['total'] - up['created']} failed")
+    _save(sess, history=True)
+    return _bresp(sess)
+
+
+def _batch_zip(b, sess=None, hid=None):
+    buf = io.BytesIO()
+    n = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for it in b["items"]:
+            run = it["run"]
+            if not run.get("test_cases"):
+                continue
+            if not run.get("excel_path") or run.get("dirty") or not Path(run["excel_path"]).exists():
+                _write_excel(run)
+            z.write(run["excel_path"], f"{it['item_id']}_{Path(run['excel_path']).name}")
+            n += 1
+    if not n:
+        raise ServiceError("No item in this batch has test cases yet.")
+    if sess is not None:
+        session_store.save(sess["sid"])
+    elif hid:   # opened from history without loading: keep the written Excel paths in the snapshot
+        p = config.HISTORY_DIR / hid / "runs" / f"{b['batch_id']}.json"
+        if p.exists():
+            p.write_text(json.dumps(b, default=str), encoding="utf-8")
+    name = f"{b.get('rid') or 'BATCH'}_test_cases.zip"
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/api/batch/excel.zip")
+def batch_excel_zip(sess=Depends(current)):
+    return _batch_zip(_batch(sess), sess)
 
 
 @app.get("/api/health")
