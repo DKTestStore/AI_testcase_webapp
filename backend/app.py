@@ -577,7 +577,24 @@ def _hid(sess):
 @app.get("/api/history")
 def history_list(sess=Depends(current)):
     items = history_store.list_items(sess.get("hid"))
-    return {"ok": True, "items": items, "max": history_store.MAX_RUNS, "current": _run(sess)["run_id"]}
+    return {"ok": True, "items": items, "max": settings_store.get_history_limit(), "current": _run(sess)["run_id"]}
+
+
+@app.get("/api/settings/history_limit")
+def get_history_limit(sess=Depends(current)):
+    return {"ok": True, "value": settings_store.get_history_limit(), "min": settings_store.HISTORY_LIMIT_MIN,
+            "max": settings_store.HISTORY_LIMIT_MAX, "default": settings_store.HISTORY_LIMIT_DEFAULT}
+
+
+@app.put("/api/settings/history_limit")
+def put_history_limit(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    try:
+        n = settings_store.set_history_limit(data.get("value"))
+    except ValueError as e:
+        raise ServiceError(str(e))
+    removed = history_store.prune_all(n, sess.get("hid"))
+    log.info("history limit set to %d (pruned %d oldest)", n, removed)
+    return {"ok": True, "value": n, "pruned": removed}
 
 
 @app.post("/api/history/{run_id}/open")

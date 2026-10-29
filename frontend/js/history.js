@@ -1,5 +1,5 @@
 // Run history: rolling last 5 runs per browser (server keeps index in backend/history/<hid>/history.json)
-const HNOTE = '<div class="keepnote">ℹ Keeps your last 5 runs. When a new run is saved, only the oldest one is removed — history is never cleared all at once.</div>';
+const hNote = (n) => `<div class="keepnote" id="hNote">ℹ Keeps your last ${n} run${n === 1 ? "" : "s"}. When a new run is saved, only the oldest one is removed — history is never cleared all at once.</div>`;
 const H_SRC = { "Jira": "b", "Local text": "gr", "Excel upload": "y" };
 const H_ST = { "Draft": "gr", "Reviewed": "b", "Uploaded to qTest": "" };
 function hDate(iso) {
@@ -10,7 +10,7 @@ async function refreshHistoryCount() {
   try { const j = await api("/api/history"); const c = $("#hCnt"); if (c) c.textContent = j.items.length || ""; return j; } catch { return null; }
 }
 function hRows(j, compact) {
-  const items = j.items, full = items.length >= j.max;
+  const items = j.items, full = items.length === j.max;
   return items.map((e, i) => {
     const cur = e.run_id === j.current, old = full && i === items.length - 1, pct = e.count ? Math.round(e.reviewed * 100 / e.count) : 0;
     return `<tr data-id="${esc(e.run_id)}" class="${old ? "old" : ""}">
@@ -53,11 +53,11 @@ async function viewHistory(v) {
   v.innerHTML = `<h1>Run history</h1><div class="sub">Resume any recent run, download its Excel, or delete it. Stored on this browser only.</div><div class="card" id="hBody">Loading…</div>`;
   const j = await refreshHistoryCount(); if (!j) { $("#hBody").innerHTML = '<div class="error">Could not load run history.</div>'; return; }
   renderNav();
-  $("#hBody").innerHTML = HNOTE + hTable(j, false) + `<div class="foot muted">${j.items.length} of ${j.max} runs · saved when you generate, import, save or upload · newest first</div>`;
+  $("#hBody").innerHTML = hNote(j.max) + hTable(j, false) + `<div class="foot muted">${j.items.length} of ${j.max} runs · saved when you generate, import, save or upload · newest first</div>`;
   hBind($("#hBody"), j, () => viewHistory(v));
 }
 async function renderRecentRuns(el) {
   const j = await refreshHistoryCount(); if (!j || !el.isConnected) return;
-  el.innerHTML = `<div class="card"><div class="ph"><h3 style="margin:0">🕘 Recent runs</h3><a href="#history" class="tpl-link">View all in Run history →</a></div>${HNOTE}${hTable(j, true)}</div>`;
+  el.innerHTML = `<div class="card"><div class="ph"><h3 style="margin:0">🕘 Recent runs</h3><a href="#history" class="tpl-link">View all in Run history →</a></div>${hNote(j.max)}${hTable(j, true)}</div>`;
   hBind(el, j, () => renderRecentRuns(el));
 }

@@ -85,3 +85,49 @@ def clear_setting(key: str) -> bool:
     set_key(str(ENV_PATH), key, "", quote_mode="never")
     os.environ[key] = ""
     return True
+
+
+# --------------------------------------------------------------------------- #
+# App (non-secret) settings - stored in backend/app_settings.json, NOT in .env
+# --------------------------------------------------------------------------- #
+import json as _json
+from pathlib import Path as _Path
+
+APP_SETTINGS_PATH = _Path(__file__).resolve().parent / "app_settings.json"
+HISTORY_LIMIT_DEFAULT, HISTORY_LIMIT_MIN, HISTORY_LIMIT_MAX = 5, 1, 100
+
+
+def _app() -> dict:
+    try:
+        return _json.loads(APP_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def get_history_limit() -> int:
+    try:
+        n = int(_app().get("history_limit", HISTORY_LIMIT_DEFAULT))
+    except (TypeError, ValueError):
+        return HISTORY_LIMIT_DEFAULT
+    return n if HISTORY_LIMIT_MIN <= n <= HISTORY_LIMIT_MAX else HISTORY_LIMIT_DEFAULT
+
+
+def set_history_limit(value) -> int:
+    """Validate and store; raises ValueError with a user-facing message."""
+    try:
+        if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+            raise ValueError
+        sval = str(value).strip()
+        if not sval.lstrip("-").isdigit():
+            raise ValueError
+        n = int(sval)
+    except (TypeError, ValueError):
+        raise ValueError("Run history limit must be a whole number.")
+    if not HISTORY_LIMIT_MIN <= n <= HISTORY_LIMIT_MAX:
+        raise ValueError(f"Run history limit must be between {HISTORY_LIMIT_MIN} and {HISTORY_LIMIT_MAX}.")
+    data = _app()
+    data["history_limit"] = n
+    tmp = APP_SETTINGS_PATH.with_suffix(".tmp")
+    tmp.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(APP_SETTINGS_PATH)
+    return n
