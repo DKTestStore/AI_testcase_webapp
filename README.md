@@ -1,14 +1,14 @@
-# AI Test Case Web App
+# AI TestCase Generator — Web App
 
-A small web application that generates test cases from feature descriptions using AI
-(Gemini, OpenAI-compatible, or local Ollama) and can push them to Jira / qTest.
+A FastAPI + static HTML/CSS/JS web UI built on the existing `ai_test_generator`
+code. It takes you through **Welcome → Input → Generate → Review → qTest Upload**.
 
 ## Project layout
 
 ```
 .
 ├── ai_test_generator/     # core generation + integrations
-├── backend/               # Flask API
+├── backend/               # FastAPI API
 ├── frontend/              # static HTML/CSS/JS
 ├── requirements.txt
 └── README.md
@@ -18,20 +18,13 @@ A small web application that generates test cases from feature descriptions usin
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 cp ai_test_generator/.env.example ai_test_generator/.env
 # edit .env with your API keys
-python -m backend.app
+uvicorn backend.app:app --reload
 ```
 
-Open the URL printed by the server (typically http://127.0.0.1:5000).
+Open http://127.0.0.1:8000
 
-## Features
-
-- Generate test cases from a feature description
-- Review / refine generated cases
-- Export or push to Jira and qTest
-- Simple web UI
-
-See `NOTES.md` for known gaps and assumptions.
+See `NOTES.md` for known gaps.
