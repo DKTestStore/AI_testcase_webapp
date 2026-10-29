@@ -1,3 +1,13 @@
-flask
-python-dotenv
-requests
+# Web app
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-dotenv>=1.0
+requests>=2.31
+# Existing ai_test_generator dependencies
+google-genai>=0.3
+openai>=1.40
+ollama>=0.2
+jira>=3.8
+fastmcp>=2.0
+pandas>=2.0
+openpyxl>=3.1
