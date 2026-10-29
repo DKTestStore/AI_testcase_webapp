@@ -15,6 +15,7 @@
     <a data-view="review"><span class="num">3</span>Review</a>
     <a data-view="qtest"><span class="num">4</span>qTest Upload</a>
     <div class="sep"></div>
+    <a data-view="history"><span class="num">🕘</span>Run history<span class="cnt" id="hCnt"></span></a>
     <a data-view="setup"><span class="num">✓</span>Setup checklist</a>
     <a data-view="settings"><span class="num">⚙</span>Settings</a>
   </nav>
@@ -26,7 +27,9 @@
     <div class="user" id="userBtn"><span class="avatar">U</span>User ▾</div>
     <div class="menu" id="userMenu">
       <div data-go="settings">⚙ Settings</div>
+      <div data-go="history">🕘 Run history</div>
       <div class="danger" id="logoutItem">↪ Log out</div>
+      <p class="lonote">Logging out keeps your run history on this browser.</p>
     </div>
   </div>
   <div class="content" id="view"></div>
@@ -37,5 +40,6 @@
 <script src="/static/js/review.js"></script>
 <script src="/static/js/excel_upload.js"></script>
 <script src="/static/js/app.js"></script>
+<script src="/static/js/history.js"></script>
 </body>
 </html>

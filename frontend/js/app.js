@@ -65,7 +65,7 @@ function renderNav() {
   });
   const r = S.run || {};
   const g = $('#nav a[data-view="generate"]'); if (g) { const sk = r.imported && !r.markdown; g.classList.toggle("skipped", !!sk); g.title = sk ? "Skipped — test cases were uploaded from Excel" : ""; }
-  $("#runinfo").innerHTML = `Run <b>${esc(r.run_id || "")}</b><br>${r.story_id ? "Story " + esc(r.story_id) + "<br>" : ""}${(r.test_cases || []).length} test cases${r.imported && r.import_info ? '<br>📄 from ' + esc(r.import_info.filename) : ""}${r.dirty || S.localDirty ? '<br><span style="color:#f5c26b">● unsaved changes</span>' : ""}`;
+  $("#runinfo").innerHTML = `Run <b>${esc(r.rid || "(not saved yet)")}</b><br>Story <b>${esc(r.story_id || "—")}</b><br>${(r.test_cases || []).length} test cases${r.imported && r.import_info ? '<br>📄 from ' + esc(r.import_info.filename) : ""}${r.dirty || S.localDirty ? '<br><span style="color:#f5c26b">● unsaved changes</span>' : ""}`;
 }
 function nextBar(cur, nextView, nextLabel, extraLeft = "") {
   const ok = stepDone(cur);
@@ -76,7 +76,7 @@ function bindNext(nextView) { const b = $("#nextBtn"); if (b) b.onclick = () => 
 function render() {
   renderNav();
   const v = $("#view");
-  ({ setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  ({ history: (v) => viewHistory(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
 }
 
 
@@ -85,17 +85,19 @@ async function viewSetup(v) {
   v.innerHTML = `<h1>Setup checklist</h1><div class="sub">Check your configuration before starting a run.</div><div id="setupBody" class="sub">Loading…</div>`;
   let j; try { j = await api("/api/setup/status"); } catch (e) { $("#setupBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
   const it = j.items; const done = it.filter((x) => x.ok).length; const reqOk = it.filter((x) => x.required).every((x) => x.ok);
-  const icon = { gemini_key: "🔑", gemini_model: "🤖", jira: "🧩", qtest: "🧪" };
+  const icon = { gemini_key: "🔑", gemini_model: "🤖", jira: "🧩", qtest: "🧪", default_prompt: "📝" };
   const pct = (done / it.length) * 100;
   $("#setupBody").outerHTML = `<div class="card setup-top"><div class="ring" style="background:conic-gradient(#4361ee ${pct}%,#e5e7eb 0)"><div><b>${done}/${it.length}</b><span>configured</span></div></div>
       <div><h3 style="margin:0 0 4px">Let's get you set up</h3><div class="sub" style="margin:0">Required items must be configured to generate. Optional items unlock Jira input and qTest upload.</div></div></div>
     <div class="setup-grid">${it.map((x) => `<div class="card setup-item ${x.ok ? "ok" : "no"}" data-key="${x.key}"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:22px">${icon[x.key] || "⚙"}</span><span class="tag ${x.required ? "req" : "opt"}">${x.required ? "Required" : "Optional"}</span></div>
       <div class="si-name">${esc(x.label)}</div><div class="sub" style="margin:2px 0 8px">${esc(x.hint)}</div>
-      <div class="si-st">${x.ok ? "✔ Set" : "⚠ Not set"}</div><a href="#settings" class="si-link">Open Settings →</a></div>`).join("")}</div>
+      <div class="si-st">${x.ok ? "✔ Set" : "⚠ Not set"}</div><a href="#settings" class="si-link" ${x.key === "default_prompt" ? 'data-prompt="1"' : ""}>${esc(x.link || "Open Settings →")}</a></div>`).join("")}</div>
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <span>${reqOk ? "✔ All required items are configured — you can start now." : '<b style="color:#a36b00">⚠ Configure the required Gemini settings before generating.</b>'} <span class="sub" style="margin:0">(Jira and qTest are optional: use Local text input and Save &amp; Download Excel without them.)</span></span>
-      <button class="btn" id="startRun">Start run ▸</button></div>`;
+      <button class="btn" id="startRun">Start run ▸</button></div><div id="recentRuns"></div>`;
   $("#startRun").onclick = () => go("input");
+  $$(".si-link[data-prompt]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); S.focusPrompt = true; go("settings"); }));
+  if (window.renderRecentRuns) renderRecentRuns($("#recentRuns"));
 }
 
 // ------------------------------------------------------------------ 1. INPUT
@@ -428,7 +430,14 @@ async function viewSettings(v) {
       <label>${esc(f.label)} ${f.secret ? (f.is_set ? '<span class="pill">set</span>' : '<span class="pill r">not set</span>') : ""}</label>
       <input data-key="${f.key}" ${f.secret ? 'type="password" autocomplete="new-password"' : ""} placeholder="${f.secret ? esc(f.value || "not set") : ""}" value="${f.secret ? "" : esc(f.value)}" style="width:100%">
       ${f.secret && f.is_set ? `<button class="btn g sm" data-clear="${f.key}" style="margin-top:6px">Clear</button>` : ""}</div>`).join("")}</div></div>`).join("") +
-    `<button class="btn" id="saveSettings">Save Settings</button>`;
+    `<button class="btn" id="saveSettings">Save Settings</button>
+    <div class="card" id="promptCard" style="margin-top:18px"><h3>📝 Default prompt <span class="sub" id="promptFile" style="font-weight:400"></span></h3>
+      <div class="sub" style="margin:0 0 8px">Used by Generate when "Default prompt" is selected. It must not be empty.</div>
+      <textarea id="promptText" style="width:100%;min-height:220px;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+      <div style="margin-top:8px"><button class="btn" id="savePrompt">Save prompt</button></div></div>`;
+  api("/api/prompt/default").then((pj) => { $("#promptText").value = pj.text; $("#promptFile").textContent = "· " + pj.filename; }).catch((e) => { $("#promptFile").textContent = "· " + e.message; });
+  $("#savePrompt").onclick = () => guarded($("#savePrompt"), async () => { await api("/api/prompt/default", { method: "PUT", body: { text: $("#promptText").value } }); toast("Default prompt saved"); });
+  if (S.focusPrompt) { S.focusPrompt = false; $("#promptCard").scrollIntoView({ block: "start" }); }
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
     const values = {}; $$("[data-key]").forEach((i) => { if (i.type !== "password" || i.value.trim()) values[i.dataset.key] = i.value; });
     const r = await api("/api/settings", { method: "PUT", body: { values } }); toast(`Saved (${r.changed.length} changed)`); viewSettings(v);
@@ -449,19 +458,19 @@ function unsavedSummary() {
 function logoutDialog() {
   $("#userMenu").classList.remove("open");
   const u = unsavedSummary();
-  modal(`<h1>Log out?</h1><div class="sub" style="margin:6px 0 14px">You'll return to the Welcome page and this run's data will be cleared.</div>
-    ${u.length ? `<div class="warn" style="margin-bottom:18px">⚠ You have ${u.map(esc).join(", ")}${S.run.story_id ? " for " + esc(S.run.story_id) : ""}. They will be lost if you log out.</div>` : ""}
+  modal(`<h1>Log out?</h1><div class="sub" style="margin:6px 0 14px">You'll return to the Welcome page. Saved runs stay in Run history on this browser.</div>
+    ${u.length ? `<div class="warn" style="margin-bottom:18px">⚠ You have ${u.map(esc).join(", ")}${S.run.story_id ? " for " + esc(S.run.story_id) : ""}. Unsaved edits will be lost if you log out.</div>` : ""}
     <div style="text-align:right"><button class="btn g" id="mCancel">Cancel</button> <button class="btn r" id="mOk">Log out</button></div>`);
   $("#mCancel").onclick = closeModal;
   $("#mOk").onclick = async () => { try { await api("/api/session/logout", { method: "POST" }); } catch {} S.localDirty = false; window.location.href = "/welcome"; };
 }
 function newRunDialog() {
   const u = unsavedSummary();
-  modal(`<h1>Start a new run?</h1><div class="sub" style="margin:6px 0 14px">Input, generated test cases and upload results of the current run will be cleared (files already saved in reports/ are kept).</div>
+  modal(`<h1>Start a new run?</h1><div class="sub" style="margin:6px 0 14px">The current run is kept in Run history and a fresh empty run starts.</div>
     ${u.length ? `<div class="warn" style="margin-bottom:18px">⚠ You have ${u.map(esc).join(", ")}.</div>` : ""}
     <div style="text-align:right"><button class="btn g" id="mCancel">Cancel</button> <button class="btn" id="mOk">Start new run</button></div>`);
   $("#mCancel").onclick = closeModal;
-  $("#mOk").onclick = () => guarded($("#mOk"), async () => { await api("/api/run/new", { method: "POST" }); Object.assign(S, { localDirty: false, cases: [], inputMode: null, localText: "", localFile: null, payloadPreview: null, qtab: "upload" }); closeModal(); go("input"); });
+  $("#mOk").onclick = () => guarded($("#mOk"), async () => { await api("/api/run/new", { method: "POST" }); Object.assign(S, { localDirty: false, cases: [], inputMode: null, localText: "", localFile: null, payloadPreview: null, qtab: "upload" }); closeModal(); go("input"); if (window.refreshHistoryCount) refreshHistoryCount(); });
 }
 
 // ------------------------------------------------------------------ boot
@@ -477,6 +486,7 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
 (async function boot() {
   try { await api("/api/state"); } catch (e) { return; }
   const h = location.hash.slice(1);
-  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup")) ? h : "input";
+  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history")) ? h : "input";
   render();
+  if (window.refreshHistoryCount) refreshHistoryCount();
 })();
