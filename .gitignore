@@ -1,10 +1,6 @@
-*.pyc
-__pycache__/
-.env
-*.log
-.DS_Store
-venv/
 .venv/
-*.egg-info/
-dist/
-build/
+__pycache__/
+ai_test_generator/.env
+ai_test_generator/reports/*
+!ai_test_generator/reports/.gitkeep
+backend/sessions/
