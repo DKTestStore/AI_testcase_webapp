@@ -1,0 +1,4 @@
+User can log in with email and password.
+After successful login the user is redirected to the dashboard.
+Invalid credentials show an error message.
+Session expires after 30 minutes of inactivity.
