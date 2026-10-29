@@ -326,7 +326,7 @@ async function qUpload(el) {
     <div id="modExisting" class="hidden"><label>Existing Module ID</label><input id="qModId" style="width:100%" placeholder="numeric module id"></div>
     <div style="margin-top:14px"><button class="btn g" id="previewBtn">👁 Preview payload</button> <button class="btn" id="uploadBtn">⬆ Confirm Upload (${(r.test_cases || []).length})</button></div></div>
     <div class="card" id="resultCard">${uploadSummary(up)}</div></div>
-    <div><div class="card"><h3>Payload Preview</h3><div id="payload">${S.payloadPreview ? payloadHtml(S.payloadPreview) : '<div class="muted">Click “Preview payload” to build the qTest JSON from the saved Excel (nothing is sent).</div>'}</div></div></div></div>
+    <div><div class="card pl-card"><h3>Payload Preview</h3><div id="payload">${S.payloadPreview ? payloadHtml(S.payloadPreview) : '<div class="muted">Click “Preview payload” to build the qTest JSON from the saved Excel (nothing is sent).</div>'}</div></div></div></div>
   ${nextBar("qtest", null, "")}`;
   let modMode = "new";
   $$("#modSeg button").forEach((b) => (b.onclick = () => { modMode = b.dataset.m; $$("#modSeg button").forEach((x) => x.classList.toggle("a", x === b)); $("#modNew").classList.toggle("hidden", modMode !== "new"); $("#modExisting").classList.toggle("hidden", modMode === "new"); }));
@@ -347,11 +347,18 @@ async function qUpload(el) {
     });
   };
 }
+function jsonHl(obj) {
+  return esc(JSON.stringify(obj, null, 2)).replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (m, str, colon, lit, num) => str ? (colon ? `<span class="jk">${str}</span>${colon}` : `<span class="js">${str}</span>`) : lit ? `<span class="jl">${lit}</span>` : `<span class="jn">${num}</span>`);
+}
 function payloadHtml(j) {
   const p = j.payloads || []; const ids = (S.run.test_cases || []).map((t) => t.id);
-  setTimeout(() => { const t = $("#plToggle"); if (t) t.onclick = () => { const all = $$("#plList details"); const open = !all.every((d) => d.open); all.forEach((d) => (d.open = open)); t.textContent = open ? "Collapse all" : "Expand all"; }; }, 0);
-  return `<div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px"><span class="sub" style="margin:0"><b>${p.length}</b> payloads · POST …/test-cases/ · showing all</span><button class="btn g sm" id="plToggle">Expand all</button></div>
-    <div id="plList" class="pl-list">${p.map((x, i) => `<details ${i === 0 ? "open" : ""}><summary><b>#${i + 1}</b> ${esc(ids[i] || "")} · ${esc(x.name)} <span class="sub" style="margin:0">(${(x.test_steps || []).length} steps)</span></summary><pre>${esc(JSON.stringify(x, null, 2))}</pre></details>`).join("")}</div>`;
+  setTimeout(() => {
+    const t = $("#plToggle"); if (t) t.onclick = () => { const all = $$("#plList details"); const open = !all.every((d) => d.open); all.forEach((d) => (d.open = open)); t.textContent = open ? "Collapse all" : "Expand all"; };
+    const c = $("#plCopy"); if (c) c.onclick = async () => { const txt = JSON.stringify(p, null, 2); try { await navigator.clipboard.writeText(txt); } catch { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } toast(`Copied ${p.length} payloads as JSON`); };
+  }, 0);
+  return `<div class="pl-head"><span class="sub" style="margin:0"><b>${p.length}</b> payloads · POST …/test-cases/ · showing all</span><span><button class="btn g sm" id="plCopy">📋 Copy JSON</button> <button class="btn g sm" id="plToggle">Expand all</button></span></div>
+    <div id="plList" class="pl-list">${p.map((x, i) => `<details ${i === 0 ? "open" : ""}><summary><b>#${i + 1}</b> ${esc(ids[i] || "")} · ${esc(x.name)} <span class="sub" style="margin:0">(${(x.test_steps || []).length} steps)</span></summary><pre class="json">${jsonHl(x)}</pre></details>`).join("")}</div>`;
 }
 function uploadSummary(up) {
   if (!up) return `<h3>Results Summary</h3><div class="muted">Not uploaded yet.</div>`;

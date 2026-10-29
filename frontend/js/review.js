@@ -4,7 +4,7 @@
    written to the Excel file or the qTest payload. */
 "use strict";
 const PAGE_SIZE = 25;
-const STATUS = { not: { label: "○ Not reviewed", cls: "s-n" }, reviewed: { label: "✓ Reviewed", cls: "s-r" }, changes: { label: "! Needs changes", cls: "s-c" } };
+const STATUS = { not: { label: "◷ Not reviewed", cls: "s-n" }, reviewed: { label: "✓ Reviewed", cls: "s-r" }, changes: { label: "⚠ Needs changes", cls: "s-c" } };
 const STATUS_NEXT = { not: "reviewed", reviewed: "changes", changes: "not" };
 const PRIO = ["High", "Medium", "Low"];
 const ACCOLORS = ["c1", "c2", "c3", "c4", "c5", "c6"];
@@ -114,6 +114,7 @@ async function saveCases() {
 // ------------------------------------------------------------------ list rendering (keeps scroll position — Bug 04)
 function renderList() {
   const y = window.scrollY; closePop();
+  const inner = {}; $$(".tc-scroll").forEach((e) => (inner[e.dataset.sk] = e.scrollTop));
   const f = filtered(); const pages = Math.max(1, Math.ceil(f.length / PAGE_SIZE));
   if (RV.page >= pages) RV.page = pages - 1;
   const slice = f.slice(RV.page * PAGE_SIZE, RV.page * PAGE_SIZE + PAGE_SIZE);
@@ -126,6 +127,8 @@ function renderList() {
   } else if (f.length) h += `<div class="sub" style="text-align:center;margin:6px 0">Showing ${f.length} of ${total}</div>`;
   $("#rvList").innerHTML = h;
   renderBulk(); updateProgress();
+  $$(".tc-scroll").forEach((e) => { if (inner[e.dataset.sk] !== undefined) e.scrollTop = inner[e.dataset.sk]; });
+  const js = RV.justStep && $(".sr.just"); if (js) { const sc = js.closest(".tc-scroll"); if (sc && (js.offsetTop < sc.scrollTop || js.offsetTop > sc.scrollTop + sc.clientHeight - 40)) sc.scrollTop = js.offsetTop - sc.clientHeight / 2; }
   window.scrollTo(0, y);
   if (RV.just || RV.justStep) setTimeout(() => { RV.just = RV.justStep = null; $$(".just").forEach((e) => e.classList.remove("just")); }, 2500);
 }
@@ -145,11 +148,11 @@ function card(t, i, total) {
     <div class="tc-meta"><span class="acs">${chips}<button class="addac" data-act="acadd">+ AC</button></span>
       <button class="prio p-${t.priority}" data-act="prio">${t.priority} ▾</button>
       <span class="sub nsteps">${t.steps.length} steps</span>
-      <button class="stp ${st.cls}" data-act="status" title="Click to change status">${st.label}</button>
+      <button class="stp ${st.cls}" data-act="status" title="Click to change review status">${st.label} <span class="caret">▾</span></button>
       <button class="ib" data-act="tcmenu" title="More">⋮</button></div>
    </div>`;
   if (open) {
-    h += `<div class="tc-b"><div class="tc-grid"><div><div class="lbl">Test Case Description</div>${ce("description", t.description, ed.description, "Add a description…", 'data-multi="1"')}</div>
+    h += `<div class="tc-b"><div class="tc-scroll" data-sk="${t._k}"><div class="tc-grid"><div><div class="lbl">Test Case Description</div>${ce("description", t.description, ed.description, "Add a description…", 'data-multi="1"')}</div>
       <div><div class="lbl">Precondition</div>${ce("precondition", t.precondition, ed.precondition, "Add a precondition…", 'data-multi="1"')}</div></div>
       <div class="sr lbl"><span></span><span>#</span><span>Step Description</span><span>Expected Result</span><span style="text-align:right">Actions</span></div>`;
     t.steps.forEach((s, si) => {
@@ -158,7 +161,7 @@ function card(t, i, total) {
         ${ce("description", s.description, se.description, "Step action…", `data-step="${si}"`)}${ce("expected", s.expected, se.expected, "Expected result…", `data-step="${si}"`)}
         <span class="ra"><button class="ib" data-act="sup" title="Move step up" ${si ? "" : "disabled"}>▲</button><button class="ib" data-act="sdown" title="Move step down" ${si < t.steps.length - 1 ? "" : "disabled"}>▼</button><button class="ib add" data-act="sadd" title="Add step below">＋</button><button class="ib del" data-act="sdel" title="Remove step" ${t.steps.length > 1 ? "" : "disabled"}>−</button><button class="ib" data-act="smenu" title="More">⋮</button></span></div>`;
     });
-    h += `<div style="padding-top:8px"><button class="btn g sm" data-act="sadd" data-s="${t.steps.length - 1}">＋ Add step</button></div></div>`;
+    h += `</div><div class="tc-foot"><button class="btn g sm" data-act="sadd" data-s="${t.steps.length - 1}">＋ Add step</button><span class="sub" style="margin:0">${t.steps.length} steps</span></div></div>`;
   }
   return h + "</div>";
 }
@@ -234,7 +237,7 @@ function onListClick(e) {
     case "sel": b.checked ? RV.sel.add(t._k) : RV.sel.delete(t._k); renderBulk(); break;
     case "tcup": moveTc(i, -1); break;
     case "tcdown": moveTc(i, 1); break;
-    case "status": t.status = STATUS_NEXT[t.status]; markDirty(); renderList(); break;
+    case "status": openStatus(b, t); break;
     case "namesave": { const el = $("[data-name]", card); el.blur(); card.querySelector(".tc-title").classList.remove("editing"); toast("Name updated — click Save changes to persist"); break; }
     case "namecancel": cancelName($("[data-name]", card)); break;
     case "acdel": t.acs = t.acs.filter((x) => x !== b.dataset.a); markDirty(); renderList(); break;
@@ -251,7 +254,7 @@ function onListClick(e) {
 
 // ------------------------------------------------------------------ overlay popovers (absolute, no layout shift)
 function closePop() { const p = $("#rvPop"); if (p) p.remove(); document.removeEventListener("mousedown", popOutside, true); }
-function popOutside(e) { const p = $("#rvPop"); if (p && !p.contains(e.target) && !e.target.closest("[data-act='acadd'],[data-act='prio'],[data-act='tcmenu'],[data-act='smenu']")) closePop(); }
+function popOutside(e) { const p = $("#rvPop"); if (p && !p.contains(e.target) && !e.target.closest("[data-act='acadd'],[data-act='prio'],[data-act='status'],[data-act='tcmenu'],[data-act='smenu']")) closePop(); }
 function openPop(anchor, html, width, alignRight) {
   closePop();
   const r = anchor.getBoundingClientRect(); const p = document.createElement("div");
@@ -264,6 +267,10 @@ function openPop(anchor, html, width, alignRight) {
 function openPrio(b, t) {
   const p = openPop(b, PRIO.map((x) => `<div class="pi ${x === t.priority ? "a" : ""}" data-v="${x}"><span class="prio p-${x}">${x}</span>${x === t.priority ? " ✓" : ""}</div>`).join(""), 140, true);
   $$(".pi", p).forEach((d) => (d.onclick = () => { t.priority = d.dataset.v; t._ed = t._ed || {}; markDirty(); closePop(); renderList(); }));
+}
+function openStatus(b, t) {
+  const p = openPop(b, `<div class="lbl" style="padding:4px 8px">Review status</div>` + Object.entries(STATUS).map(([k, x]) => `<div class="pi ${k === t.status ? "a" : ""}" data-v="${k}"><span class="stp ${x.cls}" style="width:auto">${x.label}</span>${k === t.status ? " ✓" : ""}</div>`).join(""), 190, true);
+  $$(".pi", p).forEach((d) => (d.onclick = () => { if (t.status !== d.dataset.v) { t.status = d.dataset.v; markDirty(); } closePop(); renderList(); }));
 }
 function openAcPicker(b, t) {
   const list = S.run.ac_list || [];
