@@ -320,6 +320,99 @@ def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# Regenerate ONE test case
+# --------------------------------------------------------------------------- #
+REGEN_SYSTEM = """You are a senior QA engineer. Rewrite exactly ONE manual test case.
+Rules:
+- Return ONLY a JSON object, no prose, no markdown fences:
+  {"name": str, "description": str, "precondition": str, "priority": "High"|"Medium"|"Low",
+   "steps": [{"description": str, "expected": str}, ...]}
+- Keep it a single test case focused on the same intent/acceptance criteria unless the instruction says otherwise.
+- Follow the user's instruction. Steps must be concrete and testable, each with a clear expected result.
+- Do not include the test case id. Do not invent features not implied by the story / acceptance criteria.
+"""
+
+
+def _parse_regen(text: str) -> Dict[str, Any]:
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.strip("`")
+        t = t[t.find("{"):] if "{" in t else t
+    i, j = t.find("{"), t.rfind("}")
+    if i < 0 or j <= i:
+        raise ServiceError("The model did not return a test case. Try again or rephrase the instruction.", 502)
+    try:
+        data = json.loads(t[i:j + 1])
+    except Exception:
+        raise ServiceError("The model's answer could not be read as a test case. Try again.", 502)
+    steps = [{"description": str(s.get("description", "")).strip(), "expected": str(s.get("expected", "")).strip()}
+             for s in (data.get("steps") or []) if isinstance(s, dict)]
+    steps = [s for s in steps if s["description"] or s["expected"]]
+    if not str(data.get("name", "")).strip() or not steps:
+        raise ServiceError("The model returned an incomplete test case (missing name or steps). Try again.", 502)
+    return {"name": str(data["name"]).strip(), "description": str(data.get("description", "")).strip(),
+            "precondition": str(data.get("precondition", "")).strip(),
+            "priority": data.get("priority") if data.get("priority") in ("High", "Medium", "Low") else "",
+            "steps": steps}
+
+
+def _mock_regen(tc: Dict[str, Any], instruction: str) -> str:
+    """Deterministic offline stand-in used only when the process env ATG_MOCK_GEMINI=1 (tests)."""
+    if "[mock-error]" in instruction:
+        raise ServiceError("Gemini regenerate error: mocked failure (quota exceeded)", 502)
+    if "[mock-bad]" in instruction:
+        return "Sorry, I cannot help with that."
+    old = tc.get("steps") or []
+    first = (old[0]["description"] if old else "Open the page") + " (refined)"
+    return json.dumps({
+        "name": "Reject reset requests for invalid or unregistered emails",
+        "description": "Negative cases: invalid format, empty input and unregistered email",
+        "precondition": "User is on the Forgot password page (logged out)", "priority": "High",
+        "steps": [{"description": first, "expected": "Inline error 'Enter a valid email address' is shown"},
+                  {"description": "Leave the email empty and click Send link", "expected": "'Email is required' is shown"},
+                  {"description": "Enter unregistered email 'nobody@cx.com' and click Send link",
+                   "expected": "Generic message is shown (no account enumeration)"}]})
+
+
+def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], tc: Dict[str, Any],
+                   instruction: str) -> Dict[str, Any]:
+    ac_txt = "\n".join(f"- {a.get('id')}: {a.get('title', '')}" for a in acs) or "(none linked)"
+    cur = {k: tc.get(k) for k in ("name", "description", "precondition", "priority")}
+    cur["steps"] = [{"description": s.get("description", ""), "expected": s.get("expected", "")} for s in tc.get("steps") or []]
+    content = (f"Story: {story_id or '(none)'}\n\nRequirements / story text (truncated):\n{(feature_text or '')[:12000]}\n\n"
+               f"Linked acceptance criteria:\n{ac_txt}\n\nCurrent test case (JSON):\n{json.dumps(cur, ensure_ascii=False)}\n\n"
+               f"Instruction: {instruction or 'Improve this test case: make steps concrete and complete.'}")
+    usage: Dict[str, Any] = {"model": "gemini"}
+    if os.environ.get("ATG_MOCK_GEMINI") == "1":
+        text = _mock_regen(tc, instruction or "")
+        usage.update({"mock": True, "total_tokens": 0})
+    else:
+        g = _gemini_module()
+        try:
+            resp = g.client.models.generate_content(
+                model=g.gemini_model, contents=content,
+                config=g.types.GenerateContentConfig(system_instruction=REGEN_SYSTEM, temperature=0.4,
+                                                     response_mime_type="application/json"))
+        except Exception as ex:
+            raise ServiceError(f"Gemini regenerate error: {ex}", 502)
+        um = getattr(resp, "usage_metadata", None)
+        total = getattr(um, "total_token_count", 0) or 0
+        usage.update({"input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                      "output_tokens": getattr(um, "candidates_token_count", 0) or 0, "total_tokens": total})
+        try:
+            data, today = g.get_today_quota()
+            today["requests_used"] = today.get("requests_used", 0) + 1
+            today["requests_left"] = g.DAILY_REQUEST_LIMIT - today["requests_used"]
+            today["tokens_used"] = today.get("tokens_used", 0) + total
+            today["tokens_left"] = g.DAILY_TOKEN_LIMIT - today["tokens_used"]
+            g.save_quota(data)
+        except Exception:
+            pass
+        text = getattr(resp, "text", "") or ""
+    return {"test_case": _parse_regen(text), "usage": usage}
+
+
+# --------------------------------------------------------------------------- #
 # Excel
 # --------------------------------------------------------------------------- #
 def save_excel(markdown: str, path: Path) -> Path:

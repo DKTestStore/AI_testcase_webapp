@@ -278,6 +278,28 @@ def save_cases(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     return {"ok": True, "run": _public_run(run)}
 
 
+@app.post("/api/review/regenerate")
+def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    """Regenerate ONE test case. Returns a proposal only; accept / add-as-new / undo happen in the
+    browser and are persisted with PUT /api/review/test_cases."""
+    run = _run(sess)
+    tcs = parsing.sanitize_cases([data.get("test_case") or {}])
+    if not tcs or not (tcs[0]["name"] or tcs[0]["steps"]):
+        raise ServiceError("No test case to regenerate.")
+    tc = tcs[0]
+    instruction = str(data.get("instruction") or "").strip()[:1000]
+    ac_list = run.get("ac_list") or _ac_list(run)
+    linked = [a for a in ac_list if a["id"] in tc["acs"]]
+    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction)
+    prop = res["test_case"]
+    if data.get("keep_title_priority"):
+        prop["name"], prop["priority"] = tc["name"], tc["priority"]
+    prop["priority"] = prop["priority"] or tc["priority"]
+    prop.update({"acs": tc["acs"], "status": "not", "regenerated": True})
+    log.info("regenerate %s (%s)", tc.get("id"), "mock" if res["usage"].get("mock") else "gemini")
+    return {"ok": True, "proposal": prop, "usage": res["usage"]}
+
+
 @app.post("/api/review/ai")
 def run_reviewer(sess=Depends(current)):
     run = _run(sess)

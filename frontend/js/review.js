@@ -64,7 +64,7 @@ function viewReview(v) {
       <select id="rvAc"><option value="">All ACs</option>${acs.map((a) => `<option value="${esc(a.id)}" ${RV.ac === a.id ? "selected" : ""}>${esc(a.id)}</option>`).join("")}</select>
       <span style="flex:1"></span><span class="rv-prog" id="rvProg"></span>
       <button class="btn g sm" id="expAll">⊞ Expand all</button><button class="btn g sm" id="colAll">⊟ Collapse all</button></div>
-    <div class="rv-legend sub"><span><span class="hdl">⋮⋮</span> drag or ▲▼ to reorder</span><span>🔢 IDs &amp; step numbers auto-resequence after a move</span><span>Status: click the pill to change</span><span><span class="edot"></span> edited (unsaved)</span><span>AC mapping, priority &amp; status are display-only — not sent to qTest</span></div>
+    <div class="rv-legend sub"><span><span class="hdl">⋮⋮</span> drag or ▲▼ to reorder</span><span>🔢 IDs &amp; step numbers auto-resequence after a move</span><span>Status: click the pill to change</span><span><span class="edot"></span> edited (unsaved)</span><span>AC mapping, priority &amp; status are display-only — not sent to qTest</span><span>↻ Regenerate: redo one test case with a short instruction</span></div>
     <div id="rvBulk"></div><div id="rvList"></div>
     <div class="footer-nav"><div></div><button class="btn" id="nextBtn" ${S.cases.length ? "" : "disabled"}>Continue to qTest Upload →</button></div>`;
   updateProgress(); renderList();
@@ -135,21 +135,23 @@ const ce = (f, val, ed, ph, extra = "") => `<div class="ed ${ed ? "edited" : ""}
 function card(t, i, total) {
   const open = RV.open.has(t._k); const st = STATUS[t.status]; const ed = t._ed || {};
   const chips = t.acs.map((a) => `<span class="ac ${acCls(a)}" title="${esc(acTitle(a))}">${esc(a)}<b data-act="acdel" data-a="${esc(a)}" title="Remove">×</b></span>`).join("");
-  let h = `<div class="tc st-${t.status} ${open ? "open" : ""} ${RV.just === t._k ? "just" : ""}" data-k="${t._k}">
+  const rgL = window.RG && RG.loading === t._k;
+  let h = `<div class="tc st-${t.status} ${open ? "open" : ""} ${RV.just === t._k ? "just" : ""} ${rgL ? "rg-loading" : ""} ${window.RG && RG.flash === t._k ? "rg-flash" : ""}" data-k="${t._k}">
    <div class="tc-h">
     <input type="checkbox" data-act="sel" ${RV.sel.has(t._k) ? "checked" : ""} title="Select">
     <span class="hdl" draggable="true" data-drag="tc" title="Drag to reorder">⋮⋮</span>
     <span class="mvs"><button class="mv" data-act="tcup" title="Move up" ${i === 0 ? "disabled" : ""}>▲</button><button class="mv" data-act="tcdown" title="Move down" ${i === total - 1 ? "disabled" : ""}>▼</button></span>
     <button class="chev" data-act="toggle" title="${open ? "Collapse" : "Expand"}">❯</button>
     <b class="tcid" data-act="toggle">${esc(t.id)}</b>
-    <div class="tc-title">${ce("name", t.name, ed.name, "Test case name", 'data-name="1"')}<span class="namebtns"><button class="btn s sm" data-act="namesave">✓ Save</button><button class="btn g sm" data-act="namecancel">✕ Cancel</button></span>
+    <div class="tc-title">${t.regenerated ? '<span class="rg-badge" title="Regenerated with AI — review it again">↻ Regenerated</span>' : ""}${ce("name", t.name, ed.name, "Test case name", 'data-name="1"')}<span class="namebtns"><button class="btn s sm" data-act="namesave">✓ Save</button><button class="btn g sm" data-act="namecancel">✕ Cancel</button></span>
       ${open ? "" : `<div class="tc-desc" data-act="toggle">${esc(t.description) || '<span class="muted">No description</span>'}</div>`}</div>
     <div class="tc-meta"><span class="acs">${chips}<button class="addac" data-act="acadd">+ AC</button></span>
       <button class="prio p-${t.priority}" data-act="prio">${t.priority} ▾</button>
       <span class="sub nsteps">${t.steps.length} steps</span>
       <button class="stp ${st.cls}" data-act="status" title="Click to change review status">${st.label} <span class="caret">▾</span></button>
+      <button class="rg-btn" data-act="regen" title="Regenerate only ${esc(t.id)} with AI · other test cases are untouched" ${window.RG && RG.loading ? "disabled" : ""}>↻ Regenerate</button>
       <button class="ib" data-act="tcmenu" title="More">⋮</button></div>
-   </div>`;
+   </div>${rgL ? window.rgOverlay(t) : ""}`;
   if (open) {
     h += `<div class="tc-b"><div class="tc-scroll" data-sk="${t._k}"><div class="tc-grid"><div><div class="lbl">Test Case Description</div>${ce("description", t.description, ed.description, "Add a description…", 'data-multi="1"')}</div>
       <div><div class="lbl">Precondition</div>${ce("precondition", t.precondition, ed.precondition, "Add a precondition…", 'data-multi="1"')}</div></div>
@@ -260,12 +262,14 @@ function onListClick(e) {
     case "sadd": { const ns = { description: "", expected: "", _k: ++_uid, _ed: { description: 1 } }; t.steps.splice(si + 1, 0, ns); RV.justStep = ns._k; markDirty(); renderList(); const el = $(`.sr.just .ed`); if (el) el.focus(); break; }
     case "sdel": if (t.steps.length > 1) { t.steps.splice(si, 1); markDirty(); renderList(); } break;
     case "smenu": openStepMenu(b, t, si); break;
+    case "regen": window.openRegen && openRegen(b, t); break;
+    case "rgcancel": window.cancelRegen && cancelRegen(); break;
   }
 }
 
 // ------------------------------------------------------------------ overlay popovers (absolute, no layout shift)
 function closePop() { const p = $("#rvPop"); if (p) p.remove(); document.removeEventListener("mousedown", popOutside, true); }
-function popOutside(e) { const p = $("#rvPop"); if (p && !p.contains(e.target) && !e.target.closest("[data-act='acadd'],[data-act='prio'],[data-act='status'],[data-act='tcmenu'],[data-act='smenu']")) closePop(); }
+function popOutside(e) { const p = $("#rvPop"); if (p && !p.contains(e.target) && !e.target.closest("[data-act='acadd'],[data-act='prio'],[data-act='status'],[data-act='tcmenu'],[data-act='smenu'],[data-act='regen']")) closePop(); }
 function openPop(anchor, html, width, alignRight) {
   closePop();
   const r = anchor.getBoundingClientRect(); const p = document.createElement("div");

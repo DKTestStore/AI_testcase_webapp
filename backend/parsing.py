@@ -77,6 +77,7 @@ def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
             "priority": tc.get("priority") if tc.get("priority") in PRIORITIES else "Medium",
             "acs": [str(a)[:20] for a in (tc.get("acs") or []) if str(a).strip()][:30],
             "status": tc.get("status") if tc.get("status") in STATUSES else "not",
+            "regenerated": bool(tc.get("regenerated")),  # display-only badge
         })
     return out
 
