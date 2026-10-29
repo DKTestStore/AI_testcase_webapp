@@ -103,7 +103,7 @@ def record(hid: str, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             while len(items) > limit:             # FIFO: drop only the oldest beyond the limit
                 old = items.pop()                 # list is kept newest-first
 
-                _drop_files(hid, old["run_id"], keep=run["run_id"])
+                _drop_entry(hid, old, keep=run["run_id"])
         run["rid"] = ent["rid"]
         ent.update(_summary(run), updated=now.isoformat(timespec="seconds"))
         _write(hid, idx)
@@ -118,6 +118,67 @@ def _drop_files(hid, run_id, keep=None):
     if p.exists():
         p.unlink()
     shutil.rmtree(RUNS_DIR / run_id, ignore_errors=True)
+
+
+def _drop_entry(hid, ent, keep=None):
+    """A batch entry counts as one history entry; removing it removes all of its item runs."""
+    _drop_files(hid, ent["run_id"], keep=keep)
+    for ch in ent.get("children") or []:
+        if ch.get("run_id") != keep and str(ch.get("run_id", "")).isalnum():
+            shutil.rmtree(RUNS_DIR / ch["run_id"], ignore_errors=True)
+
+
+def _bump(idx, key, day):
+    seq = idx.setdefault(key, {})
+    n = seq.get(day, 0) + 1
+    seq[day] = n
+    idx[key] = dict(sorted(seq.items())[-10:])
+    return n
+
+
+def record_batch(hid: str, batch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Upsert a whole batch as ONE history entry (kind=batch) with its item runs as children.
+    Item runs get RUN-YYYYMMDD-NNN ids from the same daily sequence as single runs."""
+    items_with_cases = [it for it in batch.get("items", []) if (it.get("run") or {}).get("test_cases")]
+    if not valid(hid) or not items_with_cases:
+        return None
+    with _LOCK:
+        idx = _load(hid)
+        items: List[Dict[str, Any]] = idx["items"]
+        now = datetime.now(IST)
+        day = now.strftime("%Y%m%d")
+        ent = next((e for e in items if e["run_id"] == batch["batch_id"]), None)
+        if ent is None:
+            if not batch.get("rid"):
+                batch["rid"] = f"BATCH-{day}-{_bump(idx, 'bseq', day):02d}"
+            ent = {"run_id": batch["batch_id"], "rid": batch["rid"], "kind": "batch",
+                   "created": now.isoformat(timespec="seconds")}
+            items.insert(0, ent)
+            limit = get_history_limit()
+            while len(items) > limit:
+                _drop_entry(hid, items.pop(), keep=batch["batch_id"])
+        children = []
+        for it in items_with_cases:
+            run = it["run"]
+            if not run.get("rid"):
+                run["rid"] = f"RUN-{day}-{_bump(idx, 'seq', day):03d}"
+            ch = {"run_id": run["run_id"], "rid": run["rid"], "key": it["key"], **_summary(run)}
+            ch["story_id"] = it.get("item_id") or ch["story_id"]
+            ch["title"] = it.get("title") or ch["title"]
+            ch["source"] = {"jira": "Jira", "local": "Local text", "excel": "Excel upload"}[it["source"]]
+            children.append(ch)
+        n_up = sum(1 for c in children if c["status"] == "Uploaded to qTest")
+        n_rv = sum(1 for c in children if c["status"] in ("Reviewed", "Uploaded to qTest"))
+        status = ("Uploaded to qTest" if n_up == len(children) else "Partly uploaded" if n_up
+                  else "Reviewed" if n_rv == len(children) else "Draft")
+        ent.update(story_id=", ".join(c["story_id"] for c in children if c["story_id"]),
+                   title=f"Batch · {len(children)} item" + ("s" if len(children) != 1 else ""),
+                   source="Batch", count=sum(c["count"] for c in children),
+                   reviewed=sum(c["reviewed"] for c in children), status=status,
+                   children=children, updated=now.isoformat(timespec="seconds"))
+        _write(hid, idx)
+        (_dir(hid) / "runs" / f"{batch['batch_id']}.json").write_text(json.dumps(batch, default=str), encoding="utf-8")
+        return ent
 
 
 def list_items(hid) -> List[Dict[str, Any]]:
@@ -152,8 +213,9 @@ def delete(hid, run_id) -> bool:
         idx["items"] = [e for e in idx["items"] if e["run_id"] != run_id]
         if len(idx["items"]) == before:
             return False
+        gone = next(e for e in _load(hid)["items"] if e["run_id"] == run_id)
         _write(hid, idx)
-        _drop_files(hid, run_id)
+        _drop_entry(hid, gone)
         return True
 
 
@@ -174,6 +236,6 @@ def prune_all(limit: int, hid: Optional[str] = None) -> int:
             idx["items"] = idx["items"][:limit]
             _write(d.name, idx)
             for e in drop:
-                _drop_files(d.name, e["run_id"])
+                _drop_entry(d.name, e)
                 removed += d.name == hid
     return removed

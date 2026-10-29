@@ -51,6 +51,7 @@ function stepUnlocked(s) {
   return STEPS.slice(0, i).every((p) => stepDone(p));
 }
 function go(view) {
+  if (S.mode === "batch") return batchGo(view);
   if (STEPS.includes(view) && !stepUnlocked(view)) { toast("Complete the previous step first.", true); return; }
   if (S.view === "review" && view !== "review" && S.localDirty && !confirm("You have unsaved edits in the Review table. Leave without saving?")) return;
   if (S.view === "review" && view !== "review") S.localDirty = false;
@@ -65,6 +66,7 @@ function renderNav() {
   });
   const r = S.run || {};
   const g = $('#nav a[data-view="generate"]'); if (g) { const sk = r.imported && !r.markdown; g.classList.toggle("skipped", !!sk); g.title = sk ? "Skipped — test cases were uploaded from Excel" : ""; }
+  if (S.mode === "batch") { clearTimeout(renderNav._b); renderNav._b = setTimeout(() => S.mode === "batch" && refreshBatch().then(() => { if (S.mode === "batch") { renderBatchNav(); bRenderList(); } }).catch(() => {}), 150); return; }
   $("#runinfo").innerHTML = `Run <b>${esc(r.rid || "(not saved yet)")}</b><br>Story <b>${esc(r.story_id || "—")}</b><br>${(r.test_cases || []).length} test cases${r.imported && r.import_info ? '<br>📄 from ' + esc(r.import_info.filename) : ""}${r.dirty || S.localDirty ? '<br><span style="color:#f5c26b">● unsaved changes</span>' : ""}`;
 }
 function nextBar(cur, nextView, nextLabel, extraLeft = "") {
@@ -85,6 +87,7 @@ function ensureTicketPill() {
 }
 new MutationObserver(() => ensureTicketPill()).observe(document.getElementById("view"), { childList: true, subtree: true });
 function render() {
+  if (S.mode === "batch") return renderBatch();
   renderNav();
   const v = $("#view");
   ({ history: (v) => viewHistory(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
@@ -115,7 +118,7 @@ async function viewSetup(v) {
 function viewInput(v) {
   const r = S.run; if (!S.inputMode) S.inputMode = r.source || (r.imported ? "excel" : "jira");
   const jira = r.jira;
-  const seg = `<div class="seg"><button data-m="jira" class="${S.inputMode === "jira" ? "a" : ""}">Jira Story</button><button data-m="local" class="${S.inputMode === "local" ? "a" : ""}">Local text</button><button data-m="excel" class="${S.inputMode === "excel" ? "a" : ""}">⬆ Upload test cases (Excel)</button></div>`;
+  const seg = `<div class="seg"><button data-m="jira" class="${S.inputMode === "jira" ? "a" : ""}">Jira Story</button><button data-m="local" class="${S.inputMode === "local" ? "a" : ""}">Local text</button><button data-m="excel" class="${S.inputMode === "excel" ? "a" : ""}">⬆ Upload test cases (Excel)</button><button data-m="batch" class="bm-tab" title="Open the separate Batch workspace (multiple stories)">▦ Batch mode</button></div>`;
   let body = "";
   if (S.inputMode === "jira") {
     body = `<div class="card">${seg}
@@ -152,11 +155,11 @@ function viewInput(v) {
   }
   v.innerHTML = `<h1>Input Source</h1><div class="sub">${S.inputMode === "jira" ? "Fetch a Jira story and extract its acceptance criteria" : S.inputMode === "excel" ? "Import existing test cases from Excel and skip generation" : "Paste or upload a feature description"}</div>${body}${S.inputMode === "excel" ? "" : nextBar("input", "generate", "Continue to Generate")}`;
   if (S.inputMode === "excel") {
-    $$(".seg button", v).forEach((b) => (b.onclick = () => { S.inputMode = b.dataset.m; render(); }));
+    $$(".seg button", v).forEach((b) => (b.onclick = () => { if (b.dataset.m === "batch") return guarded(b, enterBatch); S.inputMode = b.dataset.m; render(); }));
     uploadUI($("#xlRoot"), { storyId: () => $("#xlStory").value, done: () => { S.view = "review"; location.hash = "review"; render(); } });
     return;
   }
-  $$(".seg button", v).forEach((b) => (b.onclick = () => { S.inputMode = b.dataset.m; render(); }));
+  $$(".seg button", v).forEach((b) => (b.onclick = () => { if (b.dataset.m === "batch") return guarded(b, enterBatch); S.inputMode = b.dataset.m; render(); }));
   bindNext("generate");
   const nb = $("#nextBtn"); if (nb && S.inputMode === "local") { nb.disabled = false; nb.onclick = () => guarded(nb, async () => { await saveLocalIfChanged(); if (!stepDone("input")) throw new Error("Enter a feature description first."); go("generate"); }); }
   if (S.inputMode === "jira") {
@@ -507,8 +510,9 @@ $$("#nav a").forEach((a) => (a.onclick = () => go(a.dataset.view)));
 $("#modalBg").onclick = (e) => { if (e.target.id === "modalBg") closeModal(); };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h !== S.view) go(h); });
 (async function boot() {
-  try { await api("/api/state"); } catch (e) { return; }
+  let st; try { st = await api("/api/state"); } catch (e) { return; }
   const h = location.hash.slice(1);
+  if (st.mode === "batch") { await resumeBatch(h); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
   S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history")) ? h : "input";
   render();
   if (window.refreshHistoryCount) refreshHistoryCount();

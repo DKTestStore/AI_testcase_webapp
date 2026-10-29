@@ -90,6 +90,23 @@ The sidebar footer shows `Run RUN-YYYYMMDD-NNN` and `Story <id>`.
 
 ---
 
+### Batch mode (multiple stories)
+
+Click **▦ Batch mode** (last tab on Input). Batch mode is a separate workspace with its own purple layout;
+your single run is kept exactly as it is and **↩ Exit batch** brings you back to it.
+
+1. **Batch items** (max 10): add Jira IDs (fetched one by one, retry/remove on failure), local text stories
+   (no ID → `LOCAL-001`, `LOCAL-002`…) and several `.xlsx` files (ID taken from the file name; these skip Generate).
+2. **Generate queue**: items generate one at a time with per-item status, tokens and time; cancel, skip or retry
+   any item. Finished items can be reviewed while the others generate.
+3. **Review items**: the normal review cards (incl. ↻ Regenerate) per item, with the ticket pill. Mark each item **Ready** by hand.
+4. **qTest batch upload**: Ready items are pre-selected. Jira/Excel items look up their qTest requirement by story ID
+   (if none is found they upload without a link); local items need a module. Per-item results and retry of failed uploads.
+   **⬇ Excel (zip)** downloads one workbook per item.
+
+In Run history a batch is **one** entry (`BATCH-YYYYMMDD-NN`) that expands to its per-story runs; it counts as one
+toward the history limit and, when it is the oldest, it is removed as a whole.
+
 ## 3. Run history
 
 - Each browser keeps a rolling list of its most recent runs. The browser is identified by a long-lived `atg_history` cookie,
@@ -149,6 +166,10 @@ Runtime data is git-ignored: `ai_test_generator/.env`, `ai_test_generator/report
 ```
 
 ## 6. Testing notes
+
+Offline test switches (process environment only, never read from `.env`): `ATG_MOCK_GEMINI=1`, `ATG_MOCK_JIRA=1`
+(`ATG_MOCK_JIRA_MISSING=MTG-1427`), `ATG_MOCK_QTEST=1` (`ATG_MOCK_QTEST_FAIL=…`, `ATG_MOCK_QTEST_NOREQ=…`), `ATG_MOCK_DELAY=1.5`.
+
 
 - End-to-end checks were run with Playwright (Chromium / Google Chrome) against `http://127.0.0.1:8000`. They cover:
   - Review editing, pagination and qTest payload preview.
