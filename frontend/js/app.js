@@ -330,7 +330,7 @@ async function qUpload(el) {
   ${nextBar("qtest", null, "")}`;
   let modMode = "new";
   $$("#modSeg button").forEach((b) => (b.onclick = () => { modMode = b.dataset.m; $$("#modSeg button").forEach((x) => x.classList.toggle("a", x === b)); $("#modNew").classList.toggle("hidden", modMode !== "new"); $("#modExisting").classList.toggle("hidden", modMode === "new"); }));
-  $("#previewBtn").onclick = () => guarded($("#previewBtn"), async () => { const j = await api("/api/qtest/preview", { method: "POST", body: { module_id: modMode === "existing" ? $("#qModId").value : "" } }); S.payloadPreview = j; $("#payload").innerHTML = payloadHtml(j); renderNav(); });
+  $("#previewBtn").onclick = () => guarded($("#previewBtn"), async () => { const j = await api("/api/qtest/preview", { method: "POST", body: { module_id: modMode === "existing" ? $("#qModId").value : "" } }); S.payloadPreview = j; PL.page = 0; $("#payload").innerHTML = payloadHtml(j); renderNav(); });
   $("#uploadBtn").onclick = () => {
     const body = { project_id: $("#qProject").value, requirement_id: $("#qReq").value, parent_module_id: $("#qParent").value,
       module_id: modMode === "existing" ? $("#qModId").value : "", module_name: modMode === "new" ? $("#qModName").value : "" };
@@ -351,14 +351,22 @@ function jsonHl(obj) {
   return esc(JSON.stringify(obj, null, 2)).replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
     (m, str, colon, lit, num) => str ? (colon ? `<span class="jk">${str}</span>${colon}` : `<span class="js">${str}</span>`) : lit ? `<span class="jl">${lit}</span>` : `<span class="jn">${num}</span>`);
 }
+const PL = { page: 0, size: 25 };
 function payloadHtml(j) {
   const p = j.payloads || []; const ids = (S.run.test_cases || []).map((t) => t.id);
+  const pages = Math.max(1, Math.ceil(p.length / PL.size)); if (PL.page >= pages) PL.page = pages - 1;
+  const start = PL.page * PL.size; const slice = p.slice(start, start + PL.size);
   setTimeout(() => {
+    const box = $("#payload"); if (!box) return;
     const t = $("#plToggle"); if (t) t.onclick = () => { const all = $$("#plList details"); const open = !all.every((d) => d.open); all.forEach((d) => (d.open = open)); t.textContent = open ? "Collapse all" : "Expand all"; };
-    const c = $("#plCopy"); if (c) c.onclick = async () => { const txt = JSON.stringify(p, null, 2); try { await navigator.clipboard.writeText(txt); } catch { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } toast(`Copied ${p.length} payloads as JSON`); };
+    const c = $("#plCopy"); if (c) c.onclick = async () => { const txt = JSON.stringify(p, null, 2); try { await navigator.clipboard.writeText(txt); } catch { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } toast(`Copied all ${p.length} payloads as JSON`); };
+    $$("[data-plp]", box).forEach((x) => (x.onclick = () => { PL.page = +x.dataset.plp; box.innerHTML = payloadHtml(j); $("#plList").scrollTop = 0; }));
   }, 0);
-  return `<div class="pl-head"><span class="sub" style="margin:0"><b>${p.length}</b> payloads · POST …/test-cases/ · showing all</span><span><button class="btn g sm" id="plCopy">📋 Copy JSON</button> <button class="btn g sm" id="plToggle">Expand all</button></span></div>
-    <div id="plList" class="pl-list">${p.map((x, i) => `<details ${i === 0 ? "open" : ""}><summary><b>#${i + 1}</b> ${esc(ids[i] || "")} · ${esc(x.name)} <span class="sub" style="margin:0">(${(x.test_steps || []).length} steps)</span></summary><pre class="json">${jsonHl(x)}</pre></details>`).join("")}</div>`;
+  const nums = []; for (let i = 0; i < pages; i++) nums.push(`<button class="btn g sm ${i === PL.page ? "pg-a" : ""}" data-plp="${i}">${i + 1}</button>`);
+  const pager = p.length ? `<div class="rv-pager pl-pager"><span class="pg-info">Showing <b>${start + 1}–${Math.min(p.length, start + PL.size)}</b> of <b>${p.length}</b></span><span style="flex:1"></span>
+    <button class="btn g sm" data-plp="${PL.page - 1}" ${PL.page ? "" : "disabled"}>‹ Prev</button>${nums.join("")}<button class="btn g sm" data-plp="${PL.page + 1}" ${PL.page < pages - 1 ? "" : "disabled"}>Next ›</button></div>` : "";
+  return `<div class="pl-head"><span class="sub" style="margin:0"><b>${p.length}</b> payloads · POST …/test-cases/</span><span><button class="btn g sm" id="plCopy" title="Copies all ${p.length} payloads">📋 Copy JSON (all)</button> <button class="btn g sm" id="plToggle">Expand all</button></span></div>
+    ${pager}<div id="plList" class="pl-list">${slice.map((x, k) => { const i = start + k; return `<details ${k === 0 ? "open" : ""}><summary><b>#${i + 1}</b> ${esc(ids[i] || "")} · ${esc(x.name)} <span class="sub" style="margin:0">(${(x.test_steps || []).length} steps)</span></summary><pre class="json">${jsonHl(x)}</pre></details>`; }).join("")}</div>`;
 }
 function uploadSummary(up) {
   if (!up) return `<h3>Results Summary</h3><div class="muted">Not uploaded yet.</div>`;

@@ -3,13 +3,13 @@
    Review-only metadata (priority, acs, status) is saved in the session but never
    written to the Excel file or the qTest payload. */
 "use strict";
-const PAGE_SIZE = 25;
+
 const STATUS = { not: { label: "◷ Not reviewed", cls: "s-n" }, reviewed: { label: "✓ Reviewed", cls: "s-r" }, changes: { label: "⚠ Needs changes", cls: "s-c" } };
 const STATUS_NEXT = { not: "reviewed", reviewed: "changes", changes: "not" };
 const PRIO = ["High", "Medium", "Low"];
 const ACCOLORS = ["c1", "c2", "c3", "c4", "c5", "c6"];
 let _uid = 0;
-const RV = { q: "", status: "", prio: "", ac: "", page: 0, open: new Set(), sel: new Set(), just: null, justStep: null, confirm: null };
+const RV = { size: 25, q: "", status: "", prio: "", ac: "", page: 0, open: new Set(), sel: new Set(), just: null, justStep: null, confirm: null };
 
 const pad3 = (n) => String(n).padStart(3, "0");
 const acCls = (a) => ACCOLORS[(parseInt(String(a).replace(/\D/g, ""), 10) || 0) % ACCOLORS.length];
@@ -80,7 +80,7 @@ function viewReview(v) {
   $("#addTc").onclick = () => {
     const tc = normCase({ name: "New test case", description: "", precondition: "", steps: [{ description: "", expected: "" }], priority: "Medium", acs: [], status: "not" });
     tc._ed = { name: 1 }; S.cases.push(tc); renumber(); RV.open.add(tc._k); RV.just = tc._k;
-    RV.q = RV.status = RV.prio = RV.ac = ""; RV.page = Math.floor((S.cases.length - 1) / PAGE_SIZE); markDirty(); renderList();
+    RV.q = RV.status = RV.prio = RV.ac = ""; RV.page = Math.floor((S.cases.length - 1) / RV.size); markDirty(); renderList();
     const el = $(`.tc[data-k="${tc._k}"]`); if (el) el.scrollIntoView({ block: "center" });
   };
   $("#saveCases").onclick = () => guarded($("#saveCases"), async () => { await saveCases(); toast("Changes saved — you can continue to qTest Upload"); afterSave(); });
@@ -100,6 +100,7 @@ function viewReview(v) {
   const list = $("#rvList");
   list.addEventListener("click", onListClick);
   list.addEventListener("input", onListInput);
+  list.addEventListener("change", (e) => { if (e.target.dataset.act === "pagesize") { RV.size = +e.target.value; RV.page = 0; renderList(); } });
   list.addEventListener("focusin", onFocusIn);
   list.addEventListener("focusout", onFocusOut);
   list.addEventListener("keydown", onKey);
@@ -115,16 +116,13 @@ async function saveCases() {
 function renderList() {
   const y = window.scrollY; closePop();
   const inner = {}; $$(".tc-scroll").forEach((e) => (inner[e.dataset.sk] = e.scrollTop));
-  const f = filtered(); const pages = Math.max(1, Math.ceil(f.length / PAGE_SIZE));
-  if (RV.page >= pages) RV.page = pages - 1;
-  const slice = f.slice(RV.page * PAGE_SIZE, RV.page * PAGE_SIZE + PAGE_SIZE);
+  const PS = RV.size; const f = filtered(); const pages = Math.max(1, Math.ceil(f.length / PS));
+  if (RV.page >= pages) RV.page = pages - 1; if (RV.page < 0) RV.page = 0;
+  const slice = f.slice(RV.page * PS, RV.page * PS + PS);
   const total = S.cases.length;
   let h = slice.map((t) => card(t, byK(t._k), total)).join("") || `<div class="card muted">${total ? "No test cases match the filters." : "No test cases yet."}</div>`;
-  if (f.length > PAGE_SIZE) {
-    const btns = []; for (let i = 0; i < pages; i++) btns.push(`<button class="btn g sm ${i === RV.page ? "pg-a" : ""}" data-act="page" data-p="${i}">${i + 1}</button>`);
-    h += `<div class="rv-pager"><span class="sub" style="margin:0">Showing ${RV.page * PAGE_SIZE + 1}–${Math.min(f.length, (RV.page + 1) * PAGE_SIZE)} of ${f.length}</span><span style="flex:1"></span>
-      <button class="btn g sm" data-act="page" data-p="${RV.page - 1}" ${RV.page ? "" : "disabled"}>‹</button>${btns.join("")}<button class="btn g sm" data-act="page" data-p="${RV.page + 1}" ${RV.page < pages - 1 ? "" : "disabled"}>›</button></div>`;
-  } else if (f.length) h += `<div class="sub" style="text-align:center;margin:6px 0">Showing ${f.length} of ${total}</div>`;
+  const pager = pagerHtml(RV.page, pages, f.length, PS, total, "page");
+  h = pager.replace('class="rv-pager"', 'class="rv-pager top"') + h + pager;
   $("#rvList").innerHTML = h;
   renderBulk(); updateProgress();
   $$(".tc-scroll").forEach((e) => { if (inner[e.dataset.sk] !== undefined) e.scrollTop = inner[e.dataset.sk]; });
@@ -165,6 +163,16 @@ function card(t, i, total) {
   }
   return h + "</div>";
 }
+function pagerHtml(page, pages, n, ps, total, act) {
+  if (!n) return "";
+  const nums = []; for (let i = 0; i < pages; i++) { if (pages > 9 && i > 1 && i < pages - 2 && Math.abs(i - page) > 1) { if (nums[nums.length - 1] !== "…") nums.push("…"); continue; } nums.push(i); }
+  return `<div class="rv-pager"><span class="pg-info">Showing <b>${page * ps + 1}–${Math.min(n, (page + 1) * ps)}</b> of <b>${n}</b>${n !== total ? ` (filtered from ${total})` : ""}</span><span style="flex:1"></span>
+    <label class="pg-size">Per page <select data-act="${act}size">${[25, 50, 100].map((x) => `<option ${x === ps ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+    <button class="btn g sm" data-act="${act}" data-p="${page - 1}" ${page ? "" : "disabled"} title="Previous page">‹ Prev</button>
+    ${nums.map((i) => i === "…" ? '<span class="sub" style="margin:0 2px">…</span>' : `<button class="btn g sm ${i === page ? "pg-a" : ""}" data-act="${act}" data-p="${i}">${i + 1}</button>`).join("")}
+    <button class="btn g sm" data-act="${act}" data-p="${page + 1}" ${page < pages - 1 ? "" : "disabled"} title="Next page">Next ›</button></div>`;
+}
+function showCase(t) { const f = filtered(); const ix = f.indexOf(t); if (ix >= 0) RV.page = Math.floor(ix / RV.size); }
 function renderBulk() {
   const el = $("#rvBulk"); if (!el) return; const n = RV.sel.size;
   if (!n) { el.innerHTML = ""; return; }
@@ -217,7 +225,8 @@ function cancelName(el) {
 function moveTc(i, d) {
   const j = i + d; if (j < 0 || j >= S.cases.length) return;
   const oldId = S.cases[i].id; const [t] = S.cases.splice(i, 1); S.cases.splice(j, 0, t); renumber();
-  RV.just = t._k; markDirty(); renderList();
+  RV.just = t._k; showCase(t); markDirty(); renderList();
+  const el = $(`.tc[data-k="${t._k}"]`); if (el && (el.getBoundingClientRect().top < 0 || el.getBoundingClientRect().bottom > innerHeight)) el.scrollIntoView({ block: "center" });
   toast(`${oldId} moved ${d < 0 ? "up" : "down"} → now ${t.id} · IDs renumbered`);
 }
 function moveStep(t, si, d) {
@@ -228,7 +237,8 @@ function moveStep(t, si, d) {
 function onListClick(e) {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const a = b.dataset.act;
-  if (a === "page") { RV.page = +b.dataset.p; renderList(); window.scrollTo(0, $("#rvToolbar").offsetTop - 10); return; }
+  if (a === "pagesize") return;
+  if (a === "page") { RV.page = +b.dataset.p; renderList(); if (b.closest(".rv-pager") && !b.closest(".rv-pager.top")) window.scrollTo(0, $("#rvToolbar").offsetTop - 10); return; }
   const card = b.closest(".tc"); if (!card) return;
   const i = byK(card.dataset.k); const t = S.cases[i];
   const row = b.closest(".sr"); const si = row ? +row.dataset.s : (b.dataset.s !== undefined ? +b.dataset.s : -1);
@@ -297,7 +307,7 @@ function openTcMenu(b, t, i) {
     if (k === "cancel") { closePop(); return; }
     if (k === "yes") { const id = t.id; S.cases.splice(i, 1); RV.sel.delete(t._k); renumber(); markDirty(); renderList(); toast(`${id} deleted · IDs renumbered`); return; }
     if (k === "dup") { const c = normCase(JSON.parse(JSON.stringify(t))); c._k = ++_uid; c.steps.forEach((s) => (s._k = ++_uid)); c.name += " (copy)"; c.status = "not"; c._ed = { name: 1 }; S.cases.splice(i + 1, 0, c); renumber(); RV.just = c._k; }
-    if (k === "top" || k === "bottom") { S.cases.splice(i, 1); k === "top" ? S.cases.unshift(t) : S.cases.push(t); renumber(); RV.just = t._k; }
+    if (k === "top" || k === "bottom") { S.cases.splice(i, 1); k === "top" ? S.cases.unshift(t) : S.cases.push(t); renumber(); RV.just = t._k; showCase(t); }
     markDirty(); closePop(); renderList();
   };
 }
@@ -346,6 +356,6 @@ function jumpTo(v) {
   const id = /^\d+$/.test(v) ? "TC" + pad3(+v) : v;
   const t = S.cases.find((x) => x.id.toUpperCase() === id); if (!t) return toast(`${id} not found`, true);
   let f = filtered(); if (!f.includes(t)) { RV.q = RV.status = RV.prio = RV.ac = ""; ["#rvQ", "#rvStatus", "#rvPrio", "#rvAc"].forEach((s) => ($(s).value = "")); f = filtered(); }
-  RV.page = Math.floor(f.indexOf(t) / PAGE_SIZE); RV.open.add(t._k); RV.just = t._k; renderList();
+  RV.page = Math.floor(f.indexOf(t) / RV.size); RV.open.add(t._k); RV.just = t._k; renderList();
   const el = $(`.tc[data-k="${t._k}"]`); if (el) el.scrollIntoView({ block: "start" });
 }

@@ -141,3 +141,9 @@ tr.tcstart td{border-top:2px solid #d5dbec}
 pre.json{background:#0f1426;color:#e2e8f0;font-family:Consolas,Menlo,monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap;tab-size:2}
 pre.json .jk{color:#93c5fd}pre.json .js{color:#86efac}pre.json .jn{color:#fbbf24}pre.json .jl{color:#f472b6}
 .row>div:has(>.pl-card){position:sticky;top:12px;align-self:flex-start}.pl-card{position:static;max-height:calc(100vh - 24px);margin-bottom:0}
+/* ---------- pagination + pinned payload panel ---------- */
+.rv-pager{display:flex;align-items:center;gap:4px;padding:8px 12px;background:#fff;border:1px solid #e3e7f0;border-radius:10px;margin:0 0 10px;flex-wrap:wrap}
+.rv-pager .pg-info{font-size:12.5px;color:#1e2433}.pg-size{display:inline-flex;align-items:center;gap:6px;margin:0 8px 0 0;text-transform:none;font-size:12px;color:#6b7385;font-weight:600}.pg-size select{padding:4px 6px}
+.pl-pager{margin:0 0 8px;padding:6px 8px}
+.row>div:has(>.pl-card){position:sticky;top:12px;align-self:flex-start}
+.pl-card{max-height:calc(100vh - 240px);min-height:320px}
