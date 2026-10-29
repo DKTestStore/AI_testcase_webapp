@@ -179,3 +179,31 @@ table.rh tr:hover td{background:#f0f4ff}table.rh tr:hover td:first-child{box-sha
 /* ticket id pill on step headers */
 .ticket-pill{display:inline-flex;align-items:center;margin-left:12px;padding:3px 11px;border-radius:12px;background:#e8ecff;color:#3046b8;border:1px solid #c9d3ff;font-size:13px;font-weight:700;vertical-align:middle;letter-spacing:.01em}
 .ticket-pill::before{content:"🎫";margin-right:6px;font-size:12px}
+/* regenerate one test case */
+.rg-btn{border:1px solid #c9d3ff;background:#f5f7ff;color:#3046b8;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+.rg-btn:hover{background:#e8ecff;box-shadow:0 0 0 3px #4361ee22}.rg-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.pop.rg-pop{padding:16px;border-color:#d6defc;box-shadow:0 16px 40px #0b102033;border-radius:12px}.rg-pop h4{margin:0 0 2px;font-size:14px}
+.rg-pop textarea{width:100%;min-height:64px;border:1.5px solid #4361ee;border-radius:8px;padding:8px;font:inherit;font-size:12.5px;box-shadow:0 0 0 3px #4361ee1f;resize:vertical}
+.rg-l{font-size:11px;text-transform:uppercase;color:#6b7385;letter-spacing:.04em;display:block;margin-bottom:4px}
+.rg-chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.rg-chip{border:1px solid #d6defc;background:#fff;border-radius:14px;padding:4px 10px;font-size:11.5px;color:#3046b8;cursor:pointer;width:auto}.rg-chip.on{background:#4361ee;color:#fff;border-color:#4361ee}
+select.rg-chip{padding:3px 8px;height:auto}
+.rg-row{display:flex;align-items:center;gap:8px;font-size:12.5px;margin:4px 0;text-transform:none;letter-spacing:0;color:inherit;font-weight:400}.rg-row input{width:auto;margin:0}
+.rg-foot{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+.rg-ctx{background:#f8f9fc;border:1px solid #eef0f5;border-radius:8px;padding:8px 10px;font-size:11.5px;color:#6b7385;margin-bottom:10px}
+.tc.rg-loading{position:relative}.tc.rg-loading>.tc-h,.tc.rg-loading>.tc-b{opacity:.35;filter:grayscale(.4);pointer-events:none}
+.rg-ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:5;background:linear-gradient(90deg,#ffffff00,#eef2ffcc,#ffffff00)}
+.rg-ov .box{background:#fff;border:1px solid #d6defc;border-radius:10px;padding:10px 16px;box-shadow:0 6px 18px #0002;display:flex;align-items:center;gap:12px;font-size:13px}
+.rg-spin{width:18px;height:18px;border:3px solid #c9d3ff;border-top-color:#4361ee;border-radius:50%;animation:rgsp 1s linear infinite}@keyframes rgsp{to{transform:rotate(360deg)}}
+.rg-cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px}.rg-col{border:1px solid #e3e7f0;border-radius:10px;overflow:hidden}
+.rg-col h5{margin:0;padding:9px 12px;font-size:12.5px;background:#f8f9fc;border-bottom:1px solid #e3e7f0;display:flex;justify-content:space-between}.rg-col.new h5{background:#ecfdf3}
+.rg-f{padding:8px 12px;border-bottom:1px solid #f1f3f8;font-size:12.5px}.rg-f .l{font-size:10.5px;text-transform:uppercase;color:#6b7385;letter-spacing:.04em}
+.rg-st{display:grid;grid-template-columns:22px 1fr 1fr;gap:8px;padding:7px 12px;border-bottom:1px solid #f1f3f8;font-size:12px}.rg-st .n{color:#6b7385;font-weight:700}
+.rg-st.rg-h{background:#f8f9fc;font-weight:700;font-size:11px;color:#6b7385}.rg-gap{color:#b0b7c9}
+.rg-add{background:#ecfdf3;box-shadow:inset 3px 0 #12a150}.rg-chg{background:#fff8e6;box-shadow:inset 3px 0 #f59e0b}.rg-del{background:#fdeaea;box-shadow:inset 3px 0 #d33;color:#9a4a4a}.rg-del>span:not(.n){text-decoration:line-through}
+.rg-del-i{background:#fdeaea;text-decoration:line-through;color:#9a4a4a;padding:0 3px}
+.rg-tag{font-size:10px;font-weight:700;border-radius:8px;padding:1px 6px;margin-left:6px;text-decoration:none;display:inline-block}.rg-tag.a{background:#12a150;color:#fff}.rg-tag.c{background:#f59e0b;color:#fff}.rg-tag.d{background:#d33;color:#fff}
+.rg-sum{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}.rg-acts{display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:10px;flex-wrap:wrap}
+.rg-badge{display:inline-block;margin:0 0 3px;font-size:10.5px;font-weight:700;color:#6d28d9;background:#f3e8ff;border:1px solid #e0ccff;border-radius:10px;padding:1px 7px}
+.tc-title .rg-badge{display:table}
+.tc.rg-flash{box-shadow:0 0 0 3px #a78bfa66}
+.toast.rg{align-items:center;gap:14px}.toast.rg a{color:#a5b4fc;font-weight:700;cursor:pointer;text-decoration:underline}
