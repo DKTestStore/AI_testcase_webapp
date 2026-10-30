@@ -342,6 +342,7 @@ function bRenderList() {
     return `<div class="bt-item ${i.key === act ? "a" : ""} ${has ? "" : "dis"}" data-k="${i.key}"><span class="pill b">${esc(i.item_id)}</span><span class="srcb ${src[0]}">${src[1]}</span>${i.ready ? '<span class="ready">✓ READY</span>' : ""}<div class="t">${esc(i.source === "excel" ? i.filename : (i.title || (i.fetch.status !== "ok" ? "Not fetched" : "")))}</div>${sub}</div>`;
   }).join("") + `<div class="sub" style="margin:8px 6px 4px;font-size:11.5px">📊 Excel items open straight in Review (no Generate). Regenerate works for all sources.</div>`;
   $$(".bt-item", el).forEach((d) => { if (!d.classList.contains("dis") && d.dataset.k !== act) d.onclick = () => bOpenItem(d.dataset.k).catch((e) => toast(e.message, true)); });
+  if (window.dupBatchRefresh) dupBatchRefresh();
   const f = $("#bRvFoot"); if (f) f.outerHTML = bRvFoot();
   bindRvFoot();
 }

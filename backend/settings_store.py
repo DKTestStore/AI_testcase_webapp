@@ -131,3 +131,31 @@ def set_history_limit(value) -> int:
     tmp.write_text(_json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(APP_SETTINGS_PATH)
     return n
+
+
+DUP_THRESHOLD_DEFAULT, DUP_THRESHOLD_MIN, DUP_THRESHOLD_MAX = 80, 50, 99
+
+
+def get_dup_threshold() -> int:
+    try:
+        n = int(_app().get("dup_threshold", DUP_THRESHOLD_DEFAULT))
+    except (TypeError, ValueError):
+        return DUP_THRESHOLD_DEFAULT
+    return n if DUP_THRESHOLD_MIN <= n <= DUP_THRESHOLD_MAX else DUP_THRESHOLD_DEFAULT
+
+
+def set_dup_threshold(value) -> int:
+    try:
+        if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+            raise ValueError
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"Duplicate threshold must be a whole number between {DUP_THRESHOLD_MIN} and {DUP_THRESHOLD_MAX}.")
+    if not DUP_THRESHOLD_MIN <= n <= DUP_THRESHOLD_MAX:
+        raise ValueError(f"Duplicate threshold must be a whole number between {DUP_THRESHOLD_MIN} and {DUP_THRESHOLD_MAX}.")
+    data = _app()
+    data["dup_threshold"] = n
+    tmp = APP_SETTINGS_PATH.with_suffix(".tmp")
+    tmp.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(APP_SETTINGS_PATH)
+    return n

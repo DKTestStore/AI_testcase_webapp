@@ -41,7 +41,7 @@ function updateProgress() {
 }
 function filtered() {
   const q = RV.q.toLowerCase();
-  return S.cases.filter((t) => (!RV.status || t.status === RV.status) && (!RV.prio || t.priority === RV.prio) && (!RV.ac || t.acs.includes(RV.ac)) &&
+  return S.cases.filter((t) => (!window.dupFilter || dupFilter(t)) && (!RV.status || t.status === RV.status) && (!RV.prio || t.priority === RV.prio) && (!RV.ac || t.acs.includes(RV.ac)) &&
     (!q || [t.id, t.name, t.description, t.precondition, ...t.steps.map((s) => s.description + " " + s.expected)].join(" ").toLowerCase().includes(q)));
 }
 const byK = (k) => S.cases.findIndex((t) => t._k === +k);
@@ -52,9 +52,10 @@ function viewReview(v) {
   if (!S.localDirty) loadCasesFromRun();
   const acs = r.ac_list || [];
   v.innerHTML = `<div class="rv-head"><div><h1>Review Test Cases</h1><div class="sub" id="rvSub" style="margin:0"></div></div>
-    <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn g" id="upExcel" title="Import test cases from an .xlsx file">⬆ Upload Excel</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button><a class="tpl-link" href="/api/excel/template" title="Excel template with all supported columns">Download template</a></div></div>
+    <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn g dp-btn" id="dupBtn" title="Find near-identical test cases (local check, no AI call)">≋ Check duplicates</button><button class="btn g" id="upExcel" title="Import test cases from an .xlsx file">⬆ Upload Excel</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button><a class="tpl-link" href="/api/excel/template" title="Excel template with all supported columns">Download template</a></div></div>
     <div class="warn rv-unsaved ${S.localDirty ? "" : "hidden"}" id="unsavedBar">⚠ You have unsaved edits in this table. <span class="sub" style="margin:0">Save changes (or Continue — it saves automatically).</span></div>
     ${!S.localDirty && r.excel_name && !r.dirty ? `<div class="note" style="margin:0 0 10px">✅ Excel saved: <b>${esc(r.excel_name)}</b></div>` : ""}
+    <div id="dupBanner"></div><div id="dupPanel"></div>
     <div id="reviewPanel">${reviewPanel(r.review)}</div>
     <div class="card rv-toolbar" id="rvToolbar">
       <input id="rvQ" placeholder="🔍 Search…" value="${esc(RV.q)}" style="width:170px">
@@ -62,12 +63,13 @@ function viewReview(v) {
       <select id="rvStatus"><option value="">All statuses</option>${Object.entries(STATUS).map(([k, s]) => `<option value="${k}" ${RV.status === k ? "selected" : ""}>${s.label.slice(2)}</option>`).join("")}</select>
       <select id="rvPrio"><option value="">All priorities</option>${PRIO.map((p) => `<option ${RV.prio === p ? "selected" : ""}>${p}</option>`).join("")}</select>
       <select id="rvAc"><option value="">All ACs</option>${acs.map((a) => `<option value="${esc(a.id)}" ${RV.ac === a.id ? "selected" : ""}>${esc(a.id)}</option>`).join("")}</select>
-      <span style="flex:1"></span><span class="rv-prog" id="rvProg"></span>
+      <span style="flex:1"></span><span id="dupOnly"></span><span class="rv-prog" id="rvProg"></span>
       <button class="btn g sm" id="expAll">⊞ Expand all</button><button class="btn g sm" id="colAll">⊟ Collapse all</button></div>
     <div class="rv-legend sub"><span><span class="hdl">⋮⋮</span> drag or ▲▼ to reorder</span><span>🔢 IDs &amp; step numbers auto-resequence after a move</span><span>Status: click the pill to change</span><span><span class="edot"></span> edited (unsaved)</span><span>AC mapping, priority &amp; status are display-only — not sent to qTest</span><span>↻ Regenerate: redo one test case with a short instruction</span></div>
     <div id="rvBulk"></div><div id="rvList"></div>
     <div class="footer-nav"><div></div><button class="btn" id="nextBtn" ${S.cases.length ? "" : "disabled"}>Continue to qTest Upload →</button></div>`;
   updateProgress(); renderList();
+  $("#dupBtn").onclick = () => dupCheck();
   // toolbar
   const reList = () => { RV.page = 0; renderList(); };
   $("#rvQ").oninput = (e) => { RV.q = e.target.value; clearTimeout(viewReview._t); viewReview._t = setTimeout(reList, 200); };
@@ -116,6 +118,7 @@ async function saveCases() {
 // ------------------------------------------------------------------ list rendering (keeps scroll position — Bug 04)
 function renderList() {
   const y = window.scrollY; closePop();
+  if (window.dupPrepare) dupPrepare();
   const inner = {}; $$(".tc-scroll").forEach((e) => (inner[e.dataset.sk] = e.scrollTop));
   const PS = RV.size; const f = filtered(); const pages = Math.max(1, Math.ceil(f.length / PS));
   if (RV.page >= pages) RV.page = pages - 1; if (RV.page < 0) RV.page = 0;
@@ -125,7 +128,7 @@ function renderList() {
   const pager = pagerHtml(RV.page, pages, f.length, PS, total, "page");
   h = pager.replace('class="rv-pager"', 'class="rv-pager top"') + h + pager;
   $("#rvList").innerHTML = h;
-  renderBulk(); updateProgress();
+  renderBulk(); updateProgress(); if (window.dupRender) dupRender();
   $$(".tc-scroll").forEach((e) => { if (inner[e.dataset.sk] !== undefined) e.scrollTop = inner[e.dataset.sk]; });
   const js = RV.justStep && $(".sr.just"); if (js) { const sc = js.closest(".tc-scroll"); if (sc && (js.offsetTop < sc.scrollTop || js.offsetTop > sc.scrollTop + sc.clientHeight - 40)) sc.scrollTop = js.offsetTop - sc.clientHeight / 2; }
   window.scrollTo(0, y);
@@ -136,14 +139,14 @@ function card(t, i, total) {
   const open = RV.open.has(t._k); const st = STATUS[t.status]; const ed = t._ed || {};
   const chips = t.acs.map((a) => `<span class="ac ${acCls(a)}" title="${esc(acTitle(a))}">${esc(a)}<b data-act="acdel" data-a="${esc(a)}" title="Remove">×</b></span>`).join("");
   const rgL = window.RG && RG.loading === t._k;
-  let h = `<div class="tc st-${t.status} ${open ? "open" : ""} ${RV.just === t._k ? "just" : ""} ${rgL ? "rg-loading" : ""} ${window.RG && RG.flash === t._k ? "rg-flash" : ""}" data-k="${t._k}">
+  let h = `<div class="tc st-${t.status} ${window.dupFlagged && dupFlagged(t) ? "dp" : ""} ${open ? "open" : ""} ${RV.just === t._k ? "just" : ""} ${rgL ? "rg-loading" : ""} ${window.RG && RG.flash === t._k ? "rg-flash" : ""}" data-k="${t._k}">
    <div class="tc-h">
     <input type="checkbox" data-act="sel" ${RV.sel.has(t._k) ? "checked" : ""} title="Select">
     <span class="hdl" draggable="true" data-drag="tc" title="Drag to reorder">⋮⋮</span>
     <span class="mvs"><button class="mv" data-act="tcup" title="Move up" ${i === 0 ? "disabled" : ""}>▲</button><button class="mv" data-act="tcdown" title="Move down" ${i === total - 1 ? "disabled" : ""}>▼</button></span>
     <button class="chev" data-act="toggle" title="${open ? "Collapse" : "Expand"}">❯</button>
     <b class="tcid" data-act="toggle">${esc(t.id)}</b>
-    <div class="tc-title">${t.regenerated ? '<span class="rg-badge" title="Regenerated with AI — review it again">↻ Regenerated</span>' : ""}${ce("name", t.name, ed.name, "Test case name", 'data-name="1"')}<span class="namebtns"><button class="btn s sm" data-act="namesave">✓ Save</button><button class="btn g sm" data-act="namecancel">✕ Cancel</button></span>
+    <div class="tc-title">${window.dupBadge ? dupBadge(t) : ""}${t.regenerated ? '<span class="rg-badge" title="Regenerated with AI — review it again">↻ Regenerated</span>' : ""}${ce("name", t.name, ed.name, "Test case name", 'data-name="1"')}<span class="namebtns"><button class="btn s sm" data-act="namesave">✓ Save</button><button class="btn g sm" data-act="namecancel">✕ Cancel</button></span>
       ${open ? "" : `<div class="tc-desc" data-act="toggle">${esc(t.description) || '<span class="muted">No description</span>'}</div>`}</div>
     <div class="tc-meta"><span class="acs">${chips}<button class="addac" data-act="acadd">+ AC</button></span>
       <button class="prio p-${t.priority}" data-act="prio">${t.priority} ▾</button>

@@ -78,6 +78,7 @@ def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
             "acs": [str(a)[:20] for a in (tc.get("acs") or []) if str(a).strip()][:30],
             "status": tc.get("status") if tc.get("status") in STATUSES else "not",
             "regenerated": bool(tc.get("regenerated")),  # display-only badge
+            "merged": str(tc.get("merged") or "")[:80],   # display-only badge: "TC002 + TC005"
         })
     return out
 

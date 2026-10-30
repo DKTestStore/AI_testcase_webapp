@@ -1092,6 +1092,36 @@ def batch_excel_zip(sess=Depends(current)):
     return _batch_zip(_batch(sess), sess)
 
 
+# --------------------------------------------------------------------------- #
+# Duplicate detection (similarity is computed locally in the browser; no AI call)
+# --------------------------------------------------------------------------- #
+@app.get("/api/settings/dup_threshold")
+def get_dup_threshold(sess=Depends(current)):
+    return {"ok": True, "value": settings_store.get_dup_threshold(), "min": settings_store.DUP_THRESHOLD_MIN,
+            "max": settings_store.DUP_THRESHOLD_MAX, "default": settings_store.DUP_THRESHOLD_DEFAULT}
+
+
+@app.put("/api/settings/dup_threshold")
+def put_dup_threshold(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    try:
+        n = settings_store.set_dup_threshold(data.get("value"))
+    except ValueError as e:
+        raise ServiceError(str(e))
+    log.info("duplicate threshold set to %d", n)
+    return {"ok": True, "value": n}
+
+
+@app.put("/api/review/dup_keep")
+def put_dup_keep(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    """'Keep both' decisions for this run: list of content-fingerprint pairs "a|b" (survive renumbering
+    and Run history reopen). Stored on the run; the test cases themselves are not changed."""
+    pairs = [str(p)[:80] for p in (data.get("pairs") or []) if isinstance(p, str) and "|" in p][:2000]
+    run = _run(sess)
+    run["dup_keep"] = sorted(set(pairs))
+    _save(sess, history=bool(run.get("test_cases")))
+    return {"ok": True, "dup_keep": run["dup_keep"]}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
