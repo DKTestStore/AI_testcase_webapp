@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config  # noqa: F401  (sys.path + .env)
 from . import excel_io, history_store, parsing, services, session_store, settings_store
 from . import token_usage
+from . import prompt_templates as ptpl
 from .config import FRONTEND_DIR, GENERATOR_PROMPT_FILE, LOG_DIR, RUNS_DIR, env
 from .services import ServiceError
 
@@ -265,9 +266,17 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run.update({"model": model, "prompt_mode": mode, "custom_prompt": custom, "run_reviewer": run_reviewer})
     _save(sess)
 
-    prompt, appended = services.build_prompt(mode, custom)
-    result = services.generate(model, run["feature_text"], prompt)
-    cases = parsing.markdown_to_test_cases(result["markdown"])
+    tpl_ids = _tpl_ids_for(run, data) if mode == "default" else None
+    tpl_res = None
+    if tpl_ids:   # prompt templates (additive): only when something other than the built-in Default is selected
+        tpl_res = _tpl_generate(run, model, tpl_ids)
+        result, cases, appended = tpl_res["result"], tpl_res["cases"], False
+    else:
+        prompt, appended = services.build_prompt(mode, custom)
+        result = services.generate(model, run["feature_text"], prompt)
+        cases = parsing.markdown_to_test_cases(result["markdown"])
+        if mode == "default" and cases:   # Default template implicitly used -> count it
+            ptpl.mark_used([ptpl.DEFAULT_ID])
     if not cases:
         run["markdown"] = result["markdown"]
         _save(sess)
@@ -288,7 +297,11 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
             review_info = {"error": ex.message}
         run["review"] = review_info
     _save(sess, history=True)
-    _tok(sess, "Generate", result["usage"], run)
+    if tpl_res:
+        for u in tpl_res["usages"]:
+            _tok(sess, "Generate", u, run)
+    else:
+        _tok(sess, "Generate", result["usage"], run)
     if review_info and review_info.get("usage"):
         _tok(sess, "AI review", review_info["usage"], run)
     return {"ok": True, "count": len(cases), "template_appended": appended,
@@ -754,7 +767,7 @@ def _item_summary(it) -> Dict[str, Any]:
     up = run.get("upload") or {}
     acl = (run.get("ac_list") or _ac_list(run)) if cases else []
     return {k: it.get(k) for k in ("key", "source", "item_id", "title", "fetch", "ac_count", "gen", "ready",
-                                    "target", "qtest", "filename")} | {
+                                    "target", "qtest", "filename", "template_ids")} | {
         "run_id": run["run_id"], "rid": run.get("rid", ""), "count": len(cases),
         "reviewed": sum(1 for c in cases if c.get("status") == "reviewed"), "dirty": bool(run.get("dirty")),
         "steps": sum(len(c.get("steps") or []) for c in cases),
@@ -765,7 +778,7 @@ def _item_summary(it) -> Dict[str, Any]:
 
 def _public_batch(b) -> Dict[str, Any]:
     return {"batch_id": b["batch_id"], "rid": b.get("rid") or "", "created": b.get("created"),
-            "active": b.get("active"), "max": BATCH_MAX, "items": [_item_summary(i) for i in b["items"]]}
+            "active": b.get("active"), "max": BATCH_MAX, "template_ids": b.get("template_ids") or [], "items": [_item_summary(i) for i in b["items"]]}
 
 
 def _bresp(sess, with_run=True, **extra):
@@ -945,6 +958,10 @@ def batch_patch(key: str, data: Dict[str, Any] = Body(...), sess=Depends(current
         for k in ("module_name", "module_id", "requirement_id"):
             if k in data["target"]:
                 it["target"][k] = str(data["target"][k] or "").strip()[:200]
+    if "template_ids" in data:   # prompt templates: per-item override (null/[] = use batch selection)
+        if it["source"] == "excel":
+            raise ServiceError("Excel items are not generated, so they have no template.")
+        it["template_ids"] = ptpl.resolve_ids(data["template_ids"]) if data["template_ids"] else None
     if "gen" in data and data["gen"] in ("queued", "skipped") and it["gen"]["status"] in ("queued", "skipped", "failed", "cancelled", "waiting"):
         if data["gen"] == "queued" and it["fetch"]["status"] != "ok":
             raise ServiceError("Fetch this item first.")
@@ -995,9 +1012,17 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
     _save(sess)
     t0 = time.time()
     try:
-        prompt, _ = services.build_prompt(mode, custom)
-        result = services.generate(model, run["feature_text"], prompt)
-        cases = parsing.markdown_to_test_cases(result["markdown"])
+        tpl_ids = _tpl_ids_for(run, {"template_ids": it.get("template_ids") or _batch(sess).get("template_ids")}) if mode == "default" else None
+        tpl_res = None
+        if tpl_ids:
+            tpl_res = _tpl_generate(run, model, tpl_ids)
+            result, cases = tpl_res["result"], tpl_res["cases"]
+        else:
+            prompt, _ = services.build_prompt(mode, custom)
+            result = services.generate(model, run["feature_text"], prompt)
+            cases = parsing.markdown_to_test_cases(result["markdown"])
+            if mode == "default" and cases:   # Default template implicitly used -> count it
+                ptpl.mark_used([ptpl.DEFAULT_ID])
         if not cases:
             raise ServiceError("The model responded, but no test cases could be parsed from its output.", 422)
     except ServiceError as ex:
@@ -1016,7 +1041,8 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
                  "secs": round(time.time() - t0, 1)}
     it["ready"] = False
     _save(sess, history=True)
-    _tok(sess, "Generate", result["usage"], run, item=it)
+    for u in (tpl_res["usages"] if tpl_res else [result["usage"]]):
+        _tok(sess, "Generate", u, run, item=it)
     return _bresp(sess)
 
 
@@ -1331,3 +1357,143 @@ def global_search(q: str = "", limit: int = 8, sess=Depends(current)):
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Prompt templates (additive). Interaction with the Generate step:
+#  * Generate step "Custom prompt" -> always wins (templates ignored), exactly as before.
+#  * Generate step "Default prompt" -> uses the template selection from the Input step (or batch/item
+#    selection). Selection == [built-in Default] (the initial state) -> identical to the old Default path.
+# --------------------------------------------------------------------------- #
+def _tpl_ids_for(run, data) -> Optional[List[str]]:
+    src = data.get("template_ids") if isinstance(data, dict) and data.get("template_ids") else run.get("template_ids")
+    ids = ptpl.resolve_ids(src)
+    run["template_ids"] = ids
+    return None if ids == [ptpl.DEFAULT_ID] else ids
+
+
+def _tpl_generate(run, model, ids) -> Dict[str, Any]:
+    """Call the model once per template, tag each case with its source template, merge, renumber TC IDs."""
+    ctx = ptpl.context_from_run(run)
+    merged, usages, mds, prompts = [], [], [], []
+    tot = {"model": model, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model_name": "", "templates": []}
+    for tid in ids:
+        t = ptpl.get(tid)
+        if not t:
+            continue
+        prompt = ptpl.fill(t, ctx)
+        prompts.append({"id": tid, "name": t["name"], "prompt": prompt})
+        try:
+            res = services.generate(model, run["feature_text"], prompt, tag="" if tid == ptpl.DEFAULT_ID else t["name"])
+        except ServiceError as ex:
+            raise ServiceError(f"Template '{t['name']}': {ex.message}", ex.status)
+        cs = parsing.markdown_to_test_cases(res["markdown"])
+        if not cs:
+            raise ServiceError(f"Template '{t['name']}': the model responded, but no test cases could be parsed from its output.", 422)
+        for c in cs:
+            c["template"] = t["name"]
+        merged += cs
+        mds.append(res["markdown"])
+        u = dict(res["usage"], template=t["name"])
+        usages.append(u)
+        for k in ("input_tokens", "output_tokens", "total_tokens"):
+            tot[k] += int(u.get(k) or 0)
+        tot["model_name"] = u.get("model_name") or tot["model_name"]
+        tot["templates"].append(t["name"])
+    for i, c in enumerate(merged):
+        c["id"] = f"TC{i + 1:03d}"
+    run["prompts_used"] = prompts
+    ptpl.mark_used(ids)
+    md = parsing.test_cases_to_markdown(merged) if merged else "\n\n".join(mds)
+    return {"result": {"markdown": md, "usage": tot}, "cases": merged, "usages": usages}
+
+
+@app.get("/api/templates")
+def tpl_list(sess=Depends(current)):
+    d = ptpl.list_all()
+    for t in d["templates"]:
+        if t["id"] == ptpl.DEFAULT_ID:
+            try:
+                t["text"] = ptpl.default_text()
+            except ServiceError as ex:
+                t["text"], t["error"] = "", ex.message
+    return {"ok": True, **d, "placeholders": [{"name": n, "required": r} for n, r in ptpl.PLACEHOLDERS],
+            "test_types": ptpl.TEST_TYPES, "detail_levels": ptpl.DETAIL}
+
+
+@app.post("/api/templates")
+def tpl_create(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    return {"ok": True, **ptpl.create(data)}
+
+
+@app.post("/api/templates/validate")
+def tpl_validate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    return {"ok": True, **ptpl.validate(str(data.get("text") or ""))}
+
+
+@app.post("/api/templates/preview")
+def tpl_preview(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    run = _run(sess)
+    ctx = ptpl.context_from_run(run) if (run.get("feature_text") and data.get("use_run", True)) else {
+        "story_title": "MTG-1427 · Refund API for partial orders",
+        "description": "As a customer-support agent I want to call POST /orders/{id}/refunds with selected line items "
+                       "so that a partial refund is issued to the original payment method.",
+        "acceptance_criteria": "AC-1 Returns 201 with refund_id for valid items\nAC-2 Returns 422 when refund exceeds "
+                               "refundable balance\nAC-3 Returns 401 without a valid bearer token"}
+    t = {"id": "preview", "text": str(data.get("text") or ""), "options": data.get("options") or {}}
+    return {"ok": True, "prompt": ptpl.fill(t, ctx), "values": ctx, **ptpl.validate(t["text"])}
+
+
+@app.post("/api/templates/select")
+def tpl_select(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    run = _run(sess)
+    run["template_ids"] = ptpl.resolve_ids(data.get("ids"))
+    _save(sess)
+    return {"ok": True, "template_ids": run["template_ids"]}
+
+
+@app.get("/api/templates/selection")
+def tpl_selection(item: str = "", sess=Depends(current)):
+    """Current selection + the filled prompt(s) ('View prompt'). item=<batch key> for a batch item."""
+    if item:
+        it = _need_item(sess, item)
+        run, src = it["run"], it.get("template_ids") or _batch(sess).get("template_ids")
+    else:
+        run = _run(sess)
+        src = run.get("template_ids")
+    ids = ptpl.resolve_ids(src)
+    ctx = ptpl.context_from_run(run)
+    prompts = [{"id": i, "name": ptpl.get(i)["name"], "prompt": ptpl.fill(ptpl.get(i), ctx)} for i in ids]
+    custom = run.get("prompt_mode") == "custom"
+    return {"ok": True, "template_ids": ids, "prompts": prompts, "custom_override": custom,
+            "last_used": run.get("prompts_used") or []}
+
+
+@app.put("/api/batch/templates")
+def batch_templates(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    b = _batch(sess)
+    b["template_ids"] = ptpl.resolve_ids(data.get("ids"))
+    _save(sess)
+    return _bresp(sess)
+
+
+@app.put("/api/templates/{tid}")
+def tpl_update(tid: str, data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    return {"ok": True, **ptpl.update(tid, data)}
+
+
+@app.delete("/api/templates/{tid}")
+def tpl_delete(tid: str, sess=Depends(current)):
+    ptpl.delete(tid)
+    return {"ok": True}
+
+
+@app.post("/api/templates/{tid}/duplicate")
+def tpl_duplicate(tid: str, sess=Depends(current)):
+    return {"ok": True, **ptpl.duplicate(tid)}
+
+
+@app.post("/api/templates/{tid}/default")
+def tpl_set_default(tid: str, sess=Depends(current)):
+    ptpl.set_default(tid)
+    return {"ok": True, "default_id": tid}

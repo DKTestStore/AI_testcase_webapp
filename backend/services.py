@@ -209,11 +209,11 @@ def _today_tokens() -> int:
     return int(t.get("tokens_used") or t.get("tokens") or 0)
 
 
-def generate(model: str, feature_text: str, prompt: str) -> Dict[str, Any]:
+def generate(model: str, feature_text: str, prompt: str, tag: str = "") -> Dict[str, Any]:
     if not (feature_text or "").strip():
         raise ServiceError("No feature description. Complete the Input step first.")
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
-        return _mock_generate(feature_text)
+        return _mock_generate(feature_text, tag)
     model = (model or "gemini").lower()
     usage: Dict[str, Any] = {"model": model}
     if model == "gemini":
@@ -657,7 +657,7 @@ def _mock_jira(story_id: str) -> Dict[str, Any]:
             "screenshot_count": 0, "usable": True, "feature_text": ac, "feature_source": "acceptance_criteria"}
 
 
-def _mock_generate(feature_text: str) -> Dict[str, Any]:
+def _mock_generate(feature_text: str, tag: str = "") -> Dict[str, Any]:
     _mock_delay()
     if "[mock-gen-fail]" in feature_text:
         raise ServiceError("Gemini API error (mock): 503 model overloaded", 502)
@@ -671,6 +671,12 @@ def _mock_generate(feature_text: str) -> Dict[str, Any]:
                           "precondition": "User is logged in",
                           "steps": [{"description": f"Perform step {j} for {a['id']}", "expected": f"Result {j} as per {a['id']}"}
                                     for j in (1, 2)]})
+    if tag:  # prompt templates: distinct cases per (non-default) template
+        k = len(tag)
+        cases = [dict(c, name=f"[{tag}] {tag} check {i + 1} for {(c['description'].split(' ') + [''])[1]}",
+                      description=f"{tag}-focused scenario #{i + 1}",
+                      steps=[{"description": f"{tag}: action {j} ({i + 1})", "expected": f"{tag}: outcome {j}"} for j in (1, 2, 3)])
+                 for i, c in enumerate(cases[:max(1, len(cases) - k % 2)])]
     md = parsing.test_cases_to_markdown(cases)
     return {"markdown": md, "usage": {"model": "gemini", "model_name": "mock", "input_tokens": len(feature_text) // 4,
                                       "output_tokens": len(md) // 4, "total_tokens": len(feature_text) // 4 + len(md) // 4}}

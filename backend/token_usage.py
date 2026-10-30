@@ -52,6 +52,8 @@ def record(*, action: str, usage: Optional[Dict[str, Any]], run: Optional[Dict[s
                "story_id": story, "title": title, "source": src,
                "model": u.get("model_name") or "gemini", "mock": bool(u.get("mock")) or u.get("model_name") == "mock",
                "input": inp, "output": out, "total": tot}
+        if u.get("template"):   # prompt templates: one row per template call
+            ent["template"] = str(u["template"])[:80]
         with _LOCK:
             data = _load()
             data.append(ent)
@@ -153,11 +155,15 @@ def query(d_from="", d_to="", mode="", model="") -> Dict[str, Any]:
                 rows.append(g)
             g["items"].append({k: e.get(k) for k in ("rid", "story_id", "title", "source", "action", "model",
                                                       "input", "output", "total", "ts")})
+            if e.get("template"):
+                g["items"][-1]["template"] = e["template"]
             g["models"].add(e["model"])
             for k in ("input", "output", "total"): g[k] += e[k]
         else:
             rows.append({"kind": "run", **{k: e.get(k) for k in ("rid", "story_id", "title", "source", "mode", "action",
                                                                    "model", "input", "output", "total", "ts")}})
+            if e.get("template"):
+                rows[-1]["template"] = e["template"]
     for g in groups.values():
         g["model"] = ", ".join(sorted(g.pop("models")))
         srcs = sorted({i["source"] for i in g["items"] if i["source"]})
