@@ -449,6 +449,10 @@ async function viewSettings(v) {
       <label for="histLimit">Run history limit</label>
       <div class="row" style="align-items:center;gap:10px"><input id="histLimit" type="number" min="1" max="100" step="1" style="width:120px;flex:none"><button class="btn" id="saveHist" style="flex:none">Save limit</button><span class="sub" id="histHint" style="margin:0;flex:none"></span></div>
       <div class="sub" style="margin:8px 0 0">How many recent runs to keep on this browser (1–100, default 5). Lowering it removes only the oldest runs beyond the new limit; raising it keeps everything.</div></div>
+    <div class="card" id="dupCard" style="margin-top:18px"><h3>≋ Duplicate detection</h3>
+      <label for="dupThr">Similarity threshold (%)</label>
+      <div class="row" style="align-items:center;gap:10px"><input id="dupThr" type="number" min="50" max="99" step="1" style="width:120px;flex:none"><button class="btn" id="saveDup" style="flex:none">Save threshold</button><span class="sub" id="dupHint" style="margin:0;flex:none"></span></div>
+      <div class="sub" style="margin:8px 0 0">Test cases at or above this similarity are flagged as possible duplicates (50–99, default 80; 90%+ shown in red). Checked locally — no AI call.</div></div>
     <div class="card" id="promptCard" style="margin-top:18px"><h3>📝 Default prompt <span class="sub" id="promptFile" style="font-weight:400"></span></h3>
       <div class="sub" style="margin:0 0 8px">Used by Generate when "Default prompt" is selected. It must not be empty.</div>
       <textarea id="promptText" style="width:100%;min-height:220px;font-family:ui-monospace,monospace;font-size:12px"></textarea>
@@ -462,6 +466,13 @@ async function viewSettings(v) {
     const r = await api("/api/settings/history_limit", { method: "PUT", body: { value: +raw } });
     $("#histHint").textContent = `Current: ${r.value}`; toast(`Run history limit set to ${r.value}${r.pruned ? ` · removed ${r.pruned} oldest run${r.pruned > 1 ? "s" : ""}` : ""}`);
     if (window.refreshHistoryCount) refreshHistoryCount();
+  });
+  api("/api/settings/dup_threshold").then((d) => { $("#dupThr").value = d.value; $("#dupHint").textContent = `Current: ${d.value}%`; });
+  $("#saveDup").onclick = () => guarded($("#saveDup"), async () => {
+    const raw = $("#dupThr").value.trim();
+    if (!/^\d+$/.test(raw) || +raw < 50 || +raw > 99) throw new Error("Duplicate threshold must be a whole number between 50 and 99.");
+    const r = await api("/api/settings/dup_threshold", { method: "PUT", body: { value: +raw } });
+    DUP.threshold = r.value; DUP.res = null; $("#dupHint").textContent = `Current: ${r.value}%`; toast(`Duplicate threshold set to ${r.value}%`);
   });
   if (S.focusPrompt) { S.focusPrompt = false; $("#promptCard").scrollIntoView({ block: "start" }); }
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
