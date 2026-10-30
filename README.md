@@ -189,3 +189,32 @@ Offline test switches (process environment only, never read from `.env`): `ATG_M
 - Input step → **Generate options**: pick one or more templates. Selecting several calls the model once per template, merges results (each case tagged with its template), renumbers TC IDs and records one Token Usage row per call.
 - Interaction with the Generate step: **Custom prompt** always overrides templates (unchanged behaviour). **Default prompt** uses the Input-step template selection; when the selection is just the built-in Default (initial state) the original code path runs unchanged.
 - Batch: batch-level multi-select plus a per-item override column (Excel items: n/a).
+
+## Review tools (Export, Edit mode, Traceability matrix, Type tags, Version history, Quality score)
+
+All additive — the existing Review cards, drag handles, priority dropdown, **＋ Test case**, **Save & Download Excel**
+and the Batch layout work exactly as before.
+
+- **⇩ Export ▾** (Review toolbar, and on each batch item in *Generate queue*): Excel (.xlsx), CSV, or qTest-import CSV.
+  Pick columns (ID, Name, Description, Precondition, Priority, AC mapping, Review status, Template, Type),
+  *Include steps (one row per step)* and *Only reviewed test cases*. API: `GET /api/export?fmt=xlsx|csv|qtest&cols=…&steps=1&reviewed=0[&item=<batch key>]`.
+  Exports are written to `reports/runs/<run>/exports/` and never change the run's saved Excel; the default xlsx
+  layout reuses the same writer as Save & Download Excel.
+- **Edit mode (✎ on a card)**: edit title, description, precondition, steps and expected results in text boxes,
+  add/delete steps, delete the test case (click twice). **＋ Add test case** at the bottom adds one in edit mode.
+  The unsaved-changes bar now has **Save** / **Discard**.
+- **☰ List / ▦ Matrix**: List is the default card view. Matrix shows AC rows × TC columns, coverage %, uncovered ACs in red
+  with *Generate test cases for ACn* (the existing coverage “Generate TC for AC” flow) and *Export matrix* (CSV).
+- **Type tags**: each test case gets Positive / Negative / Edge. The generator prompt asks for an optional
+  `Test Case Type:` line (set `ATG_TYPE_HINT=0` to disable); when it is absent a keyword heuristic is used.
+  Click the chip to change it. Priority/Type filter chips with counts sit under the toolbar (the priority chips
+  drive the existing *All priorities* select).
+- **🕘 Versions**: a version is stored per run on Generate, Save (incl. accepted Regenerate / Improve with AI),
+  AI-review accept and Excel import (`reports/runs/<run>/versions.json`, last 30). Restore any version, or compare
+  two (added / removed / modified with word-level highlights, unified or side by side).
+  API: `GET /api/versions`, `POST /api/versions/{v}/restore`.
+- **Quality score**: local heuristic (no AI call) per test case 0–100 = 40 % clarity + 40 % completeness + 20 % duplicate risk;
+  overall run score, *Weak* flag (< 50), *Weak only* filter, *Sort: score ↑*. Click a score for the breakdown;
+  **Improve with AI** makes one regenerate call for that test case (mocked with `ATG_MOCK_GEMINI=1`).
+- Tests: `/workspace/e2e/rt.py` (mock server on 8001; `ATG_BASE` overrides). Mock generate emits
+  `Test Case Type:` lines when the feature text contains `[mock-types]`.

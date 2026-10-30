@@ -1497,3 +1497,102 @@ def tpl_duplicate(tid: str, sess=Depends(current)):
 def tpl_set_default(tid: str, sess=Depends(current)):
     ptpl.set_default(tid)
     return {"ok": True, "default_id": tid}
+
+
+# --------------------------------------------------------------------------- #
+# Review tools (additive): Export (xlsx / csv / qTest-import csv) + per-run Version history.
+# Existing endpoints are untouched; versions are recorded by a small middleware after the
+# existing save points succeed (generate / batch generate / review save / AI review accept / Excel import).
+# --------------------------------------------------------------------------- #
+from . import review_tools as rtools  # noqa: E402
+
+_RT_VERSION_HOOKS = [
+    ("POST", re.compile(r"^/api/generate$"), "generated"),
+    ("POST", re.compile(r"^/api/batch/items/([^/]+)/generate$"), "generated"),
+    ("PUT", re.compile(r"^/api/review/test_cases$"), "manual edits"),
+    ("POST", re.compile(r"^/api/review/accept$"), "AI review applied"),
+    ("POST", re.compile(r"^/api/excel/import$"), "Excel import"),
+]
+
+
+@app.middleware("http")
+async def _rt_version_hook(request: Request, call_next):
+    resp = await call_next(request)
+    try:
+        if resp.status_code == 200:
+            for method, rx, note in _RT_VERSION_HOOKS:
+                m = rx.match(request.url.path)
+                if request.method == method and m:
+                    sess = session_store.get(request.cookies.get(COOKIE))
+                    if sess:
+                        if m.groups():
+                            it = _bitem(sess.get("batch"), m.group(1))
+                            run = it["run"] if it else None
+                        else:
+                            run = _run(sess)
+                        if run is not None:
+                            rtools.record(run, note)
+                    break
+    except Exception:
+        log.exception("version history hook failed (ignored)")
+    return resp
+
+
+def _rt_target_run(sess, item: str = "") -> Dict[str, Any]:
+    if item:
+        it = _bitem(sess.get("batch"), item)
+        if not it:
+            raise ServiceError("Batch item not found.", 404)
+        return it["run"]
+    return _run(sess)
+
+
+@app.get("/api/export")
+def rt_export(fmt: str = "xlsx", cols: str = "", steps: int = 1, reviewed: int = 0, item: str = "",
+              sess=Depends(current)):
+    """Download the run's (or a batch item's) test cases. Does not change run['excel_path'] / dirty."""
+    run = _rt_target_run(sess, item)
+    if fmt not in rtools.FORMATS:
+        raise ServiceError("Unknown export format.")
+    cases = parsing.sanitize_cases(run.get("test_cases"))
+    cases = rtools.select_cases(cases, bool(reviewed))
+    if not cases:
+        raise ServiceError("No test cases to export" + (" (none are marked Reviewed)." if reviewed else "."))
+    name = (run.get("story_id") or "LOCAL").replace("/", "_")
+    if fmt == "qtest":
+        data = rtools.csv_bytes(rtools.qtest_table(cases))
+        return Response(data, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}_qtest_import.csv"'})
+    clist = rtools.parse_cols(cols)
+    if fmt == "csv":
+        data = rtools.csv_bytes(rtools.table(cases, clist, bool(steps)))
+        return Response(data, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}_testcases.csv"'})
+    path = rtools.xlsx_file(run, cases, clist, bool(steps))
+    return FileResponse(path, filename=f"{name}_testcases.xlsx",
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/versions")
+def rt_versions(sess=Depends(current)):
+    run = _run(sess)
+    vs = rtools.load(run)
+    if not vs and run.get("test_cases"):   # runs created before version history existed
+        rtools.record(run, "initial (first seen)")
+        vs = rtools.load(run)
+    return {"ok": True, "run_id": run.get("run_id"), "story_id": run.get("story_id") or "",
+            "title": (run.get("jira") or {}).get("summary") or "", "versions": vs}
+
+
+@app.post("/api/versions/{v}/restore")
+def rt_restore(v: int, sess=Depends(current)):
+    run = _run(sess)
+    ver = next((x for x in rtools.load(run) if x.get("v") == v), None)
+    if not ver:
+        raise ServiceError(f"Version v{v} not found.", 404)
+    cases = parsing.sanitize_cases(ver["cases"])
+    _validate_cases(cases)
+    run.update({"test_cases": cases, "dirty": True})
+    _save(sess, history=True)
+    nv = rtools.record(run, f"restored v{v}")
+    return {"ok": True, "restored": v, "version": (nv or {}).get("v"), "run": _public_run(run)}
