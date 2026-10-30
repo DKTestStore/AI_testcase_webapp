@@ -55,7 +55,7 @@ function viewReview(v) {
     <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn g dp-btn" id="dupBtn" title="Find near-identical test cases (local check, no AI call)">≋ Check duplicates</button><button class="btn g" id="upExcel" title="Import test cases from an .xlsx file">⬆ Upload Excel</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button><a class="tpl-link" href="/api/excel/template" title="Excel template with all supported columns">Download template</a></div></div>
     <div class="warn rv-unsaved ${S.localDirty ? "" : "hidden"}" id="unsavedBar">⚠ You have unsaved edits in this table. <span class="sub" style="margin:0">Save changes (or Continue — it saves automatically).</span></div>
     ${!S.localDirty && r.excel_name && !r.dirty ? `<div class="note" style="margin:0 0 10px">✅ Excel saved: <b>${esc(r.excel_name)}</b></div>` : ""}
-    <div id="dupBanner"></div><div id="dupPanel"></div>
+    <div id="covBar"></div><div id="covPanel"></div><div id="dupBanner"></div><div id="dupPanel"></div>
     <div id="reviewPanel">${reviewPanel(r.review)}</div>
     <div class="card rv-toolbar" id="rvToolbar">
       <input id="rvQ" placeholder="🔍 Search…" value="${esc(RV.q)}" style="width:170px">
@@ -128,7 +128,7 @@ function renderList() {
   const pager = pagerHtml(RV.page, pages, f.length, PS, total, "page");
   h = pager.replace('class="rv-pager"', 'class="rv-pager top"') + h + pager;
   $("#rvList").innerHTML = h;
-  renderBulk(); updateProgress(); if (window.dupRender) dupRender();
+  renderBulk(); updateProgress(); if (window.dupRender) dupRender(); if (window.covRender) covRender();
   $$(".tc-scroll").forEach((e) => { if (inner[e.dataset.sk] !== undefined) e.scrollTop = inner[e.dataset.sk]; });
   const js = RV.justStep && $(".sr.just"); if (js) { const sc = js.closest(".tc-scroll"); if (sc && (js.offsetTop < sc.scrollTop || js.offsetTop > sc.scrollTop + sc.clientHeight - 40)) sc.scrollTop = js.offsetTop - sc.clientHeight / 2; }
   window.scrollTo(0, y);
