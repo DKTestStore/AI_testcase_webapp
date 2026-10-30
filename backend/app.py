@@ -275,6 +275,8 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         prompt, appended = services.build_prompt(mode, custom)
         result = services.generate(model, run["feature_text"], prompt)
         cases = parsing.markdown_to_test_cases(result["markdown"])
+        if mode == "default" and cases:   # Default template implicitly used -> count it
+            ptpl.mark_used([ptpl.DEFAULT_ID])
     if not cases:
         run["markdown"] = result["markdown"]
         _save(sess)
@@ -1019,6 +1021,8 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
             prompt, _ = services.build_prompt(mode, custom)
             result = services.generate(model, run["feature_text"], prompt)
             cases = parsing.markdown_to_test_cases(result["markdown"])
+            if mode == "default" and cases:   # Default template implicitly used -> count it
+                ptpl.mark_used([ptpl.DEFAULT_ID])
         if not cases:
             raise ServiceError("The model responded, but no test cases could be parsed from its output.", 422)
     except ServiceError as ex:

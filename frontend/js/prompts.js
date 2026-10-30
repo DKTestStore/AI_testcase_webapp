@@ -207,7 +207,7 @@ async function ptInjectBatch() {
       const n = (b.items || []).filter((i) => i.template_ids && i.template_ids.length).length;
       const c = document.createElement("div"); c.className = "card pt-opts"; c.id = "ptBOpts";
       c.innerHTML = `<label style="margin-top:0">Batch prompt templates <span class="pt-new">NEW</span></label><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div id="ptBSel" style="min-width:320px;flex:0 1 420px"></div>
-        <a href="#" id="ptBView" style="color:#4361ee;font-weight:600">👁 View prompt</a><span class="sub" style="margin:0">Applies to every generated item unless overridden per item below. ${n} override${n === 1 ? "" : "s"} set.</span></div>`;
+        <a href="#" id="ptBView" style="color:#4361ee;font-weight:600">👁 View prompt</a><span class="sub" style="margin:0">Applies to every generated item unless overridden per item below. <span id="ptBOvC">${n} override${n === 1 ? "" : "s"} set.</span></span></div>`;
       anchor.before(c);
       ptMulti($("#ptBSel"), bids, (ids) => bApi("/api/batch/templates", { method: "PUT", body: { ids } }).catch((e) => toast(e.message, true)));
       $("#ptBView").onclick = (e) => { e.preventDefault(); const it = (b.items || []).find((i) => i.source !== "excel"); ptViewPromptBatch(it && it.key); };
@@ -222,7 +222,7 @@ async function ptInjectBatch() {
         if (it.source === "excel") { td.innerHTML = '<span class="sub" style="margin:0">n/a (no generation)</span>'; return; }
         const ov = it.template_ids || [];
         td.innerHTML = `<select class="pt-ov ${ov.length ? "set" : ""}" data-k="${esc(it.key)}"><option value="">— batch default —</option>${PT.d.templates.map((x) => `<option value="${esc(x.id)}" ${ov.length === 1 && ov[0] === x.id ? "selected" : ""}>📝 ${esc(x.name)}</option>`).join("")}${ov.length > 1 ? `<option value="__multi" selected>${ov.length} templates: ${esc(ov.map(ptName).join(", "))}</option>` : ""}</select>`;
-        $("select", td).onchange = (e) => { const val = e.target.value; if (val === "__multi") return; bApi(`/api/batch/items/${it.key}`, { method: "PATCH", body: { template_ids: val ? [val] : null } }).then(() => { e.target.classList.toggle("set", !!val); toast(val ? `${it.item_id}: template ${ptName(val)}` : `${it.item_id}: uses batch templates`); }).catch((x) => toast(x.message, true)); };
+        $("select", td).onchange = (e) => { const val = e.target.value; if (val === "__multi") return; bApi(`/api/batch/items/${it.key}`, { method: "PATCH", body: { template_ids: val ? [val] : null } }).then(() => { e.target.classList.toggle("set", !!val); it.template_ids = val ? [val] : null; { const c = $("#ptBOvC"); if (c) { const m = (BS.batch.items || []).filter((i) => i.template_ids && i.template_ids.length).length; c.textContent = `${m} override${m === 1 ? "" : "s"} set.`; } } toast(val ? `${it.item_id}: template ${ptName(val)}` : `${it.item_id}: uses batch templates`); }).catch((x) => toast(x.message, true)); };
       });
     }
   } catch (e) { } finally { ptInjectBatch.busy = false; }
