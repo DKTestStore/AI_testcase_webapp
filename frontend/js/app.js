@@ -524,7 +524,7 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
   let st; try { st = await api("/api/state"); } catch (e) { return; }
   const h = location.hash.slice(1);
   if (st.mode === "batch") { await resumeBatch(h); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
-  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history" || h === "tokens")) ? h : "input";
+  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history" || h === "tokens" || (h === "acs" && stepUnlocked("review")))) ? h : "input";
   render();
   if (window.refreshHistoryCount) refreshHistoryCount();
 })();
