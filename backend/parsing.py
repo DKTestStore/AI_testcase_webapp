@@ -25,7 +25,39 @@ def markdown_to_test_cases(markdown: str) -> List[Dict[str, Any]]:
             cases.append({"id": tc_id, "name": name, "description": desc,
                           "precondition": pre,
                           "steps": [{"description": step, "expected": expected}]})
+    # Test type (additive): taken from an optional 'Test Case Type:' line, else a keyword heuristic
+    types = extract_types(markdown)
+    for c in cases:
+        c["type"] = types.get(c["id"]) or guess_type(c)
     return cases
+
+
+TYPES = ("Positive", "Negative", "Edge")
+_TYPE_LINE = re.compile(r"(?im)^[\s*_#>-]*Test\s*Case\s*Type[*_\s]*:[*_\s]*(positive|negative|edge)")
+_NEG_RE = re.compile(r"\b(invalid|error|errors|reject|rejected|rejects|expired|expire|expires|empty|blank|missing|wrong|"
+                     r"fail|fails|failed|failure|unregistered|unknown|not allowed|denied|locked|negative|incorrect|"
+                     r"exceed|exceeds|too long|too short|without)\b", re.I)
+_EDGE_RE = re.compile(r"\b(boundary|boundaries|edge|limit|limits|maximum|minimum|max|min|exactly|zero|overflow|"
+                      r"concurrent|timeout|special characters|unicode|largest|smallest)\b", re.I)
+
+
+def extract_types(markdown: str) -> Dict[str, str]:
+    """{test case id: 'Positive'|'Negative'|'Edge'} from optional 'Test Case Type:' lines."""
+    out: Dict[str, str] = {}
+    for block in (markdown or "").split("Test Case ID:")[1:]:
+        lines = block.strip().splitlines()
+        if not lines:
+            continue
+        tc_id = re.sub(r"[*_`]", "", lines[0]).strip()
+        m = _TYPE_LINE.search(block)
+        if tc_id and m:
+            out[tc_id] = m.group(1).capitalize()
+    return out
+
+
+def guess_type(tc: Dict[str, Any]) -> str:
+    blob = f"{tc.get('name', '')} {tc.get('description', '')}"
+    return "Edge" if _EDGE_RE.search(blob) else "Negative" if _NEG_RE.search(blob) else "Positive"
 
 
 def _one_line(text: Any) -> str:
@@ -80,6 +112,8 @@ def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
             "regenerated": bool(tc.get("regenerated")),  # display-only badge
             "merged": str(tc.get("merged") or "")[:80],   # display-only badge: "TC002 + TC005"
         })
+        if tc.get("type") in TYPES:   # Positive / Negative / Edge tag (display + export only)
+            out[-1]["type"] = tc["type"]
         if tc.get("template"):   # prompt templates: display-only source tag (only present on template runs)
             out[-1]["template"] = str(tc["template"])[:80]
     return out

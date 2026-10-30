@@ -8,6 +8,7 @@ Settings screen works) even before API keys are configured.
 import importlib
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -209,11 +210,18 @@ def _today_tokens() -> int:
     return int(t.get("tokens_used") or t.get("tokens") or 0)
 
 
+TYPE_HINT = ("\n\nAdditionally, directly below each 'Test Case Name:' line add one line "
+             "'Test Case Type: Positive' or 'Test Case Type: Negative' or 'Test Case Type: Edge' "
+             "classifying that test case. Keep every other part of the required output template unchanged.")
+
+
 def generate(model: str, feature_text: str, prompt: str, tag: str = "") -> Dict[str, Any]:
     if not (feature_text or "").strip():
         raise ServiceError("No feature description. Complete the Input step first.")
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
         return _mock_generate(feature_text, tag)
+    if os.environ.get("ATG_TYPE_HINT", "1") != "0":
+        prompt = (prompt or "") + TYPE_HINT   # additive: ask for Positive/Negative/Edge (parsing falls back to a heuristic)
     model = (model or "gemini").lower()
     usage: Dict[str, Any] = {"model": model}
     if model == "gemini":
@@ -678,6 +686,9 @@ def _mock_generate(feature_text: str, tag: str = "") -> Dict[str, Any]:
                       steps=[{"description": f"{tag}: action {j} ({i + 1})", "expected": f"{tag}: outcome {j}"} for j in (1, 2, 3)])
                  for i, c in enumerate(cases[:max(1, len(cases) - k % 2)])]
     md = parsing.test_cases_to_markdown(cases)
+    if "[mock-types]" in feature_text:   # tests: emulate the model answering the Test Case Type hint
+        kinds = ["Positive", "Negative", "Edge"]
+        md = re.sub(r"(?m)^(Test Case Name: .*)$", lambda m, it=iter(range(10 ** 6)): f"{m.group(1)}\nTest Case Type: {kinds[next(it) % 3]}", md)
     return {"markdown": md, "usage": {"model": "gemini", "model_name": "mock", "input_tokens": len(feature_text) // 4,
                                       "output_tokens": len(md) // 4, "total_tokens": len(feature_text) // 4 + len(md) // 4}}
 
