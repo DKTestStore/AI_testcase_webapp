@@ -80,6 +80,8 @@ def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
             "regenerated": bool(tc.get("regenerated")),  # display-only badge
             "merged": str(tc.get("merged") or "")[:80],   # display-only badge: "TC002 + TC005"
         })
+        if tc.get("template"):   # prompt templates: display-only source tag (only present on template runs)
+            out[-1]["template"] = str(tc["template"])[:80]
     return out
 
 

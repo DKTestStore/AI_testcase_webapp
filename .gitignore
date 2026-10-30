@@ -8,3 +8,4 @@ backend/history/
 backend/logs/
 backend/app_settings.json
 backend/token_usage.json
+backend/prompt_templates.json

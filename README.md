@@ -182,3 +182,10 @@ Offline test switches (process environment only, never read from `.env`): `ATG_M
 
 ## Original CLI pipeline
 `python -m ai_test_generator.test_runner.main_pipeline` still works as before (run from the repo root).
+
+## Prompt templates (multi-select)
+- Sidebar → **Prompt templates**: built-in locked **Default** (= `ai_test_generator/prompt/test_cases_generator_prompt.md`, view/duplicate only) plus API / UI / Security / Performance / Regression starters. Stored in `backend/prompt_templates.json` (gitignored, re-seeded if missing).
+- Placeholders: `{{story_title}}`, `{{description}}`, `{{acceptance_criteria}}` (required, validated on save), `{{num_cases}}`, `{{test_types}}`, `{{detail_level}}` (optional, from template options). Unknown placeholders are warned about and left as-is. The output template is appended if the prompt lacks `Test Case ID:`.
+- Input step → **Generate options**: pick one or more templates. Selecting several calls the model once per template, merges results (each case tagged with its template), renumbers TC IDs and records one Token Usage row per call.
+- Interaction with the Generate step: **Custom prompt** always overrides templates (unchanged behaviour). **Default prompt** uses the Input-step template selection; when the selection is just the built-in Default (initial state) the original code path runs unchanged.
+- Batch: batch-level multi-select plus a per-item override column (Excel items: n/a).
