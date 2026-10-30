@@ -1258,6 +1258,76 @@ def put_token_settings(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         raise ServiceError(str(ex))
 
 
+# --------------------------------------------------------------------------- #
+# Global search (header search / Ctrl+K) over the current run/batch + run history
+# --------------------------------------------------------------------------- #
+def _sr_hit(q, *vals):
+    return any(q in str(v or "").lower() for v in vals)
+
+
+@app.get("/api/search")
+def global_search(q: str = "", limit: int = 8, sess=Depends(current)):
+    q = (q or "").strip().lower()[:200]
+    limit = max(1, min(int(limit or 8), 50))
+    out = {"runs": [], "batches": [], "tickets": [], "test_cases": [], "acs": []}
+    if not q:
+        return {"ok": True, "q": q, **out}
+    hid = sess.get("hid")
+    entries = history_store.list_items(hid) if history_store.valid(hid) else []
+    seen_t, seen_tc, seen_ac = set(), set(), set()
+
+    def add(group, item, key=None, seen=None):
+        if len(out[group]) >= limit or (seen is not None and key in seen):
+            return
+        if seen is not None:
+            seen.add(key)
+        out[group].append(item)
+
+    def scan_run(run, ctx):
+        """ctx: {run_id, rid, open_id (history id to open), key (batch item key)}"""
+        if not run:
+            return
+        sid = run.get("story_id") or ""
+        if sid and _sr_hit(q, sid, (run.get("jira") or {}).get("summary")):
+            add("tickets", {**ctx, "story_id": sid, "title": (run.get("jira") or {}).get("summary") or ""}, sid, seen_t)
+        for c in run.get("test_cases") or []:
+            steps = " ".join(f"{s.get('description', '')} {s.get('expected', '')}" for s in c.get("steps") or [])
+            if _sr_hit(q, c.get("id"), c.get("name"), c.get("description"), c.get("precondition"), steps):
+                add("test_cases", {**ctx, "tc_id": c.get("id"), "name": c.get("name") or "", "story_id": sid},
+                    (ctx["run_id"], c.get("id")), seen_tc)
+        try:
+            acl = run.get("ac_list") or _ac_list(run)
+        except Exception:  # noqa: BLE001 - search must never fail on an odd run
+            acl = []
+        for a in acl or []:
+            if _sr_hit(q, a.get("id"), a.get("title"), a.get("text")):
+                add("acs", {**ctx, "ac_id": a.get("id"), "title": a.get("title") or a.get("text") or "", "story_id": sid},
+                    (ctx["run_id"], a.get("id")), seen_ac)
+
+    # current single run first (may not be in history yet)
+    cur = sess.get("run") or {}
+    scan_run(cur, {"run_id": cur.get("run_id"), "rid": cur.get("rid") or "", "open_id": cur.get("run_id"), "key": "", "current": True})
+    for e in entries:
+        if e.get("kind") == "batch":
+            if _sr_hit(q, e.get("rid"), e.get("story_id"), e.get("title")) or any(
+                    _sr_hit(q, c.get("rid"), c.get("story_id"), c.get("title")) for c in e.get("children") or []):
+                add("batches", {"run_id": e["run_id"], "rid": e.get("rid"), "title": e.get("title"), "story_id": e.get("story_id"),
+                                "count": e.get("count"), "created": e.get("created")})
+            snap = history_store.load_run(hid, e["run_id"]) or {}
+            for it in snap.get("items") or []:
+                r = it.get("run") or {}
+                if r.get("test_cases"):
+                    scan_run(r, {"run_id": r.get("run_id"), "rid": r.get("rid") or "", "open_id": e["run_id"], "key": it.get("key"), "batch_rid": e.get("rid")})
+            continue
+        if _sr_hit(q, e.get("rid"), e.get("story_id"), e.get("title"), e.get("source")):
+            add("runs", {"run_id": e["run_id"], "rid": e.get("rid"), "title": e.get("title"), "story_id": e.get("story_id"),
+                         "count": e.get("count"), "status": e.get("status"), "created": e.get("created")})
+        if e["run_id"] == cur.get("run_id"):
+            continue
+        scan_run(history_store.load_run(hid, e["run_id"]), {"run_id": e["run_id"], "rid": e.get("rid") or "", "open_id": e["run_id"], "key": ""})
+    return {"ok": True, "q": q, **out}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
