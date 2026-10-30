@@ -121,7 +121,7 @@ function renderBatch() {
   const v = $("#view");
   const page = { "b-items": bViewItems, "b-gen": bViewGen, "b-review": bViewReview, "b-qtest": bViewQtest }[S.view];
   if (page) return page(v);
-  ({ history: (x) => viewHistory(x), setup: viewSetup, settings: viewSettings }[S.view] || bViewItems)(v);
+  ({ history: (x) => viewHistory(x), compare: (x) => viewCompare(x), setup: viewSetup, settings: viewSettings }[S.view] || bViewItems)(v);
   bInjectBar(v);
 }
 // Shared pages (history/setup/settings) get the batch bar once their content is rendered.
@@ -339,10 +339,10 @@ function bRenderList() {
       : i.fetch.status !== "ok" ? '<span class="st-dot er" style="font-size:11px"><i></i>Skipped</span>'
       : i.gen.status === "generating" ? '<span class="st-dot run" style="font-size:11px"><i></i>Generating…</span>'
       : `<span class="st-dot q" style="font-size:11px"><i></i>${esc(i.gen.status === "queued" ? "Queued" : i.gen.status === "failed" ? "Failed" : "No test cases")}</span>`;
-    return `<div class="bt-item ${i.key === act ? "a" : ""} ${has ? "" : "dis"}" data-k="${i.key}"><span class="pill b">${esc(i.item_id)}</span><span class="srcb ${src[0]}">${src[1]}</span>${i.ready ? '<span class="ready">✓ READY</span>' : ""}<div class="t">${esc(i.source === "excel" ? i.filename : (i.title || (i.fetch.status !== "ok" ? "Not fetched" : "")))}</div>${sub}</div>`;
+    return `<div class="bt-item ${i.key === act ? "a" : ""} ${has ? "" : "dis"}" data-k="${i.key}"><span class="pill b">${esc(i.item_id)}</span><span class="srcb ${src[0]}">${src[1]}</span>${i.ready ? '<span class="ready">✓ READY</span>' : ""}<div class="t">${esc(i.source === "excel" ? i.filename : (i.title || (i.fetch.status !== "ok" ? "Not fetched" : "")))}</div>${sub}${(i.cov_uncovered || []).length ? `<span class="cov-chip bchip">⚠ AC ${i.cov_total - i.cov_uncovered.length}/${i.cov_total}</span>` : ""}</div>`;
   }).join("") + `<div class="sub" style="margin:8px 6px 4px;font-size:11.5px">📊 Excel items open straight in Review (no Generate). Regenerate works for all sources.</div>`;
   $$(".bt-item", el).forEach((d) => { if (!d.classList.contains("dis") && d.dataset.k !== act) d.onclick = () => bOpenItem(d.dataset.k).catch((e) => toast(e.message, true)); });
-  if (window.dupBatchRefresh) dupBatchRefresh();
+  if (window.dupBatchRefresh) dupBatchRefresh(); if (window.covBatchRefresh) covBatchRefresh();
   const f = $("#bRvFoot"); if (f) f.outerHTML = bRvFoot();
   bindRvFoot();
 }
@@ -418,10 +418,11 @@ async function bViewQtest(v) {
   $$(".b-pl", v).forEach((a) => (a.onclick = () => bPayload(a.dataset.k).catch((e) => toast(e.message, true))));
   $$(".b-qretry", v).forEach((b) => (b.onclick = () => guarded(b, async () => { await bApi(`/api/batch/items/${b.dataset.k}/qtest/retry`, { method: "POST" }); bQtestToast(b.dataset.k); render(); })));
   $("#bqZip").onclick = () => download("/api/batch/excel.zip");
-  $("#bqUp").onclick = () => guarded($("#bqUp"), async () => {
+  $("#bqUp").onclick = () => {
     const list = bItems().filter((i) => BS.sel.has(i.key) && bHasCases(i));
     const miss = list.filter((i) => i.source === "local" && !(i.target.module_name || i.target.module_id));
-    if (miss.length) throw new Error(`Choose a module for ${miss.map((i) => i.item_id).join(", ")} first.`);
+    if (miss.length) return toast(`Choose a module for ${miss.map((i) => i.item_id).join(", ")} first.`, true);
+    (window.covBatchBeforeUpload || ((l, f) => f()))(list, () => guarded($("#bqUp"), async () => {
     BS.uploading = true;
     try {
       for (const i of list) {
@@ -429,7 +430,8 @@ async function bViewQtest(v) {
         try { await bApi(`/api/batch/items/${i.key}/qtest`, { method: "POST", body: BS.qp }); bQtestToast(i.key); } catch (e) { toast(`${i.item_id}: ${e.message}`, true); await refreshBatch(); }
       }
     } finally { BS.uploading = false; render(); if (window.refreshHistoryCount) refreshHistoryCount(); }
-  });
+  }));
+  };
 }
 function bQtestToast(k) { const i = bItem(k), q = i.qtest || {}; if (q.status === "done") toast(`${i.item_id}: uploaded ${i.uploaded}/${i.upload_total}${q.message ? " · " + q.message : ""}`); else if (q.status) toast(`${i.item_id}: ${q.error || q.status}${q.message ? " · " + q.message : ""}`, true); }
 async function bPayload(k) {

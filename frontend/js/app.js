@@ -90,7 +90,7 @@ function render() {
   if (S.mode === "batch") return renderBatch();
   renderNav();
   const v = $("#view");
-  ({ history: (v) => viewHistory(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  ({ history: (v) => viewHistory(v), compare: (v) => viewCompare(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
 }
 
 
@@ -357,7 +357,7 @@ async function qUpload(el) {
   let modMode = "new";
   $$("#modSeg button").forEach((b) => (b.onclick = () => { modMode = b.dataset.m; $$("#modSeg button").forEach((x) => x.classList.toggle("a", x === b)); $("#modNew").classList.toggle("hidden", modMode !== "new"); $("#modExisting").classList.toggle("hidden", modMode === "new"); }));
   $("#previewBtn").onclick = () => guarded($("#previewBtn"), async () => { const j = await api("/api/qtest/preview", { method: "POST", body: { module_id: modMode === "existing" ? $("#qModId").value : "" } }); S.payloadPreview = j; PL.page = 0; $("#payload").innerHTML = payloadHtml(j); renderNav(); });
-  $("#uploadBtn").onclick = () => {
+  $("#uploadBtn").onclick = () => (window.covBeforeUpload || ((f) => f()))(() => {
     const body = { project_id: $("#qProject").value, requirement_id: $("#qReq").value, parent_module_id: $("#qParent").value,
       module_id: modMode === "existing" ? $("#qModId").value : "", module_name: modMode === "new" ? $("#qModName").value : "" };
     if (modMode === "existing" && !/^\d+$/.test(body.module_id.trim())) return toast("Enter a numeric Module ID", true);
@@ -371,7 +371,7 @@ async function qUpload(el) {
       catch (e) { $("#resultCard").innerHTML = `<h3>Upload failed</h3><div class="error">${esc(e.message)}</div>`; throw e; }
       $("#resultCard").innerHTML = uploadSummary(S.run.upload); renderNav(); bindNextState();
     });
-  };
+  });
 }
 function jsonHl(obj) {
   return esc(JSON.stringify(obj, null, 2)).replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,

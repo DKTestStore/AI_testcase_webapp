@@ -100,6 +100,7 @@ async function viewHistory(v) {
   const hb = hHasBatch(j);
   $("#hBody").innerHTML = hNote(j.max, hb) + hTable(j, false) + `<div class="foot muted">${j.items.length} of ${j.max} ${hb ? "entries · a batch counts as one" : "runs"} · saved when you generate, import, save or upload · newest first</div>`;
   hBind($("#hBody"), j, () => viewHistory(v));
+  if (window.cmpHistory) cmpHistory($("#hBody"), j);
 }
 async function renderRecentRuns(el) {
   const j = await refreshHistoryCount(); if (!j || !el.isConnected) return;

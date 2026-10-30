@@ -107,6 +107,8 @@ def _steps(run) -> Dict[str, bool]:
 def _public_run(run) -> Dict[str, Any]:
     r = dict(run)
     r["steps"] = _steps(run)
+    if not r.get("ac_list") and (run.get("feature_text") or run.get("jira")):
+        r["ac_list"] = _ac_list(run)  # coverage check needs the AC list even before Generate (e.g. imported cases)
     r["excel_name"] = Path(run["excel_path"]).name if run.get("excel_path") else ""
     r.pop("excel_path", None)
     return r
@@ -730,12 +732,15 @@ def _item_summary(it) -> Dict[str, Any]:
     run = it["run"]
     cases = run.get("test_cases") or []
     up = run.get("upload") or {}
+    acl = (run.get("ac_list") or _ac_list(run)) if cases else []
     return {k: it.get(k) for k in ("key", "source", "item_id", "title", "fetch", "ac_count", "gen", "ready",
                                     "target", "qtest", "filename")} | {
         "run_id": run["run_id"], "rid": run.get("rid", ""), "count": len(cases),
         "reviewed": sum(1 for c in cases if c.get("status") == "reviewed"), "dirty": bool(run.get("dirty")),
         "steps": sum(len(c.get("steps") or []) for c in cases),
-        "uploaded": up.get("created", 0) if up else 0, "upload_total": up.get("total", 0) if up else 0}
+        "uploaded": up.get("created", 0) if up else 0, "upload_total": up.get("total", 0) if up else 0,
+        "cov_total": len(acl),
+        "cov_uncovered": [x["id"] for x in acl if not any(x["id"] in (c.get("acs") or []) for c in cases)]}
 
 
 def _public_batch(b) -> Dict[str, Any]:
@@ -1120,6 +1125,83 @@ def put_dup_keep(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run["dup_keep"] = sorted(set(pairs))
     _save(sess, history=bool(run.get("test_cases")))
     return {"ok": True, "dup_keep": run["dup_keep"]}
+
+
+# --------------------------------------------------------------------------- #
+# Compare runs (two runs of the same story from Run history; diff is computed in the browser)
+# --------------------------------------------------------------------------- #
+def _find_run(sess, run_id: str) -> Optional[Dict[str, Any]]:
+    """The live run (single or open batch item) first, then history: single snapshots and batch children."""
+    if sess["run"]["run_id"] == run_id:
+        return sess["run"]
+    for it in (sess.get("batch") or {}).get("items", []):
+        if it["run"]["run_id"] == run_id:
+            return it["run"]
+    hid = sess.get("hid")
+    snap = history_store.load_run(hid, run_id)
+    if snap and snap.get("kind") != "batch":
+        return snap
+    for e in history_store.list_items(hid):
+        if e.get("kind") == "batch" and any(c["run_id"] == run_id for c in e.get("children") or []):
+            b = history_store.load_run(hid, e["run_id"]) or {}
+            for it in b.get("items", []):
+                if it["run"]["run_id"] == run_id:
+                    return it["run"]
+    return None
+
+
+def _cmp_view(run, created) -> Dict[str, Any]:
+    u = run.get("last_usage") or {}
+    return {"run_id": run["run_id"], "rid": run.get("rid", ""), "story_id": run.get("story_id", ""),
+            "created": created or run.get("created", ""), "test_cases": run.get("test_cases") or [],
+            "ac_list": run.get("ac_list") or _ac_list(run), "tokens": u.get("total_tokens") or None,
+            "imported": bool(run.get("imported") and not run.get("markdown"))}
+
+
+@app.get("/api/compare")
+def compare_runs(a: str, b: str, sess=Depends(current)):
+    hid = _hid(sess)
+    created = {e["run_id"]: e.get("created") for e in history_store.list_items(hid)}
+    for e in history_store.list_items(hid):
+        for c in e.get("children") or []:
+            created[c["run_id"]] = e.get("created")
+    ra, rb = _find_run(sess, a), _find_run(sess, b)
+    if not ra or not rb:
+        raise ServiceError("One of the runs is no longer in history.", 404)
+    if (ra.get("story_id") or "").upper() != (rb.get("story_id") or "").upper() or not ra.get("story_id"):
+        raise ServiceError("Pick 2 runs of the same story.")
+    va, vb = _cmp_view(ra, created.get(a)), _cmp_view(rb, created.get(b))
+    older, newer = sorted([va, vb], key=lambda r: (r["created"] or "", r["rid"] or ""))
+    cur = _run(sess)["run_id"]
+    log.info("compare %s vs %s", older["rid"], newer["rid"])
+    return {"ok": True, "older": older, "newer": newer, "current": cur}
+
+
+@app.post("/api/compare/excel")
+def compare_excel(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    rows = data.get("rows") or []
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Compare"
+    ws.append([str(data.get("title", ""))[:200]])
+    ws.append(["Match", "Older TC", "Older name", "Current TC", "Current name", "Difference"])
+    for c in ws[2]:
+        c.font = Font(bold=True)
+    fills = {"Added": "E6F6EC", "Removed": "FDEAEA", "Changed": "FFF4DC"}
+    for r in rows[:5000]:
+        vals = [str(r.get(k, ""))[:500] for k in ("match", "old_id", "old_name", "new_id", "new_name", "diff")]
+        ws.append(vals)
+        if vals[0] in fills:
+            ws.cell(ws.max_row, 1).fill = PatternFill("solid", fgColor=fills[vals[0]])
+    for col, w in zip("ABCDEF", (12, 10, 50, 10, 50, 50)):
+        ws.column_dimensions[col].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(data.get("filename") or "compare.xlsx"))[:80]
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/health")
