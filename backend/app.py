@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config  # noqa: F401  (sys.path + .env)
 from . import excel_io, history_store, parsing, services, session_store, settings_store
+from . import token_usage
 from .config import FRONTEND_DIR, GENERATOR_PROMPT_FILE, LOG_DIR, RUNS_DIR, env
 from .services import ServiceError
 
@@ -92,6 +93,20 @@ def _save(sess, history=False):
         except Exception:
             log.exception("history record failed")
     session_store.save(sess["sid"])
+
+
+def _tok(sess, action, usage, run=None, item=None):
+    """Token Usage ledger (additive). Never raises."""
+    try:
+        run = run if run is not None else _run(sess)
+        batch = sess.get("batch") if sess.get("mode") == "batch" else None
+        if batch and item is None:
+            item = next((i for i in batch.get("items", []) if i.get("run") is run), None)
+        mode = "batch" if batch and item is not None else (run.get("source") or "local")
+        token_usage.record(action=action, usage=usage, run=run, mode=mode,
+                           batch=batch if mode == "batch" else None, item=item)
+    except Exception:
+        log.exception("token usage hook failed (ignored)")
 
 
 def _steps(run) -> Dict[str, bool]:
@@ -273,6 +288,9 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
             review_info = {"error": ex.message}
         run["review"] = review_info
     _save(sess, history=True)
+    _tok(sess, "Generate", result["usage"], run)
+    if review_info and review_info.get("usage"):
+        _tok(sess, "AI review", review_info["usage"], run)
     return {"ok": True, "count": len(cases), "template_appended": appended,
             "usage": result["usage"], "review": review_info, "run": _public_run(run)}
 
@@ -318,6 +336,7 @@ def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     prop["priority"] = prop["priority"] or tc["priority"]
     prop.update({"acs": tc["acs"], "status": "not", "regenerated": True})
     log.info("regenerate %s (%s)", tc.get("id"), "mock" if res["usage"].get("mock") else "gemini")
+    _tok(sess, "Regenerate", res["usage"], run)
     return {"ok": True, "proposal": prop, "usage": res["usage"]}
 
 
@@ -329,6 +348,7 @@ def run_reviewer(sess=Depends(current)):
     rv_cases = parsing.markdown_to_test_cases(rv["markdown"])
     run["review"] = {"markdown": rv["markdown"], "test_cases": rv_cases, "usage": rv["usage"]}
     _save(sess)
+    _tok(sess, "AI review", rv["usage"], run)
     return {"ok": True, "review": run["review"],
             "summary": {"before": len(run["test_cases"]), "after": len(rv_cases)}}
 
@@ -996,6 +1016,7 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
                  "secs": round(time.time() - t0, 1)}
     it["ready"] = False
     _save(sess, history=True)
+    _tok(sess, "Generate", result["usage"], run, item=it)
     return _bresp(sess)
 
 
@@ -1202,6 +1223,39 @@ def compare_excel(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(data.get("filename") or "compare.xlsx"))[:80]
     return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# --------------------------------------------------------------------------- #
+# Token Usage page (additive)
+# --------------------------------------------------------------------------- #
+def _tq(request: Request):
+    q = request.query_params
+    return dict(d_from=q.get("from", "")[:10], d_to=q.get("to", "")[:10], mode=q.get("mode", ""), model=q.get("model", ""))
+
+
+@app.get("/api/tokens")
+def tokens(request: Request, sess=Depends(current)):
+    return {"ok": True, **token_usage.query(**_tq(request))}
+
+
+@app.get("/api/tokens/export.csv")
+def tokens_csv(request: Request, sess=Depends(current)):
+    body = token_usage.export_csv(**_tq(request))
+    return Response(content=body, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="token_usage.csv"'})
+
+
+@app.get("/api/settings/tokens")
+def get_token_settings(sess=Depends(current)):
+    return {"ok": True, "settings": token_usage.get_settings()}
+
+
+@app.put("/api/settings/tokens")
+def put_token_settings(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    try:
+        return {"ok": True, "settings": token_usage.set_settings(data)}
+    except ValueError as ex:
+        raise ServiceError(str(ex))
 
 
 @app.get("/api/health")

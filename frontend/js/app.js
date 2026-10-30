@@ -90,7 +90,7 @@ function render() {
   if (S.mode === "batch") return renderBatch();
   renderNav();
   const v = $("#view");
-  ({ history: (v) => viewHistory(v), compare: (v) => viewCompare(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  ({ history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
 }
 
 
@@ -524,7 +524,7 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
   let st; try { st = await api("/api/state"); } catch (e) { return; }
   const h = location.hash.slice(1);
   if (st.mode === "batch") { await resumeBatch(h); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
-  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history")) ? h : "input";
+  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history" || h === "tokens")) ? h : "input";
   render();
   if (window.refreshHistoryCount) refreshHistoryCount();
 })();

@@ -389,7 +389,8 @@ def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], 
     usage: Dict[str, Any] = {"model": "gemini"}
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
         text = _mock_regen(tc, instruction or "")
-        usage.update({"mock": True, "total_tokens": 0})
+        usage.update({"mock": True, "model_name": "mock", "input_tokens": len(content) // 4 + 400,
+                      "output_tokens": len(text) // 4 + 150, "total_tokens": len(content) // 4 + len(text) // 4 + 550})
     else:
         g = _gemini_module()
         try:
