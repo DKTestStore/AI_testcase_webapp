@@ -7,3 +7,4 @@ backend/sessions/
 backend/history/
 backend/logs/
 backend/app_settings.json
+backend/token_usage.json
