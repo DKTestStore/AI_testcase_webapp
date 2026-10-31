@@ -56,7 +56,7 @@ def _write(hid, idx):
 def _source(run):
     if run.get("imported") and not run.get("markdown"):
         return "Excel upload"
-    return {"jira": "Jira", "local": "Local text"}.get(run.get("source") or "", "Excel upload" if run.get("imported") else "Local text")
+    return {"jira": "Jira", "local": "Local text", "record": "Recorded"}.get(run.get("source") or "", "Excel upload" if run.get("imported") else "Local text")
 
 
 def _title(run):
