@@ -1,4 +1,4 @@
-/* Prompt templates (additive): templates page + editor, multi-select on Input / batch, View prompt.
+/* Prompt templates (additive): templates page + editor, multi-select (Generate step + batch), View prompt.
    Hooks into existing screens only by injecting extra elements; nothing is removed or re-ordered. */
 (function () {
   const st = document.createElement("style");
@@ -31,7 +31,7 @@ const ptWhen = (s) => { if (!s) return ""; const d = new Date(s); return isNaN(d
 // ---------------------------------------------------------------- list page (pt_01)
 async function viewPrompts(v) {
   if (PT.edit) return ptEditor(v);
-  v.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h1>Prompt templates</h1><div class="sub">Reusable Gemini prompts. Pick one or more on the Input step or per batch item.</div></div><button class="btn" id="ptNew">＋ New template</button></div><div id="ptBody" class="sub">Loading…</div>`;
+  v.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h1>Prompt templates</h1><div class="sub">Reusable Gemini prompts. Pick one or more under <b>Prompt source → Templates</b> on the Generate step, or per batch item.</div></div><button class="btn" id="ptNew">＋ New template</button></div><div id="ptBody" class="sub">Loading…</div>`;
   $("#ptNew").onclick = () => { PT.edit = { id: null }; viewPrompts(v); };
   let d; try { d = await ptLoad(true); } catch (e) { $("#ptBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
   if (S.view !== "prompts") return;
@@ -40,7 +40,7 @@ async function viewPrompts(v) {
     <select id="ptTag"><option value="">All tags</option>${tags.map((t) => `<option ${t === PT.tag ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
     <select id="ptSort"><option value="edited">Sort: Last edited</option><option value="name" ${PT.sort === "name" ? "selected" : ""}>Sort: Name</option><option value="used" ${PT.sort === "used" ? "selected" : ""}>Sort: Most used</option></select>
     <span class="sub" style="margin:0" id="ptCount"></span></div><div class="pt-grid" id="ptGrid"></div>
-    <div class="note" style="margin-top:14px">ℹ The <b>Default</b> template is the built-in prompt file and can't be deleted or edited here — duplicate it to customise. "Set as default" changes which template new runs start with. Selecting several templates on the Input step calls Gemini once per template and merges the results.</div>`;
+    <div class="note" style="margin-top:14px">ℹ The <b>Default</b> template is the prompt used when <b>Prompt source → Default prompt</b> is selected on the Generate step. Edit it here (it can't be deleted); <b>Reset to original</b> restores the built-in prompt file. Selecting several templates on the Generate step calls Gemini once per template and merges the results.</div>`;
   const grid = () => {
     const q = PT.q.toLowerCase();
     let ts = d.templates.filter((t) => (!PT.tag || (t.tags || []).includes(PT.tag)) && (!q || [t.name, t.description, (t.tags || []).join(" ")].join(" ").toLowerCase().includes(q)));
@@ -49,16 +49,17 @@ async function viewPrompts(v) {
     ts = def.concat(rest);
     $("#ptCount").innerHTML = `${d.templates.length} templates · default: <b>${esc(ptName(d.default_id))}</b>`;
     $("#ptGrid").innerHTML = ts.map((t) => { const isDef = t.id === d.default_id; return `<div class="card pt-card ${isDef ? "def" : ""}" data-id="${esc(t.id)}">
-      <h3>${t.builtin ? "🔒" : "📝"} ${esc(t.name)}</h3><div>${t.builtin ? '<span class="pt-lock">🔒 Locked · built-in</span>' : ""}${isDef ? '<span class="pt-isdef">★ Default</span>' : ""}</div>
+      <h3>${t.builtin ? "⭐" : "📝"} ${esc(t.name)}</h3><div>${t.builtin ? `<span class="pt-lock">Built-in${t.modified ? " · edited" : " · original"}</span>` : ""}${isDef ? '<span class="pt-isdef">★ Default</span>' : ""}</div>
       <div class="d">${esc(t.description)}</div><div class="pt-tags">${(t.tags || []).map((x) => `<span>#${esc(x)}</span>`).join("")}</div>
-      <div class="pt-meta"><span>${t.builtin ? "Built-in · read-only" : "Edited " + ptWhen(t.updated_at)}</span><span>Used in ${t.used || 0} runs</span></div>
-      <div class="pt-acts">${t.builtin ? `<button class="btn g sm" data-a="view">👁 View</button>` : `<button class="btn g sm" data-a="edit">✎ Edit</button>`}<button class="btn g sm" data-a="dup">⧉ Duplicate</button>
+      <div class="pt-meta"><span>${t.builtin ? (t.modified ? "Edited " + ptWhen(t.updated_at) : "Built-in · original") : "Edited " + ptWhen(t.updated_at)}</span><span>Used in ${t.used || 0} runs</span></div>
+      <div class="pt-acts"><button class="btn g sm" data-a="edit">✎ Edit</button>${t.builtin && t.modified ? `<button class="btn g sm" data-a="reset">↺ Reset to original</button>` : ""}<button class="btn g sm" data-a="dup">⧉ Duplicate</button>
       <button class="btn g sm" data-a="def" ${isDef ? "disabled" : ""}>★ Set as default</button><button class="btn g sm" data-a="del" ${t.builtin ? "disabled" : ""} style="${t.builtin ? "" : "color:#d33"}">🗑 Delete</button></div></div>`; }).join("") || '<div class="muted">No templates match.</div>';
     $$("#ptGrid [data-a]").forEach((b) => (b.onclick = () => guarded(b, async () => {
       const id = b.closest("[data-id]").dataset.id, a = b.dataset.a, t = ptById(id);
       if (a === "view" || a === "edit") { PT.edit = { id }; return viewPrompts(v); }
       if (a === "dup") { const j = await api(`/api/templates/${id}/duplicate`, { method: "POST" }); toast(`Duplicated as “${j.template.name}”`); }
       if (a === "def") { await api(`/api/templates/${id}/default`, { method: "POST" }); toast(`“${t.name}” is now the default for new runs`); }
+      if (a === "reset") { if (!confirm("Reset the Default template to the original built-in prompt? Your edits will be lost.")) return; await api("/api/templates/default/reset", { method: "POST" }); toast("Default template reset to original"); }
       if (a === "del") { if (!confirm(`Delete template “${t.name}”?`)) return; await api(`/api/templates/${id}`, { method: "DELETE" }); toast("Template deleted"); }
       setTimeout(() => viewPrompts(v), 0);
     })));
@@ -72,18 +73,18 @@ async function viewPrompts(v) {
 // ---------------------------------------------------------------- editor (pt_02)
 const PT_STARTER = "**Role and Persona:**\nYou are an elite QA Architect.\n\n**Story:** {{story_title}}\n**Description:**\n{{description}}\n\n**Acceptance Criteria:**\n{{acceptance_criteria}}\n\n**Instructions:**\n* Generate about {{num_cases}} test cases.\n* Cover {{test_types}} scenarios.\n* Detail level: {{detail_level}}\n";
 async function ptEditor(v) {
-  const d = await ptLoad(); const id = PT.edit.id; const t = id ? ptById(id) : null; const ro = !!(t && t.builtin);
+  const d = await ptLoad(); const id = PT.edit.id; const t = id ? ptById(id) : null; const ro = false; const isDef = !!(t && t.builtin);
   const base = t || { name: "", description: "", tags: [], text: PT_STARTER, options: { test_types: ["positive", "negative", "edge"], num_cases: 10, detail_level: "detailed" } };
   const op = base.options || {};
-  v.innerHTML = `<div class="sub" style="margin:0">Prompt templates › ${esc(t ? t.name : "New template")}</div><h1>${ro ? "View template" : t ? "Edit template" : "New template"} · ${esc(t ? t.name : "Untitled")}</h1>
+  v.innerHTML = `<div class="sub" style="margin:0">Prompt templates › ${esc(t ? t.name : "New template")}</div><h1>${isDef ? "Edit Default template" : t ? "Edit template" : "New template"} · ${esc(t ? t.name : "Untitled")}</h1>
   <div class="pt-ed"><div><div class="card">
-    <div class="row"><div><label style="margin-top:0">Name</label><input id="ptName" value="${esc(base.name)}" ${ro ? "readonly" : ""} style="width:100%"></div>
-    <div><label style="margin-top:0">Tags</label><input id="ptTags" value="${esc((base.tags || []).join(", "))}" ${ro ? "readonly" : ""} style="width:100%" placeholder="api, rest"></div></div>
-    <label>Description</label><input id="ptDesc" value="${esc(base.description)}" ${ro ? "readonly" : ""} style="width:100%">
+    <div class="row"><div><label style="margin-top:0">Name</label><input id="ptName" value="${esc(base.name)}" ${ro || isDef ? "readonly" : ""} style="width:100%"></div>
+    <div><label style="margin-top:0">Tags</label><input id="ptTags" value="${esc((base.tags || []).join(", "))}" ${ro || isDef ? "readonly" : ""} style="width:100%" placeholder="api, rest"></div></div>
+    <label>Description</label><input id="ptDesc" value="${esc(base.description)}" ${ro || isDef ? "readonly" : ""} style="width:100%">
     <label style="display:flex;justify-content:space-between">Prompt text <span class="sub" style="margin:0;text-transform:none" id="ptLen"></span></label>
     <textarea id="ptText" rows="18" ${ro ? "readonly" : ""}>${esc(ro ? t.text : base.text)}</textarea>
     <div id="ptVal"></div>
-    ${ro ? '<div class="note">🔒 The built-in Default template is read-only (it is the prompt file used today). Duplicate it to customise.</div>' : `<h3 style="margin-top:14px">Options</h3><div class="row">
+    ${isDef ? `<div class="note" id="ptDefNote">⭐ This is the prompt used for <b>Default prompt</b> on the Generate step (and batch Default). It is sent as-is — placeholders are optional here. ${t.modified ? "<b>Edited</b> — use <b>Reset to original</b> to restore the built-in prompt file." : "Currently the original built-in prompt file."}</div>` : `<h3 style="margin-top:14px">Options</h3><div class="row">
       <div><label style="margin-top:0">Test types</label>${d.test_types.map((x) => `<label style="text-transform:none;margin:2px 0;font-weight:400;font-size:13px;color:#1e2433"><input type="checkbox" class="ptTT" value="${x}" ${(op.test_types || []).includes(x) ? "checked" : ""}> ${x[0].toUpperCase() + x.slice(1)}</label>`).join("")}</div>
       <div><label style="margin-top:0">Number of cases</label><input id="ptNum" type="number" min="1" max="100" value="${esc(op.num_cases || 10)}" style="width:90px"></div>
       <div><label style="margin-top:0">Output detail level</label><select id="ptDetail">${Object.entries(d.detail_levels).map(([k, l]) => `<option value="${k}" ${k === (op.detail_level || "detailed") ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div></div>`}
@@ -91,9 +92,9 @@ async function ptEditor(v) {
   <div><div class="card"><h3>Insert placeholder</h3><div id="ptPh"></div></div>
     <div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">Live preview</h3><select id="ptEx"><option value="run">Current run input</option><option value="ex">Example: MTG-1427 Refund API</option></select></div>
     <div class="sub" style="margin:4px 0 8px">Final prompt sent to Gemini — <mark style="background:#dcf5e3">filled values</mark> highlighted</div><div class="pt-prev" id="ptPrev">…</div></div></div></div>
-  <div class="footer-nav"><div>${ro ? "" : '<button class="btn g" id="ptReset">↺ Reset to default</button>'}</div><div><button class="btn g" id="ptCancel">${ro ? "← Back" : "Cancel"}</button> ${ro ? "" : '<button class="btn" id="ptSave">💾 Save template</button>'}</div></div>`;
+  <div class="footer-nav"><div>${isDef ? '<button class="btn g" id="ptResetOrig">↺ Reset to original</button>' : '<button class="btn g" id="ptReset">↺ Reset to default</button>'}</div><div><button class="btn g" id="ptCancel">${ro ? "← Back" : "Cancel"}</button> ${ro ? "" : '<button class="btn" id="ptSave">💾 Save template</button>'}</div></div>`;
   const ta = $("#ptText");
-  const opts = () => ro ? (t.options || {}) : { test_types: $$(".ptTT").filter((c) => c.checked).map((c) => c.value), num_cases: +$("#ptNum").value || 10, detail_level: $("#ptDetail").value };
+  const opts = () => isDef ? (t.options || {}) : { test_types: $$(".ptTT").filter((c) => c.checked).map((c) => c.value), num_cases: +$("#ptNum").value || 10, detail_level: $("#ptDetail").value };
   let tmr;
   const upd = () => {
     $("#ptLen").textContent = `${ta.value.length.toLocaleString()} chars · ~${Math.round(ta.value.length / 4).toLocaleString()} tokens`;
@@ -103,7 +104,7 @@ async function ptEditor(v) {
     const known = new Set(d.placeholders.map((p) => p.name));
     const missing = d.placeholders.filter((p) => p.required && !found.has(p.name)).map((p) => p.name);
     const unknown = [...found].filter((x) => !known.has(x));
-    $("#ptVal").innerHTML = ro ? "" : (missing.length ? `<div class="pt-val bad" id="ptMissing">⚠ <b>Validation:</b> missing required placeholder${missing.length > 1 ? "s" : ""} ${missing.map((m) => `<code>{{${m}}}</code>`).join(" ")} — Save is blocked.</div>` : "")
+    $("#ptVal").innerHTML = isDef ? (ta.value.trim() ? "" : '<div class="pt-val bad" id="ptMissing">⚠ The default prompt cannot be empty — Save is blocked.</div>') : (missing.length ? `<div class="pt-val bad" id="ptMissing">⚠ <b>Validation:</b> missing required placeholder${missing.length > 1 ? "s" : ""} ${missing.map((m) => `<code>{{${m}}}</code>`).join(" ")} — Save is blocked.</div>` : "")
       + (unknown.length ? `<div class="pt-val bad" id="ptUnknown">⚠ Unknown placeholder${unknown.length > 1 ? "s" : ""} ${unknown.map((m) => `<code>{{${esc(m)}}}</code>`).join(" ")} will be left as-is.</div>` : "")
       + (!missing.length ? `<div class="pt-val good" id="ptOk">✓ All ${d.placeholders.filter((p) => p.required).length} required placeholders present${/Test Case ID:/.test(ta.value) ? "" : " · output template will be appended automatically"}</div>` : "");
     clearTimeout(tmr); tmr = setTimeout(prev, 250);
@@ -111,7 +112,7 @@ async function ptEditor(v) {
   const prev = async () => {
     if (!$("#ptPrev")) return;
     try {
-      if (ro) { $("#ptPrev").textContent = t.text; return; }
+      if (isDef) { $("#ptPrev").textContent = ta.value; return; }
       const j = await api("/api/templates/preview", { method: "POST", body: { text: ta.value, options: opts(), use_run: $("#ptEx").value === "run" } });
       let h = esc(j.prompt); Object.values(j.values).concat([String(opts().num_cases), opts().test_types.join(", ")]).filter((x) => x && x.length > 1).sort((a, b) => b.length - a.length).forEach((val) => { const e = esc(val); h = h.split(e).join(`\u0000${e}\u0001`); });
       if (!$("#ptPrev")) return;
@@ -119,12 +120,19 @@ async function ptEditor(v) {
     } catch (e) { if ($("#ptPrev")) $("#ptPrev").innerHTML = `<span class="error">${esc(e.message)}</span>`; }
   };
   ta.oninput = upd; $("#ptEx").onchange = prev; $$(".ptTT, #ptNum, #ptDetail").forEach((x) => (x.onchange = upd)); upd();
+  const ro2 = $("#ptResetOrig"); if (ro2) ro2.onclick = () => guarded(ro2, async () => {
+    if (!confirm("Reset the Default template to the original built-in prompt? Your edits will be lost.")) return;
+    await api("/api/templates/default/reset", { method: "POST" }); const o = await api("/api/templates/default/original"); ta.value = o.text; upd();
+    await ptLoad(true); toast("Default template reset to original");
+  });
   $("#ptCancel").onclick = () => { PT.edit = null; viewPrompts(v); };
   const rs = $("#ptReset"); if (rs) rs.onclick = () => { if (!confirm("Replace the prompt text with the default starter text?")) return; ta.value = PT_STARTER; upd(); };
   const sv = $("#ptSave"); if (sv) sv.onclick = () => guarded(sv, async () => {
-    const body = { name: $("#ptName").value, tags: $("#ptTags").value, description: $("#ptDesc").value, text: ta.value, options: opts() };
+    if (isDef && !ta.value.trim()) throw new Error("The default prompt cannot be empty.");
+    const body = isDef ? { text: ta.value } : { name: $("#ptName").value, tags: $("#ptTags").value, description: $("#ptDesc").value, text: ta.value, options: opts() };
     const j = await api(id ? `/api/templates/${id}` : "/api/templates", { method: id ? "PUT" : "POST", body });
     toast(`Template “${j.template.name}” saved${j.warnings && j.warnings.length ? " · unknown placeholders left as-is: " + j.warnings.join(", ") : ""}`);
+    if (isDef) S.defaultPrompt = null;
     PT.edit = null; setTimeout(() => viewPrompts(v), 0);
   });
 }
@@ -133,7 +141,7 @@ async function ptEditor(v) {
 function ptMulti(el, ids, onChange) {
   const draw = () => {
     el.innerHTML = `<div class="pt-ms"><div class="pt-ms-btn" tabindex="0" title="Choose one or more templates">${ids.map((i) => `<span class="pt-chip" data-id="${esc(i)}">📝 ${esc(ptName(i))}${ids.length > 1 ? `<b data-x="${esc(i)}" title="Remove">×</b>` : ""}</span>`).join("")}</div>
-      <div class="pt-ms-dd">${PT.d.templates.map((t) => `<label><input type="checkbox" value="${esc(t.id)}" ${ids.includes(t.id) ? "checked" : ""}> ${t.builtin ? "🔒" : "📝"} ${esc(t.name)} <small>${(t.tags || []).map((x) => "#" + esc(x)).join(" ")}</small></label>`).join("")}</div></div>`;
+      <div class="pt-ms-dd">${PT.d.templates.map((t) => `<label><input type="checkbox" value="${esc(t.id)}" ${ids.includes(t.id) ? "checked" : ""}> ${t.builtin ? "⭐" : "📝"} ${esc(t.name)} <small>${(t.tags || []).map((x) => "#" + esc(x)).join(" ")}</small></label>`).join("")}</div></div>`;
     const ms = $(".pt-ms", el);
     $(".pt-ms-btn", el).onclick = (e) => { if (e.target.dataset.x) return; ms.classList.toggle("open"); };
     $$("[data-x]", el).forEach((x) => (x.onclick = (e) => { e.stopPropagation(); ids = ids.filter((i) => i !== x.dataset.x); draw(); onChange(ids); }));
@@ -153,44 +161,6 @@ async function ptViewPrompt(item) {
     <div id="ptVp" style="max-height:60vh;overflow:auto">${j.prompts.map((p) => `<h3 style="margin:10px 0 4px">📝 ${esc(p.name)}</h3><pre class="ro" style="max-height:none">${esc(p.prompt)}</pre>`).join("")}</div>
     <div style="text-align:right;margin-top:12px"><button class="btn" id="mCancel">Close</button></div>`);
   $("#mCancel").onclick = closeModal;
-}
-
-// ---------------------------------------------------------------- Input step card (pt_03)
-async function ptInjectInput() {
-  const v = $("#view"); const foot = $(".footer-nav", v);
-  if (!foot || $("#ptOpts") || ptInjectInput.busy) return;
-  ptInjectInput.busy = true;
-  try {
-    await ptLoad(); const sel = await api("/api/templates/selection");
-    if (S.view !== "input" || S.mode === "batch" || $("#ptOpts") || !$(".footer-nav", v)) return;
-    const card = document.createElement("div"); card.className = "card pt-opts"; card.id = "ptOpts";
-    card.innerHTML = `<h3 style="margin:0 0 6px">Generate options <span class="pt-new">NEW</span></h3><label style="margin-top:0">Prompt templates (one or more)</label><div id="ptSel"></div>
-      <div class="sub" style="margin:6px 0" id="ptSelInfo"></div><div style="display:flex;justify-content:space-between"><a href="#" id="ptView" style="color:#4361ee;font-weight:600">👁 View prompt</a><a href="#prompts" id="ptManage" style="color:#4361ee;font-weight:600">✎ Manage templates →</a></div>
-      <div class="note" style="margin:8px 0 0">Default for new runs: <b>${esc(ptName(PT.d.default_id))}</b>. Model &amp; AI Reviewer are still chosen on the Generate step; choosing <b>Custom prompt</b> there overrides templates.</div>`;
-    $(".footer-nav", v).before(card);
-    const info = (ids) => { $("#ptSelInfo").innerHTML = ids.length > 1 ? `${ids.length} templates → Gemini is called ${ids.length}× and the results are merged (each case tagged with its template).` : esc((ptById(ids[0]) || {}).description || ""); };
-    ptMulti($("#ptSel"), sel.template_ids, (ids) => { info(ids); api("/api/templates/select", { method: "POST", body: { ids } }).catch((e) => toast(e.message, true)); });
-    info(sel.template_ids);
-    $("#ptView").onclick = (e) => { e.preventDefault(); ptViewPrompt().catch((x) => toast(x.message, true)); };
-    $("#ptManage").onclick = (e) => { e.preventDefault(); go("prompts"); };
-  } catch (e) { /* ignore: never break the Input step */ } finally { ptInjectInput.busy = false; }
-}
-
-// ---------------------------------------------------------------- Generate step note (only when templates differ from Default)
-async function ptInjectGenerate() {
-  if ($("#ptGenNote") || ptInjectGenerate.busy || !$("#promptArea")) return;
-  ptInjectGenerate.busy = true;
-  try {
-    await ptLoad(); const sel = await api("/api/templates/selection");
-    if (S.view !== "generate" || $("#ptGenNote") || !$("#promptArea")) return;
-    if (sel.template_ids.length === 1 && sel.template_ids[0] === "default") return;
-    const n = document.createElement("div"); n.id = "ptGenNote"; n.className = "note";
-    const names = sel.template_ids.map((i) => `<b>${esc(ptName(i))}</b>`).join(", ");
-    n.innerHTML = S.run.prompt_mode === "custom" ? `📝 Templates selected on Input (${names}) are <b>ignored</b> because Custom prompt is selected.`
-      : `📝 Default prompt source uses the template${sel.template_ids.length > 1 ? "s" : ""} selected on Input: ${names}${sel.template_ids.length > 1 ? ` — ${sel.template_ids.length} Gemini calls, results merged.` : "."} <a href="#" id="ptGenView" style="color:#4361ee">View prompt</a>`;
-    $("#promptArea").after(n);
-    const a = $("#ptGenView"); if (a) a.onclick = (e) => { e.preventDefault(); ptViewPrompt().catch((x) => toast(x.message, true)); };
-  } catch (e) { } finally { ptInjectGenerate.busy = false; }
 }
 
 // ---------------------------------------------------------------- Batch (pt_04)
@@ -234,6 +204,5 @@ async function ptViewPromptBatch(key) {
 
 new MutationObserver(() => {
   if (S.mode === "batch") { if (S.view === "b-items") ptInjectBatch(); return; }
-  if (S.view === "input" && S.inputMode !== "excel") ptInjectInput();
-  if (S.view === "generate") ptInjectGenerate();
+  // Template selection now lives on the Generate step (Prompt source → Templates); no Input-step card.
 }).observe(document.getElementById("view"), { childList: true, subtree: true });

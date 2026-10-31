@@ -236,7 +236,8 @@ def update_feature_text(data: Dict[str, Any] = Body(...), sess=Depends(current))
 # --------------------------------------------------------------------------- #
 @app.get("/api/prompt/default")
 def default_prompt(sess=Depends(current)):
-    return {"ok": True, "filename": config.GENERATOR_PROMPT_FILE.name, "text": services.read_default_prompt()}
+    return {"ok": True, "filename": config.GENERATOR_PROMPT_FILE.name, "text": services.read_default_prompt(),
+            "modified": bool(ptpl.default_override())}
 
 
 @app.put("/api/prompt/default")
@@ -246,7 +247,7 @@ def put_default_prompt(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         raise ServiceError("The default prompt cannot be empty.")
     if len(text) > MAX_TEXT:
         raise ServiceError("Prompt is too long.")
-    GENERATOR_PROMPT_FILE.write_text(text, encoding="utf-8")
+    ptpl.update_default({"text": text})   # stored as the edited Default template (original file untouched)
     log.info("default prompt updated (%d chars)", len(text))
     return {"ok": True, "filename": GENERATOR_PROMPT_FILE.name}
 
@@ -275,6 +276,8 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         prompt, appended = services.build_prompt(mode, custom)
         result = services.generate(model, run["feature_text"], prompt)
         cases = parsing.markdown_to_test_cases(result["markdown"])
+        run["prompts_used"] = [{"id": ptpl.DEFAULT_ID if mode == "default" else "custom",
+                                "name": "Default" if mode == "default" else "Custom", "prompt": prompt}]
         if mode == "default" and cases:   # Default template implicitly used -> count it
             ptpl.mark_used([ptpl.DEFAULT_ID])
     if not cases:
@@ -614,7 +617,7 @@ def delete_setting(key: str, sess=Depends(current)):
 
 def _prompt_ok() -> bool:
     try:
-        return GENERATOR_PROMPT_FILE.exists() and bool(GENERATOR_PROMPT_FILE.read_text(encoding="utf-8").strip())
+        return bool(services.read_default_prompt().strip())
     except Exception:
         return False
 
@@ -635,7 +638,7 @@ def setup_status(sess=Depends(current)):
          "ok": v("QTEST_BASE_URL") and v("QTEST_TOKEN") and v("QTEST_PROJECT_ID"),
          "hint": "Needed only for qTest Upload (Excel download works without it)"},
         {"key": "default_prompt", "label": "Default prompt", "required": True, "ok": _prompt_ok(),
-         "hint": GENERATOR_PROMPT_FILE.name, "link": "View / Edit in Settings →"},
+         "hint": GENERATOR_PROMPT_FILE.name, "link": "View / Edit in Prompt templates →"},
     ]
     return {"ok": True, "items": items}
 
@@ -1475,6 +1478,16 @@ def batch_templates(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     b["template_ids"] = ptpl.resolve_ids(data.get("ids"))
     _save(sess)
     return _bresp(sess)
+
+
+@app.post("/api/templates/default/reset")
+def tpl_reset_default(sess=Depends(current)):
+    return {"ok": True, **ptpl.reset_default()}
+
+
+@app.get("/api/templates/default/original")
+def tpl_original_default(sess=Depends(current)):
+    return {"ok": True, "text": services.read_original_prompt()}
 
 
 @app.put("/api/templates/{tid}")

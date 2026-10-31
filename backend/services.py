@@ -31,6 +31,19 @@ class ServiceError(Exception):
 # Prompts
 # --------------------------------------------------------------------------- #
 def read_default_prompt() -> str:
+    """The Default prompt the app uses: the edited Default template (Prompt templates page) when one is saved,
+    otherwise the original prompt file (factory source)."""
+    try:
+        from . import prompt_templates as _pt
+        ov = _pt.default_override()
+    except Exception:
+        ov = None
+    if ov and ov.strip():
+        return ov
+    return read_original_prompt()
+
+
+def read_original_prompt() -> str:
     from ai_test_generator.ai_helpers.ai_helpers_utils import read_test_case_generator_prompt_file
     text = read_test_case_generator_prompt_file(str(GENERATOR_PROMPT_FILE))
     if not text:
@@ -49,9 +62,11 @@ def read_reviewer_prompt() -> str:
 def output_template_section() -> str:
     """'**Required Output Template:**' block from the default prompt (appended to
     custom prompts that don't define it, so the parser/Excel export keep working)."""
-    text = read_default_prompt()
-    idx = text.find("**Required Output Template:**")
-    return text[idx:] if idx >= 0 else ""
+    for text in (read_default_prompt(), read_original_prompt()):
+        idx = text.find("**Required Output Template:**")
+        if idx >= 0:
+            return text[idx:]
+    return ""
 
 
 def build_prompt(mode: str, custom_prompt: str) -> Tuple[str, bool]:

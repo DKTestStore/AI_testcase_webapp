@@ -105,12 +105,12 @@ async function viewSetup(v) {
       <div><h3 style="margin:0 0 4px">Let's get you set up</h3><div class="sub" style="margin:0">Required items must be configured to generate. Optional items unlock Jira input and qTest upload.</div></div></div>
     <div class="setup-grid">${it.map((x) => `<div class="card setup-item ${x.ok ? "ok" : "no"}" data-key="${x.key}"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:22px">${icon[x.key] || "⚙"}</span><span class="tag ${x.required ? "req" : "opt"}">${x.required ? "Required" : "Optional"}</span></div>
       <div class="si-name">${esc(x.label)}</div><div class="sub" style="margin:2px 0 8px">${esc(x.hint)}</div>
-      <div class="si-st">${x.ok ? "✔ Set" : "⚠ Not set"}</div><a href="#settings" class="si-link" ${x.key === "default_prompt" ? 'data-prompt="1"' : ""}>${esc(x.link || "Open Settings →")}</a></div>`).join("")}</div>
+      <div class="si-st">${x.ok ? "✔ Set" : "⚠ Not set"}</div><a href="${x.key === "default_prompt" ? "#prompts" : "#settings"}" class="si-link" ${x.key === "default_prompt" ? 'data-prompt="1"' : ""}>${esc(x.link || "Open Settings →")}</a></div>`).join("")}</div>
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <span>${reqOk ? "✔ All required items are configured — you can start now." : '<b style="color:#a36b00">⚠ Configure the required Gemini settings before generating.</b>'} <span class="sub" style="margin:0">(Jira and qTest are optional: use Local text input and Save &amp; Download Excel without them.)</span></span>
       <button class="btn" id="startRun">Start run ▸</button></div><div id="recentRuns"></div>`;
   $("#startRun").onclick = () => go("input");
-  $$(".si-link[data-prompt]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); S.focusPrompt = true; go("settings"); }));
+  $$(".si-link[data-prompt]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (typeof PT !== "undefined") PT.edit = { id: "default" }; go("prompts"); }));
   if (window.renderRecentRuns) renderRecentRuns($("#recentRuns"));
 }
 
@@ -216,14 +216,28 @@ function fileInfoHtml(f) { return `<div style="background:#fff;border:1px solid 
 function bindNextState() { const b = $("#nextBtn"); if (b) b.disabled = !stepDone(S.view); }
 
 // ------------------------------------------------------------------ 2. GENERATE
-async function ensureDefaultPrompt() { if (S.defaultPrompt === null) { const j = await api("/api/prompt/default"); S.defaultPrompt = j; } return S.defaultPrompt; }
-function viewGenerate(v) {
-  const r = S.run; const custom = r.prompt_mode === "custom";
-  const lbl = custom ? "Custom" : "Default";
+async function ensureDefaultPrompt() { if (true) { const j = await api("/api/prompt/default"); S.defaultPrompt = j; } return S.defaultPrompt; }
+function genSrc() {
+  const r = S.run; if (r.prompt_mode === "custom") return "custom";
+  if (r.prompt_src === "templates" || r.prompt_src === "default") return r.prompt_src;
+  const ids = r.template_ids || []; return ids.length && !(ids.length === 1 && ids[0] === "default") ? "templates" : "default";
+}
+function genTplIds() { const ids = S.run.template_ids || []; return ids.length ? ids : ["default"]; }
+function genLabel(src) {
+  if (src === "custom") return { btn: "Custom prompt", sum: "Custom prompt" };
+  if (src === "default") return { btn: "Default prompt", sum: "Default prompt" };
+  const ids = genTplIds(); const nm = (i) => (typeof ptName === "function" ? ptName(i) : i);
+  return ids.length > 1 ? { btn: `${ids.length} templates`, sum: `${ids.length} templates (${ids.map(nm).join(", ")})` } : { btn: `template “${nm(ids[0])}”`, sum: `Template: ${nm(ids[0])}` };
+}
+async function viewGenerate(v) {
+  if (typeof ptLoad === "function" && !(PT && PT.d)) { try { await ptLoad(); } catch (e) { } }
+  if (S.view !== "generate") return;
+  const r = S.run; const src = genSrc(); const custom = src === "custom";
+  const L = genLabel(src); const lbl = custom ? "Custom" : "Default";
   v.innerHTML = `<h1>Generate Test Cases</h1><div class="sub">${r.story_id ? "Story " + esc(r.story_id) + " · " : ""}${r.source === "jira" ? "Jira input" : "Local input"} · ${r.feature_text.length.toLocaleString()} characters of requirements loaded</div>
   <div class="row"><div style="flex:1.5"><div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
-      <div><label style="margin-top:0">Prompt source</label><div class="seg" id="promptSeg"><button data-p="default" class="${custom ? "" : "a"}">Default prompt</button><button data-p="custom" class="${custom ? "a" : ""}">Custom prompt</button></div></div>
+      <div><label style="margin-top:0">Prompt source</label><div class="seg" id="promptSeg"><button data-p="default" class="${src === "default" ? "a" : ""}">Default prompt</button><button data-p="templates" class="${src === "templates" ? "a" : ""}">Templates</button><button data-p="custom" class="${custom ? "a" : ""}">Custom prompt</button></div></div>
       <div><label style="margin-top:0">Model</label><select id="model">
         <option value="gemini" ${r.model === "gemini" ? "selected" : ""}>Gemini</option>
         <option value="codex" ${r.model === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
@@ -231,18 +245,29 @@ function viewGenerate(v) {
     <div id="promptArea"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid #edf0f5;gap:10px;flex-wrap:wrap">
       <label class="sw" style="margin:0;text-transform:none;font-size:13px;color:#1e2433;font-weight:400"><input type="checkbox" id="runRev" ${r.run_reviewer ? "checked" : ""}><span class="t"></span>Also run AI Reviewer after generation</label>
-      <button class="btn" id="genBtn" style="padding:11px 20px">✨ Generate with ${lbl} prompt</button></div>
+      <button class="btn" id="genBtn" style="padding:11px 20px">✨ Generate with ${esc(L.btn)}</button></div>
     <div id="genStatus"></div>
   </div></div>
   <div style="flex:.8"><div class="card" id="tokenCard"><h3>Token Usage</h3><div class="sub">Loading…</div></div>
     ${(r.test_cases || []).length ? `<div class="note" style="margin:0 0 14px">ℹ This run already has ${(r.test_cases || []).length} test cases. Edit the Input and click Generate again to regenerate them.</div>` : ""}
-    <div class="card"><h3>Run summary</h3><div class="sub" style="margin:0;line-height:1.8">Prompt: <b style="color:#1e2433">${lbl} prompt</b><br>Model: ${esc(r.model)}<br>AI Reviewer: ${r.run_reviewer ? '<b style="color:#12a150">On</b>' : "Off"}<br>Test cases: <b style="color:#1e2433">${(r.test_cases || []).length}</b></div></div></div></div>
+    <div class="card"><h3>Run summary</h3><div class="sub" style="margin:0;line-height:1.8">Prompt: <b style="color:#1e2433" id="sumPrompt">${esc(L.sum)}</b><br>Model: ${esc(r.model)}<br>AI Reviewer: ${r.run_reviewer ? '<b style="color:#12a150">On</b>' : "Off"}<br>Test cases: <b style="color:#1e2433">${(r.test_cases || []).length}</b></div></div></div></div>
   ${nextBar("generate", "review", "Continue to Review")}`;
   bindNext("review");
-  $$("#promptSeg button").forEach((b) => (b.onclick = () => { saveCustomDraft(); S.run.prompt_mode = b.dataset.p; viewGenerate(v); }));
+  $$("#promptSeg button").forEach((b) => (b.onclick = async () => {
+    saveCustomDraft(); const p = b.dataset.p;
+    S.run.prompt_mode = p === "custom" ? "custom" : "default";
+    if (p !== "custom") {
+      S.run.prompt_src = p;
+      if (p === "templates" && !(S.run.template_ids || []).some((i) => i !== "default")) {
+        const ts = (PT.d && PT.d.templates) || []; const pick = PT.d && PT.d.default_id !== "default" ? PT.d.default_id : (ts.find((t) => t.id !== "default") || {}).id;
+        if (pick) S.run.template_ids = [pick];
+      }
+    }
+    viewGenerate(v);
+  }));
   $("#model").onchange = (e) => (S.run.model = e.target.value);
   $("#runRev").onchange = (e) => (S.run.run_reviewer = e.target.checked);
-  renderPromptArea(custom);
+  renderPromptArea(custom, src);
   loadTokens();
   $("#genBtn").onclick = () => {
     const n = (S.run.test_cases || []).length;
@@ -255,24 +280,46 @@ function viewGenerate(v) {
     st.innerHTML = `<div style="margin-top:12px"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0" id="elapsed">Generating… 0s</div></div>`;
     const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
     try {
-      const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked } });
+      const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
       S.localDirty = false; S.cases = []; if (typeof RV !== "undefined") { RV.open.clear(); RV.sel.clear(); RV.page = 0; }
       let msg = `<div class="note">✅ Generated <b>${j.count}</b> test cases in ${Math.round((Date.now() - t0) / 1000)}s.${j.template_appended ? " (Required output template was appended to your custom prompt.)" : ""}</div>`;
       if (j.review) msg += j.review.error ? `<div class="warn">AI Reviewer failed: ${esc(j.review.error)}</div>` : `<div class="note">🤖 AI Reviewer produced ${j.review.test_cases.length} test cases — compare and apply them on the Review step.</div>`;
-      viewGenerate(v); $("#genStatus").innerHTML = msg;
+      await viewGenerate(v); const gs = $("#genStatus"); if (gs) gs.innerHTML = msg;
     } catch (e) { st.innerHTML = `<div class="error">${esc(e.message)}</div>`; throw e; }
     finally { clearInterval(timer); renderNav(); }
   });
 }
 function saveCustomDraft() { const ta = $("#customPrompt"); if (ta) S.run.custom_prompt = ta.value; }
-async function renderPromptArea(custom) {
+async function renderTemplatesArea(area) {
+  const ids = genTplIds();
+  area.innerHTML = `<div style="margin:12px 0 6px"><label style="margin:0 0 4px">Prompt templates (one or more)</label><div id="genTplSel"></div>
+    <div class="sub" style="margin:6px 0" id="genTplInfo">${ids.length > 1 ? `${ids.length} templates → the model is called ${ids.length}× and the results are merged (each case tagged with its template).` : ""}</div>
+    <div style="display:flex;justify-content:flex-end"><a href="#prompts" id="genTplManage" style="color:#4361ee;font-weight:600">✎ Manage templates →</a></div></div>
+    <div id="genTplPrev"><div class="sub">Loading template prompt…</div></div>`;
+  $("#genTplManage").onclick = (e) => { e.preventDefault(); go("prompts"); };
+  ptMulti($("#genTplSel"), ids, (n) => { S.run.template_ids = n; viewGenerate($("#view")); });
+  try {
+    await api("/api/templates/select", { method: "POST", body: { ids } });
+    const j = await api("/api/templates/selection");
+    const box = $("#genTplPrev"); if (!box || S.view !== "generate") return;
+    const ps = j.prompts;
+    box.innerHTML = (ps.length > 1 ? `<div class="seg" id="genTplTabs" style="margin:4px 0 6px">${ps.map((p, i) => `<button data-i="${i}" class="${i ? "" : "a"}">📝 ${esc(p.name)}</button>`).join("")}</div>` : `<div style="font-weight:600;margin:4px 0 6px">📝 ${esc(ps[0].name)} <span class="sub" style="font-weight:400">(filled with this run's input)</span></div>`)
+      + `<div style="text-align:right;margin:0 0 4px"><a href="#" id="viewPrompt" style="color:#4361ee;font-weight:600">View full ↗</a></div><pre class="ro" id="tplPre" style="max-height:220px">${esc(ps[0].prompt)}</pre>
+      <div class="sub" style="margin:8px 0 0">Read-only preview. Edit templates on the <b>Prompt templates</b> page.</div>`;
+    $$("#genTplTabs button").forEach((b) => (b.onclick = () => { $$("#genTplTabs button").forEach((x) => x.classList.toggle("a", x === b)); $("#tplPre").textContent = ps[+b.dataset.i].prompt; }));
+    $("#viewPrompt").onclick = (e) => { e.preventDefault(); const p = $("#tplPre"); const full = p.style.maxHeight === "none"; p.style.maxHeight = full ? "220px" : "none"; e.target.textContent = full ? "View full ↗" : "Collapse ↙"; };
+  } catch (e) { const box = $("#genTplPrev"); if (box) box.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+async function renderPromptArea(custom, src) {
   const area = $("#promptArea");
+  if (src === "templates") return renderTemplatesArea(area);
   if (!custom) {
     area.innerHTML = `<div class="sub">Loading default prompt…</div>`;
     try {
       const d = await ensureDefaultPrompt();
-      area.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px"><span style="font-weight:600">🔒 ${esc(d.filename)} <span class="sub" style="font-weight:400">(system default)</span></span><a href="#" id="viewPrompt" style="color:#4361ee;font-weight:600">View full ↗</a></div>
-        <pre class="ro" id="defPre" style="max-height:220px">${esc(d.text)}</pre><div class="sub" style="margin:8px 0 0">Read-only. Switch to <b>Custom prompt</b> to edit.</div>`;
+      area.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px"><span style="font-weight:600">🔒 ${esc(d.filename)} <span class="sub" style="font-weight:400">(Default template${d.modified ? " · edited" : ""})</span></span><a href="#" id="viewPrompt" style="color:#4361ee;font-weight:600">View full ↗</a></div>
+        <pre class="ro" id="defPre" style="max-height:220px">${esc(d.text)}</pre><div class="sub" style="margin:8px 0 0">Read-only. Switch to <b>Custom prompt</b> to edit, or edit the <a href="#prompts" id="editDefTpl" style="color:#4361ee">Default template</a>.</div>`;
+      $("#editDefTpl").onclick = (e) => { e.preventDefault(); if (typeof PT !== "undefined") PT.edit = { id: "default" }; go("prompts"); };
       $("#viewPrompt").onclick = (e) => { e.preventDefault(); const p = $("#defPre"); const full = p.style.maxHeight === "none"; p.style.maxHeight = full ? "220px" : "none"; e.target.textContent = full ? "View full ↗" : "Collapse ↙"; };
     } catch (e) { area.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
     return;
@@ -453,12 +500,7 @@ async function viewSettings(v) {
       <label for="dupThr">Similarity threshold (%)</label>
       <div class="row" style="align-items:center;gap:10px"><input id="dupThr" type="number" min="50" max="99" step="1" style="width:120px;flex:none"><button class="btn" id="saveDup" style="flex:none">Save threshold</button><span class="sub" id="dupHint" style="margin:0;flex:none"></span></div>
       <div class="sub" style="margin:8px 0 0">Test cases at or above this similarity are flagged as possible duplicates (50–99, default 80; 90%+ shown in red). Checked locally — no AI call.</div></div>
-    <div class="card" id="promptCard" style="margin-top:18px"><h3>📝 Default prompt <span class="sub" id="promptFile" style="font-weight:400"></span></h3>
-      <div class="sub" style="margin:0 0 8px">Used by Generate when "Default prompt" is selected. It must not be empty.</div>
-      <textarea id="promptText" style="width:100%;min-height:220px;font-family:ui-monospace,monospace;font-size:12px"></textarea>
-      <div style="margin-top:8px"><button class="btn" id="savePrompt">Save prompt</button></div></div>`;
-  api("/api/prompt/default").then((pj) => { $("#promptText").value = pj.text; $("#promptFile").textContent = "· " + pj.filename; }).catch((e) => { $("#promptFile").textContent = "· " + e.message; });
-  $("#savePrompt").onclick = () => guarded($("#savePrompt"), async () => { await api("/api/prompt/default", { method: "PUT", body: { text: $("#promptText").value } }); toast("Default prompt saved"); });
+`;
   api("/api/settings/history_limit").then((h) => { $("#histLimit").value = h.value; $("#histHint").textContent = `Current: ${h.value}`; });
   $("#saveHist").onclick = () => guarded($("#saveHist"), async () => {
     const raw = $("#histLimit").value.trim();
@@ -474,7 +516,6 @@ async function viewSettings(v) {
     const r = await api("/api/settings/dup_threshold", { method: "PUT", body: { value: +raw } });
     DUP.threshold = r.value; DUP.res = null; $("#dupHint").textContent = `Current: ${r.value}%`; toast(`Duplicate threshold set to ${r.value}%`);
   });
-  if (S.focusPrompt) { S.focusPrompt = false; $("#promptCard").scrollIntoView({ block: "start" }); }
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
     const values = {}; $$("[data-key]").forEach((i) => { if (i.type !== "password" || i.value.trim()) values[i.dataset.key] = i.value; });
     const r = await api("/api/settings", { method: "PUT", body: { values } }); toast(`Saved (${r.changed.length} changed)`); viewSettings(v);

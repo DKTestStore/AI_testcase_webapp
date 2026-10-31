@@ -1,8 +1,8 @@
 """Custom prompt templates (additive feature). Stored in backend/prompt_templates.json (gitignored).
 
-The built-in, locked 'Default' template is NOT stored as text: it always reads the existing prompt file
-(ai_test_generator/prompt/test_cases_generator_prompt.md) so Generate with the Default template is
-byte-for-byte identical to the existing Default prompt behaviour. If the file is missing on first use
+The built-in 'Default' template reads the original prompt file (ai_test_generator/prompt/test_cases_generator_prompt.md)
+unless it has been edited on the Prompt templates page; the edit is stored here as 'default_text' and is what every
+Default-prompt generation uses. 'Reset to original' removes the edit. If the file is missing on first use
 the starter templates are seeded."""
 import json
 import re
@@ -60,10 +60,43 @@ def _starters() -> List[Dict[str, Any]]:
             for n, d, t, role, f, opts in rows]
 
 
-def _default_entry() -> Dict[str, Any]:
-    return {"id": DEFAULT_ID, "name": "Default", "builtin": True, "locked": True, "tags": ["built-in", "manual", "all acs"],
+def default_override() -> Optional[str]:
+    """Edited Default prompt text (None -> use the original prompt file)."""
+    with _LOCK:
+        d = _load()
+    t = d.get("default_text")
+    return t if isinstance(t, str) and t.strip() else None
+
+
+def update_default(data: Dict[str, Any]) -> Dict[str, Any]:
+    from .services import ServiceError
+    text = str(data.get("text") or "")
+    if not text.strip():
+        raise ServiceError("The default prompt cannot be empty.")
+    if len(text) > MAX_LEN:
+        raise ServiceError(f"Prompt text is too long (max {MAX_LEN:,} characters).")
+    with _LOCK:
+        d = _load()
+        d["default_text"] = text
+        d["default_updated_at"] = _now()
+        _write(d)
+    return {"template": get(DEFAULT_ID), "warnings": []}
+
+
+def reset_default() -> Dict[str, Any]:
+    with _LOCK:
+        d = _load()
+        d.pop("default_text", None)
+        d.pop("default_updated_at", None)
+        _write(d)
+    return {"template": get(DEFAULT_ID)}
+
+
+def _default_entry(d: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    d = d or {}
+    return {"id": DEFAULT_ID, "name": "Default", "builtin": True, "locked": False, "modified": bool(d.get("default_text")), "tags": ["built-in", "manual", "all acs"],
             "description": "Built-in QA Architect prompt (test_cases_generator_prompt.md) — mortgage-domain manual test cases with full AC traceability.",
-            "options": {}, "text": None, "updated_at": "", "used": 0}
+            "options": {}, "text": None, "updated_at": d.get("default_updated_at", ""), "used": 0}
 
 
 def _load() -> Dict[str, Any]:
@@ -94,7 +127,7 @@ def default_text() -> str:
 def list_all() -> Dict[str, Any]:
     with _LOCK:
         d = _load()
-    de = _default_entry()
+    de = _default_entry(d)
     de["used"] = d.get("default_used", 0)
     ids = {t["id"] for t in d["templates"]}
     did = d.get("default_id") if d.get("default_id") in ids else DEFAULT_ID
@@ -164,7 +197,7 @@ def create(data: Dict[str, Any]) -> Dict[str, Any]:
 def update(tid: str, data: Dict[str, Any]) -> Dict[str, Any]:
     from .services import ServiceError
     if tid == DEFAULT_ID:
-        raise ServiceError("The built-in Default template is locked. Duplicate it to customise.", 403)
+        return update_default(data)
     with _LOCK:
         d = _load()
         t = next((x for x in d["templates"] if x["id"] == tid), None)
