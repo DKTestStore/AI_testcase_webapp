@@ -3,6 +3,8 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-dotenv>=1.0
 requests>=2.31
+# Record feature (recorder browser). After installing run:  python -m playwright install chromium
+playwright>=1.40
 # Existing ai_test_generator dependencies
 google-genai>=0.3
 openai>=1.40

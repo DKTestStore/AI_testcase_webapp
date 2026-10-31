@@ -13,7 +13,7 @@ exports them to **Excel**, and uploads them to **qTest Manager** with requiremen
 ## 1. Setup
 
 **Requirements:** Python **3.10+** (the existing `jira_worker.py` uses `str | None` syntax), pip. Dependencies are in `requirements.txt`
-(FastAPI, uvicorn, python-dotenv, requests, google-genai, openai, ollama, jira, fastmcp, pandas, openpyxl).
+(FastAPI, uvicorn, python-dotenv, requests, playwright, google-genai, openai, ollama, jira, fastmcp, pandas, openpyxl).
 
 ```bash
 python -m venv .venv
@@ -30,6 +30,22 @@ python -m uvicorn backend.app:app --port 8000        # add --reload while develo
 ```
 
 Open **http://localhost:8000** and click **Welcome →**. No username or password is needed; the button starts a browser session.
+
+### Record feature (⏺ Record on the Input step) — extra setup
+The recorder opens a **real Chromium window on the machine that runs the app** (your PC when you use `localhost`).
+It needs Playwright and its browser once:
+
+```bash
+pip install playwright                 # already in requirements.txt
+python -m playwright install chromium  # downloads the recorder browser + ffmpeg (used for the evidence video)
+```
+
+- **Windows / macOS:** the window always opens visibly. If Playwright's Chromium is missing, the installed Google Chrome or
+  Microsoft Edge is used instead.
+- **Linux:** the window opens on your desktop (`DISPLAY` or `WAYLAND_DISPLAY`). On a server **without** a display the
+  recorder can only run headless — it is invisible and you cannot interact with it; the Record page shows this warning.
+  `ATG_REC_HEADLESS=1` forces headless (CI only). `ATG_REC_CHROME=<path>` selects a specific Chrome executable.
+- Without Playwright, *Start recording* shows these install commands instead of failing silently.
 
 ### Configuration keys (`ai_test_generator/.env`)
 `.env` holds secrets. **Never commit it** (it is in `.gitignore`); only `.env.example` (empty values) is tracked.

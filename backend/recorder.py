@@ -9,6 +9,7 @@ import os
 import queue
 import re
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -32,8 +33,57 @@ TYPES = ("Positive", "Negative", "Edge")
 PRIOS = ("High", "Medium", "Low")
 ACTIONS = {"navigate": "Navigate", "type": "Type", "click": "Click", "select": "Select", "check": "Check",
            "scroll": "Scroll", "checkpoint": "Checkpoint", "suggest": "Suggested", "ignored": "Skipped", "divider": "Divider"}
+PW_INSTALL_HELP = ("Install it on the machine that runs this app:  pip install playwright   then   "
+                   "python -m playwright install chromium   (then restart the app).")
 REC: Dict[str, "Recorder"] = {}          # owner key -> active recorder
 _LOCK = threading.Lock()
+
+
+def want_headless(platform: Optional[str] = None, env: Optional[Dict[str, str]] = None) -> bool:
+    """C1: should the recorder browser run headless?  Windows / macOS always have a desktop -> headed.
+    Linux (and other X11/Wayland systems) only fall back to headless when no DISPLAY / WAYLAND_DISPLAY is set.
+    ATG_REC_HEADLESS=1 forces headless (CI / tests)."""
+    platform = platform if platform is not None else sys.platform
+    env = env if env is not None else os.environ
+    if str(env.get("ATG_REC_HEADLESS", "")).strip().lower() in ("1", "true", "yes"):
+        return True
+    if platform.startswith("win") or platform == "darwin" or platform == "cygwin":
+        return False
+    return not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"))
+
+
+def _origin(u: str) -> str:
+    """H4: scheme://host[:port] of a URL (lower-case) -- re-record versioning only within the same site."""
+    try:
+        p = urlparse(str(u or "").strip())
+        if p.scheme == "file":
+            return "file://"
+        return f"{p.scheme.lower()}://{(p.netloc or '').lower()}"
+    except Exception:
+        return ""
+
+
+_NET_ERR = [("ERR_NAME_NOT_RESOLVED", "the host name could not be found (check the spelling / VPN)"),
+            ("ERR_CONNECTION_REFUSED", "the server refused the connection (is the site running?)"),
+            ("ERR_CONNECTION_TIMED_OUT", "the connection timed out"),
+            ("ERR_CONNECTION_CLOSED", "the server closed the connection"),
+            ("ERR_CONNECTION_RESET", "the connection was reset"),
+            ("ERR_ADDRESS_UNREACHABLE", "the address is unreachable"),
+            ("ERR_INTERNET_DISCONNECTED", "there is no internet connection"),
+            ("ERR_CERT", "the site's HTTPS certificate is not valid"),
+            ("ERR_SSL", "an HTTPS/SSL error occurred"),
+            ("ERR_UNSAFE_PORT", "the browser blocks this port"),
+            ("ERR_FILE_NOT_FOUND", "the file was not found"),
+            ("Timeout", "the site did not respond within 30 seconds"),
+            ("invalid URL", "the URL is not valid")]
+
+
+def friendly_nav_error(url: str, err: str) -> str:
+    """M6: readable message for a failed first navigation."""
+    for k, msg in _NET_ERR:
+        if k in (err or ""):
+            return f"Could not open {url} -- {msg}. Nothing was recorded; fix the URL and start again."
+    return f"Could not open {url} -- {(err or 'unknown error').split(chr(10))[0][:200]}"
 
 
 def _now() -> str:
@@ -88,7 +138,9 @@ class Recorder:
         self.last_click = 0.0
         self.saved_at = ""
         self.test_result = None
-        self.headless = bool(os.environ.get("ATG_REC_HEADLESS")) or not os.environ.get("DISPLAY")
+        self.headless = want_headless()
+        self._videos: List[Any] = []          # H1: page.video handles captured while pages are alive
+        self.nav_ok = False
         self.done = threading.Event()
         self.thread = threading.Thread(target=self._main, name=f"rec-{self.rid}", daemon=True)
 
@@ -149,17 +201,22 @@ class Recorder:
         try:
             from playwright.sync_api import sync_playwright
         except Exception as ex:   # pragma: no cover
-            self.state, self.error = "error", f"Playwright is not installed: {ex}"
+            log.warning("playwright import failed: %s", ex)
+            self.state, self.error = "error", "Playwright is not installed. " + PW_INSTALL_HELP
             self.done.set()
             return
         pw = browser = ctx = None
         try:
             pw = sync_playwright().start()
-            kw = {"headless": self.headless, "args": ["--no-first-run", "--no-default-browser-check"]}
+            args = ["--no-first-run", "--no-default-browser-check"]
+            if not self.headless:
+                args.append("--start-maximized")   # M3: real window size, toolbar always visible
+            kw = {"headless": self.headless, "args": args}
             if Path(CHROME).exists():
                 kw["executable_path"] = CHROME
-            browser = pw.chromium.launch(**kw)
-            ckw: Dict[str, Any] = {"viewport": {"width": 1280, "height": 800}}
+            browser = self._launch(pw, kw)
+            # M3: headed -> no fixed viewport (the page uses the real window size); headless keeps 1280x800
+            ckw: Dict[str, Any] = {"no_viewport": True} if not self.headless else {"viewport": {"width": 1280, "height": 800}}
             if self.setup.get("video"):
                 ckw["record_video_dir"] = str(self.dir / "video_tmp")
                 ckw["record_video_size"] = {"width": 1280, "height": 800}
@@ -184,7 +241,11 @@ class Recorder:
             self.t0 = time.time()
             url = self.cur["url"] or self.setup.get("url")
             first = not self.steps
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as ex:   # M6: unreachable / invalid URL -> clear message, never "window opened"
+                raise RuntimeError(friendly_nav_error(url, str(ex)))
+            self.nav_ok = True
             self._refresh(page)
             if first:
                 self.add(self._new_step("navigate", desc=f"Open {url}",
@@ -212,11 +273,12 @@ class Recorder:
                     self._refresh(page)
         except Exception as ex:
             log.exception("recorder failed")
-            self.error = str(ex).split("\n")[0][:300]
+            self.error = str(ex).split("\n")[0][:400]
             self.state = "error"
         finally:
             try:
-                vids = [p.video for p in (ctx.pages if ctx else []) if getattr(p, "video", None)]
+                # H1: use the video handles captured in _wire -- ctx.pages is empty once the user closed the window
+                vids = list(self._videos) or [p.video for p in (ctx.pages if ctx else []) if getattr(p, "video", None)]
                 if ctx:
                     ctx.close()
                 for v in vids[:1]:
@@ -240,6 +302,22 @@ class Recorder:
             self.autosave()
             self.done.set()
 
+    def _launch(self, pw, kw):
+        """Launch Chromium. If Playwright's bundled browser is missing (common on a fresh Windows install), fall back to
+        the installed Google Chrome / Microsoft Edge before failing with install instructions (M9)."""
+        try:
+            return pw.chromium.launch(**kw)
+        except Exception as ex:
+            first = str(ex)
+            if "executable_path" in kw or "Executable doesn't exist" not in first and "playwright install" not in first:
+                raise
+            for ch in ("chrome", "msedge"):
+                try:
+                    return pw.chromium.launch(channel=ch, **kw)
+                except Exception:
+                    continue
+            raise RuntimeError("The recorder browser (Chromium) is not installed. " + PW_INSTALL_HELP)
+
     def _wire(self, page):
         q = lambda kind, text: self.inbox.append((page, {"type": "err", "kind": kind, "text": text}))   # ordered with actions
         page.on("console", lambda m: m.type == "error" and q("console", m.text))
@@ -247,6 +325,12 @@ class Recorder:
         page.on("response", lambda r: r.status >= 400 and q("network", f"{r.request.method} {_short_url(r.url)} → {r.status} {r.status_text}"))
         page.on("requestfailed", lambda r: q("network", f"{r.method} {_short_url(r.url)} → failed ({r.failure})"))
         page.on("framenavigated", lambda f: f == page.main_frame and self.inbox.append((page, {"type": "nav", "url": f.url})))
+        try:
+            v = page.video
+            if v is not None:
+                self._videos.append(v)
+        except Exception:
+            pass
         self.page = page
 
     def _err(self, kind: str, text: str):
@@ -338,13 +422,42 @@ class Recorder:
         elif cmd == "checkpoint":
             self._refresh(page)
             cur = self.cur
-            exp = (c.get("expected") or "").strip() or (f'Page shows "{cur["heading"]}"' if cur["heading"] else "Page is displayed")
+            typed = (c.get("expected") or "").strip()
+            exp = typed or (f'Page shows "{cur["heading"]}"' if cur["heading"] else "Page is displayed")
             a = c.get("assert") or ("heading" if cur["heading"] else "url")
+            if typed and not c.get("assert"):   # M2: Auto + custom expected text -> assert that text, not the heading
+                a, c = "text", dict(c, text=self._cp_text(page, typed), css="")
             s = self._new_step("checkpoint", desc=f"✔ Expected: {exp}", expected=exp, url=cur["url"],
                                loc={"assert": a, "url": _short_url(cur["url"]), "heading": cur["heading"],
                                     "text": c.get("text", ""), "css": c.get("css", "")})
             self.add(s)
             self._shot(page, s)
+
+    def _cp_text(self, page, typed: str) -> str:
+        """M2: the on-page text to assert for a typed expected result: a "quoted" part, else a recently shown message the
+        sentence refers to, else the typed text itself."""
+        q = re.findall(r'["\u201c]([^"\u201d]{2,120})["\u201d]', typed)
+        if q:
+            return q[0].strip()
+        norm = lambda x: re.sub(r"[^a-z0-9 ]+", " ", x.lower()).split()
+        tw = set(norm(typed))
+        best, score = "", 0.0
+        with self.lock:
+            msgs = [(s.get("loc") or {}).get("text", "") for s in reversed(self.steps[-30:]) if (s.get("loc") or {}).get("msg")]
+        for m in msgs:
+            mw = norm(m)
+            if mw:
+                sc = sum(w in tw for w in mw) / len(mw)
+                if sc > score:
+                    best, score = m, sc
+        if best and score >= 0.6:
+            return best
+        try:
+            if page.get_by_text(typed).count() > 0:
+                return typed
+        except Exception:
+            pass
+        return typed
 
     def _test_action(self, page, a: Dict[str, Any]):
         """E2E-only hook (ATG_REC_TEST_HOOK=1): drive the recorder window with real (trusted) input events."""
@@ -397,7 +510,8 @@ class Recorder:
             val, masked = str(ev.get("value", "")), ev.get("masked") or ""
             with self.lock:   # #2 re-typing in the same field right after replaces the previous step
                 last = self.steps[-1] if self.steps else None
-                if last and last["kind"] == "type" and last["loc"].get("css") == el.get("css"):
+                if last and last["kind"] == "type" and last["loc"].get("css") == el.get("css") \
+                        and (last["loc"].get("frame") or "") == (el.get("frame") or ""):   # H2: same css in another frame is another field
                     self.steps.pop()
             s = self._new_step("type", desc=f'Enter "{val}" in {name} field', name=name, loc=el, value=val, masked=masked,
                                expected="Value is masked" if masked else "Value is entered", merged=int(ev.get("keys") or 0))
@@ -424,7 +538,7 @@ class Recorder:
             return self._shot(page, s)
         else:
             return
-        s["url"] = ev.get("url", "")
+        s["url"] = self.cur.get("url", "") if el.get("frame") else ev.get("url", "")   # H2: iframe step -> top page URL
         self.add(s)
         self._shot(page, s)
 
@@ -560,6 +674,13 @@ def _q(s: str) -> str:
 
 
 def _py_loc(l: Dict[str, Any]) -> str:
+    base = _py_loc0(l)
+    if l.get("frame"):   # H2: element inside an iframe
+        return base.replace("page.", f"page.frame_locator({_q(l['frame'])}).", 1)
+    return base
+
+
+def _py_loc0(l: Dict[str, Any]) -> str:
     if l.get("testid"):
         return f"page.get_by_test_id({_q(l['testid'])})"
     if l.get("label") and l.get("tag") in ("input", "select", "textarea"):
@@ -577,7 +698,7 @@ def _py_loc(l: Dict[str, Any]) -> str:
 
 def _js_loc(l: Dict[str, Any]) -> str:
     p = _py_loc(l)
-    p = p.replace("get_by_test_id", "getByTestId").replace("get_by_label", "getByLabel").replace("get_by_placeholder", "getByPlaceholder")
+    p = p.replace("frame_locator", "frameLocator").replace("get_by_test_id", "getByTestId").replace("get_by_label", "getByLabel").replace("get_by_placeholder", "getByPlaceholder")
     p = re.sub(r"get_by_role\((\"[^\"]*\"), name=(.*)\)$", r"getByRole(\1, { name: \2 })", p)
     p = re.sub(r"get_by_text\((.*), exact=True\)$", r"getByText(\1, { exact: true })", p)
     return p
@@ -611,6 +732,13 @@ def build_script(rec: Dict[str, Any], lang: str, assertions: bool = True, use_pa
     out: List[str] = []
     seen: Dict[str, int] = {}
 
+    def start_url(g) -> str:
+        """H3: every exported test must run on its own -> open the page the group's first step happened on."""
+        first = next((by[i] for i in g["ids"] if i in by and by[i].get("kind") not in ("suggest", "ignored", "divider")), None)
+        if not first or first.get("kind") == "navigate":
+            return ""
+        return str(first.get("url") or (first.get("loc") or {}).get("url") or "") if str(first.get("url") or "").startswith(("http", "file")) else ""
+
     def fname_of(name: str) -> str:   # unique per script (test names may repeat)
         b = _slug(name, 60)
         seen[b] = seen.get(b, 0) + 1
@@ -627,6 +755,9 @@ def build_script(rec: Dict[str, Any], lang: str, assertions: bool = True, use_pa
             sig += "".join(f", {p}=TEST_DATA[{_q(p)}]" for p in used)
             out.append(f"def test_{fname_of(g['name'])}({sig}):")
             body = []
+            su = start_url(g)
+            if su:
+                body.append(f"page.goto({_q(su)})")
             for i in g["ids"]:
                 s = by.get(i)
                 if not s:
@@ -669,6 +800,9 @@ def build_script(rec: Dict[str, Any], lang: str, assertions: bool = True, use_pa
             tn = fname_of(g["name"])
             title = g["name"] + (f" ({tn.rsplit('_', 1)[-1]})" if seen[_slug(g["name"], 60)] > 1 else "")
             out.append(f"test({_q(title)}, async ({{ page }}) => {{")
+            su = start_url(g)
+            if su:
+                out.append(f"  await page.goto({_q(su)});")
             for i in g["ids"]:
                 s = by.get(i)
                 if not s:
@@ -717,12 +851,17 @@ def build_script(rec: Dict[str, Any], lang: str, assertions: bool = True, use_pa
         for g in groups:
             mname = "".join(w.capitalize() if j else w for j, w in enumerate(fname_of(g["name"]).split("_")))
             out += [f"    @Test", f"    void {mname}() {{"]
+            su = start_url(g)
+            if su:
+                out.append(f"        driver.get({_q(su)});")
             for i in g["ids"]:
                 s = by.get(i)
                 if not s:
                     continue
                 l, k = s.get("loc") or {}, s["kind"]
                 find = f"wait.until(ExpectedConditions.elementToBeClickable({_se_loc(l)}))"
+                if l.get("frame") and k in ("click", "check", "type", "select"):   # H2: switch into the iframe
+                    out.append(f"        wait.until(ExpectedConditions.frameToBeAvailableAndSwitchToIt(By.cssSelector({_q(l['frame'])})));")
                 if s.get("note"):
                     out.append(f"        // Note: {s['note']}")
                 if k == "navigate":
@@ -735,7 +874,9 @@ def build_script(rec: Dict[str, Any], lang: str, assertions: bool = True, use_pa
                     out.append(f"        new Select(driver.findElement({_se_loc(l)})).selectByVisibleText({_val(s, use_params, 'java')});")
                 elif k == "scroll":
                     out.append(f"        ((JavascriptExecutor) driver).executeScript(\"window.scrollTo(0, {int(l.get('y') or 0)})\");")
-                elif k == "checkpoint":
+                if l.get("frame") and k in ("click", "check", "type", "select"):
+                    out.append("        driver.switchTo().defaultContent();")
+                if k == "checkpoint":
                     out.append(f"        // Checkpoint: {s.get('expected', '')}")
                     if assertions:
                         if l.get("assert") == "url" and l.get("url"):
@@ -843,8 +984,19 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
         url = str(d.get("url", "")).strip()
         if not url:
             raise ServiceError("Enter the target URL to record.")
-        if not re.match(r"^(https?|file)://", url):
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", url) and not re.match(r"^(https?|file)://", url, re.I) \
+                and not re.match(r"^[\w.-]+:\d+(/|$)", url):   # M6: typo'd scheme such as "htp:/x" or "javascript:"
+            raise ServiceError("Enter a valid target URL, e.g. https://example.com/login (http, https or file).")
+        if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
             url = "https://" + url
+        try:   # M6: reject malformed URLs before a browser is started
+            pu = urlparse(url)
+            _ = pu.port
+            bad = pu.scheme not in ("http", "https", "file") or (pu.scheme != "file" and (not pu.hostname or re.search(r"\s", url)))
+        except ValueError:
+            bad = True
+        if bad:
+            raise ServiceError("Enter a valid target URL, e.g. https://example.com/login (http, https or file).")
         name = str(d.get("name", "")).strip()
         if not name:
             raise ServiceError("Enter a test name.")
@@ -873,18 +1025,23 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
             REC[k] = r
         r.autosave()
         r.thread.start()
-        for _ in range(150):   # wait until the page is open (or failed)
+        for _ in range(450):   # M6: wait until the first page really opened (goto timeout is 30 s) or failed
             if r.state not in ("starting",):
                 break
             time.sleep(0.1)
         if r.state == "error":
             REC.pop(k, None)
-            raise ServiceError(f"Could not start the recorder browser: {r.error}", 500)
+            if not rid and not steps:   # L8: a failed fresh start leaves no empty recording folder behind
+                shutil.rmtree(r.dir, ignore_errors=True)
+            msg = r.error if (r.error.startswith("Could not open") or "Playwright" in r.error or "not installed" in r.error) \
+                else f"Could not start the recorder browser: {r.error}"
+            raise ServiceError(msg, 400 if r.error.startswith("Could not open") else 500)
         return r
 
     @router.get("/defaults")
     def rec_defaults(sess=Depends(current)):
-        return {"ok": True, "ignore": DEFAULT_IGNORE, "display": bool(os.environ.get("DISPLAY")) and not os.environ.get("ATG_REC_HEADLESS")}
+        hl = want_headless()
+        return {"ok": True, "ignore": DEFAULT_IGNORE, "display": not hl, "headless": hl, "platform": sys.platform}
 
     @router.post("/start")
     def rec_start(data: Dict[str, Any] = Body(...), sess=Depends(current)):
@@ -1006,13 +1163,17 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
         validate_cases(clean)
         run = get_run(sess)
         name = (setup.get("name") or "").strip().lower()
-        same = run.get("source") == "record" and ((run.get("recording") or {}).get("setup") or {}).get("name", "").strip().lower() == name
+        org = _origin(setup.get("url", ""))
+        cur_setup = (run.get("recording") or {}).get("setup") or {}
+        # H4: a re-record is the same test NAME on the same SITE (origin); a different site never overwrites a run
+        same = run.get("source") == "record" and cur_setup.get("name", "").strip().lower() == name and _origin(cur_setup.get("url", "")) == org
         prev_snap = None
         if not same:
             # B3: re-recording a test with the same name -> new version of that recording (same run in history)
             hid = sess.get("hid")
             for e in history_store.list_items(hid) if hid else []:
-                if e.get("kind") != "batch" and ((e.get("rec") or {}).get("name") or "").strip().lower() == name:
+                if e.get("kind") != "batch" and ((e.get("rec") or {}).get("name") or "").strip().lower() == name \
+                        and _origin((e.get("rec") or {}).get("url", "")) == org:
                     prev_snap = history_store.load_run(hid, e["run_id"])
                     break
             if run.get("test_cases") and sess.get("mode") != "batch":   # never overwrite a different saved run
