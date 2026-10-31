@@ -56,7 +56,7 @@ def _write(hid, idx):
 def _source(run):
     if run.get("imported") and not run.get("markdown"):
         return "Excel upload"
-    return {"jira": "Jira", "local": "Local text"}.get(run.get("source") or "", "Excel upload" if run.get("imported") else "Local text")
+    return {"jira": "Jira", "local": "Local text", "record": "Recorded"}.get(run.get("source") or "", "Excel upload" if run.get("imported") else "Local text")
 
 
 def _title(run):
@@ -78,8 +78,15 @@ def _summary(run) -> Dict[str, Any]:
     rv = sum(1 for c in cases if c.get("status") == "reviewed")
     up = run.get("upload") or {}
     status = "Uploaded to qTest" if up.get("created") else ("Reviewed" if cases and rv == len(cases) else "Draft")
-    return {"story_id": run.get("story_id") or "", "title": _title(run), "source": _source(run),
-            "count": len(cases), "reviewed": rv, "status": status}
+    out = {"story_id": run.get("story_id") or "", "title": _title(run), "source": _source(run),
+           "count": len(cases), "reviewed": rv, "status": status}
+    rec = run.get("recording") if run.get("source") == "record" else None
+    if rec:   # Record feature (additive): shown in Run history for recorded runs only
+        su = rec.get("setup") or {}
+        out["rec"] = {"name": su.get("name", ""), "url": su.get("url", ""), "duration": rec.get("duration"),
+                      "steps": rec.get("n_steps"), "checkpoints": rec.get("n_checkpoints"), "errors": rec.get("n_errors"),
+                      "video": bool(rec.get("video")), "rid": rec.get("rid"), "version": rec.get("version", 1)}
+    return out
 
 
 def record(hid: str, run: Dict[str, Any]) -> Optional[Dict[str, Any]]:

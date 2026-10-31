@@ -1609,3 +1609,13 @@ def rt_restore(v: int, sess=Depends(current)):
     _save(sess, history=True)
     nv = rtools.record(run, f"restored v{v}")
     return {"ok": True, "restored": v, "version": (nv or {}).get("v"), "run": _public_run(run)}
+
+
+# --------------------------------------------------------------------------- #
+# Record feature (additive): /api/rec/* — record browser actions into test cases (no AI).
+# --------------------------------------------------------------------------- #
+try:
+    from . import recorder as _recorder  # noqa: E402
+    _recorder.install(app, current, _run, _save, _public_run, _validate_cases, _RT_VERSION_HOOKS)
+except Exception:  # never let the new feature break the existing app
+    log.exception("Record feature failed to load (ignored)")
