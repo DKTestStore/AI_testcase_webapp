@@ -61,7 +61,7 @@ async function recView(v) {
 function recSetup(v) {
   recStopPoll();
   const p = recSetupSaved(); const d = (k, def) => (p[k] === undefined ? def : p[k]);
-  const ign = d("ignore", (REC.defaults.ignore || []).join("\n"));
+  let ign = d("ignore", REC.defaults.ignore || []); if (Array.isArray(ign)) ign = ign.join("\n");
   const opt = (arr, cur) => arr.map((x) => `<option ${x === cur ? "selected" : ""}>${x}</option>`).join("");
   $("#recBody").outerHTML = `<div class="card rec-setup" id="recSetup"><h3>Record a test</h3><div class="rec-grid">
     <div><label>Target URL *</label><input id="rUrl" placeholder="https://demo.example-shop.com/login" value="${esc(d("url", ""))}">
@@ -82,7 +82,11 @@ function recSetup(v) {
       <label>Ignore list <span class="muted">(CSS selectors — clicks inside are skipped: cookie banners, chat widgets)</span></label>
       <textarea id="rIgnore" rows="3" class="rec-mono">${esc(ign)}</textarea>
       <div class="rec-info">ℹ A separate recorder browser opens. Click, type, select and navigate as usual — each action becomes a step. Use <b>Add checkpoint</b> (or Ctrl+Shift+C) to record expected results.${REC.defaults.display === false ? "<br><b>No display detected — the recorder runs headless on the server.</b>" : ""}</div></div></div>
-    <div style="margin-top:14px"><button class="btn r" id="rStart">⏺ Start recording</button> <button class="btn g" id="rCancel">Cancel</button></div></div><div id="recDraftHost"></div>`;
+    <div style="margin-top:14px"><button class="btn r" id="rStart">⏺ Start recording</button> <button class="btn g" id="rCancel">Cancel</button></div></div><div id="recDraftHost"></div>
+    <details class="card rec-store" id="recStore"><summary>🗄 Recording storage <span class="muted" id="rsSum">— loading…</span></summary>
+      <div class="rec-storeb"><label>Keep last <input type="number" min="0" id="rsN" style="width:70px"> recordings</label><label>and/or last <input type="number" min="0" id="rsD" style="width:70px"> days</label>
+      <span class="muted">0 = keep all (default) · 📌 pinned recordings are never deleted · cleanup runs when a new recording is saved</span>
+      <button class="btn g sm" id="rsSave">Save</button></div></details>`;
   const v2 = $("#view");
   $("#rCancel").onclick = () => { S.inputMode = S.run.source && S.run.source !== "record" ? S.run.source : "jira"; render(); };
   $("#rStart").onclick = () => guarded($("#rStart"), async () => {
@@ -98,6 +102,14 @@ function recSetup(v) {
     render();
   });
   recDraftCard(v2, $("#recDraftHost"));
+  recStorageUI();
+}
+async function recStorageUI() {
+  let j; try { j = await api("/api/rec/storage"); } catch { return; }
+  if (!$("#recStore")) return;
+  const sum = () => `— ${j.keep_last || j.keep_days ? `keep ${j.keep_last ? "last " + j.keep_last : ""}${j.keep_last && j.keep_days ? " / " : ""}${j.keep_days ? j.keep_days + " days" : ""}` : "keep all"} · ${j.count} saved (${j.mb} MB) · ${j.pinned.length} pinned`;
+  $("#rsSum").textContent = sum(); $("#rsN").value = j.keep_last; $("#rsD").value = j.keep_days;
+  $("#rsSave").onclick = () => guarded($("#rsSave"), async () => { const r = await api("/api/rec/storage", { method: "PUT", body: { keep_last: $("#rsN").value, keep_days: $("#rsD").value } }); Object.assign(j, r); $("#rsSum").textContent = sum() + " · saved ✓"; });
 }
 
 function recLive(v) {
@@ -125,10 +137,10 @@ function recLive(v) {
 }
 async function recStop() {
   REC.busyStop = true; recStopPoll();
-  try { const j = await api("/api/rec/stop", { method: "POST" }); toast(`Recording converted to ${j.count} test case${j.count === 1 ? "" : "s"} — no AI used`); REC.st = null; recToReview(); }
+  try { await api("/api/rec/stop", { method: "POST" }); REC.st = null; REC.tab = "tc"; recToReview(); }
   finally { REC.busyStop = false; }
 }
-function recToReview() { S.localDirty = false; S.inputMode = "record"; S.view = "review"; location.hash = "review"; render(); }
+function recToReview() { const t = $("#toast"); if (t) t.style.display = "none"; S.localDirty = false; S.inputMode = "record"; S.view = "review"; location.hash = "review"; render(); }
 function recStartPoll() { recStopPoll(); REC.timer = setInterval(recPoll, 1000); }
 function recStopPoll() { if (REC.timer) clearInterval(REC.timer); REC.timer = null; }
 async function recPoll() {
@@ -156,7 +168,7 @@ function recStepHtml(s, i, num) {
   const [lab, cls] = REC_ACT[s.kind] || [s.kind, "nav"];
   const L = s.loc || {}; const sel = REC.sel === s.id ? "sel" : "";
   if (s.kind === "divider") return `<div class="rec-div" data-id="${s.id}" draggable="true">✂ New test case starts here${s.desc ? ` — “${esc(s.desc)}”` : ""} <button class="ib" data-a="del" title="Remove divider">✕</button></div>`;
-  let desc = esc(s.desc);
+  let desc = esc(s.kind === "checkpoint" ? "✔ Expected: " + (s.expected || "—") : s.desc);
   if (s.param && (s.kind === "type" || s.kind === "select")) desc = desc.replace(esc(`"${s.value}"`), `<span class="rec-param">{{${esc(s.param)}}}</span>`);
   else if (s.kind === "type" && s.value && !s.masked) desc = desc.replace(esc(`"${s.value}"`), `<span class="rec-val">${esc(s.value)}</span>`);
   const meta = [];
@@ -262,60 +274,130 @@ function recSide() {
 const _recOrigViewReview = viewReview;
 viewReview = function (v) { _recOrigViewReview(v); recDecorateReview(v); };
 const recRun = () => (S.run && S.run.source === "record" && S.run.recording) ? S.run.recording : null;
+const recIsStep = (s) => !["suggest", "ignored", "divider"].includes(s.kind);
+const recLabel = (s) => s.kind === "checkpoint" ? "✔ Expected: " + (s.expected || "—") : s.desc;
+function recCounts(rc) {
+  const st = rc.steps.filter(recIsStep); const cps = st.filter((s) => s.kind === "checkpoint").length;
+  return { total: st.length, actions: st.length - cps, cps, errs: st.reduce((a, s) => a + (s.errors || []).length, 0), errSteps: st.filter((s) => (s.errors || []).length).length };
+}
 function recDecorateReview(v) {
-  const rc = recRun(); if (!rc) return;
-  const acts = $(".rv-actions", v);
-  if (acts && !$("#recScriptBtn", v)) { const b = document.createElement("button"); b.className = "btn g rec-scbtn"; b.id = "recScriptBtn"; b.innerHTML = "⟨/⟩ Export script"; b.title = "Export the recording as an automation script (Playwright Python / JS, Selenium Java)"; b.onclick = recScriptModal; acts.appendChild(b); }
+  const rc = recRun(); v.classList.remove("rec-show-steps");
+  if (!rc) return;
+  const c = recCounts(rc);
+  const h1 = $("h1", v); if (h1 && !$(".rec-hbadge", h1)) h1.insertAdjacentHTML("beforeend", ` <span class="rec-hbadge">⏺ Recorded</span>`);
   const cov = $("#covBar", v);
   if (cov && !$("#recBanner", v)) {
-    const ban = document.createElement("div"); ban.id = "recBanner"; ban.className = "rec-banner";
-    ban.innerHTML = `<b>⏺ Created from recording</b> — ${rc.n_steps} steps, ${rc.n_checkpoints} checkpoint${rc.n_checkpoints === 1 ? "" : "s"}, ${recMMSS(rc.duration)}${rc.video ? ", video saved" : ""}${rc.n_errors ? `, <span class="rec-red">${rc.n_errors} console/network error${rc.n_errors === 1 ? "" : "s"}</span>` : ""} · No AI used · Use Edit to adjust steps <button class="btn g sm" id="recEvBtn">🎥 Evidence</button>`;
-    cov.before(ban);
-    const panel = document.createElement("div"); panel.id = "recEvidence"; panel.className = "hidden"; ban.after(panel);
-    $("#recEvBtn").onclick = () => recEvidence();
+    cov.insertAdjacentHTML("beforebegin", `<div id="recBanner" class="rec-banner"><b>⏺ Created from recording</b><span>·</span><span>${c.actions} actions · ${c.cps} checkpoint${c.cps === 1 ? "" : "s"} = ${c.total} recorded steps</span><span>·</span><span>${recMMSS(rc.duration)}</span>${rc.video ? "<span>·</span><span>🎥 video</span>" : ""}${c.errs ? `<span>·</span><span class="rec-red">⚠ ${c.errs} error${c.errs === 1 ? "" : "s"}</span>` : ""}${(rc.version || 1) > 1 ? `<span>·</span><span>v${rc.version} (re-recorded)</span>` : ""}<span>·</span><span class="muted">No AI used</span></div>
+      <div id="recTabs" class="rec-tabbar"><button data-t="tc">📋 Test cases <b>${S.cases.length}</b></button><button data-t="steps" title="${c.total} recorded steps = ${c.actions} actions + ${c.cps} checkpoints">⏺ Recorded steps <b>${c.total}</b>${c.errSteps ? `<i class="rec-ebadge" title="${c.errSteps} step(s) with console/network errors">${c.errSteps}</i>` : ""}</button></div>
+      <div id="recStepsPane"></div>`);
+    $$("#recTabs button", v).forEach((b) => (b.onclick = () => recTab(b.dataset.t)));
   }
+  recTab(REC.tab || "tc", true);
   recTags();
+}
+function recTab(t, quiet) {
+  REC.tab = t; const v = $("#view"); if (!$("#recTabs")) return;
+  $$("#recTabs button").forEach((b) => b.classList.toggle("a", b.dataset.t === t));
+  v.classList.toggle("rec-show-steps", t === "steps");
+  if (t === "steps") recStepsPane(); else { const p = $("#recStepsPane"); if (p) p.innerHTML = ""; }
+  if (!quiet) window.scrollTo(0, 0);
+}
+// Test cases tab: tiny thumbnail + ▶ mm:ss per step of recorded test cases
+function recGroupFor(t) {
+  const rc = recRun(); const g = rc.groups || [];
+  let gi = (rc.case_names || []).indexOf(t.name); if (gi < 0) gi = (rc.case_ids || []).indexOf(t.id);
+  return gi >= 0 ? g[gi] : null;
+}
+function recStepFor(t, si) {
+  const rc = recRun(); const g = recGroupFor(t); if (!g) return null;
+  const by = Object.fromEntries(rc.steps.map((s) => [s.id, s]));
+  const step = t.steps[si]; const sids = g.sids || [];
+  if (sids.length === t.steps.length) return { s: by[sids[si]], cp: (g.cps || [])[si] };
+  const hit = sids.findIndex((id) => by[id] && step && (by[id].desc === step.description || recLabel(by[id]) === step.description));   // edited case: match by text
+  return hit >= 0 ? { s: by[sids[hit]], cp: (g.cps || [])[hit] } : null;
 }
 function recTags() {
   const rc = recRun(); if (!rc) return;
-  const ids = new Set(rc.case_ids || []), names = new Set(rc.case_names || []);
   $$("#rvList .tc").forEach((el) => {
-    const t = S.cases.find((c) => String(c._k) === el.dataset.k); if (!t) return;
-    const title = $(".tc-title", el); if (!title || $(".rec-tag", title)) return;
-    if (!(names.has(t.name) || ids.has(t.id))) return;
-    const ix = (rc.case_names || []).indexOf(t.name); const gi = ix >= 0 ? ix : (rc.case_ids || []).indexOf(t.id);
-    const sp = document.createElement("span"); sp.className = "rec-tag"; sp.title = "Created from a recording (no AI)"; sp.textContent = "⏺ Recorded";
-    title.prepend(sp);
-    if (rc.video) { const a = document.createElement("a"); a.className = "rec-vlink"; a.textContent = "🎥 Video"; a.title = "Jump to this test case in the video"; a.onclick = (e) => { e.stopPropagation(); recEvidence(gi); }; sp.after(a); }
+    const t = S.cases.find((c) => String(c._k) === el.dataset.k); if (!t || !recGroupFor(t)) return;
+    el.classList.add("rec-tc");
+    const title = $(".tc-title", el);
+    if (title && !$(".rec-tag", title)) title.insertAdjacentHTML("afterbegin", `<span class="rec-tag" title="Created from a recording (no AI)">⏺ Recorded</span>`);
+    const hd = $(".sr.lbl", el); if (hd && !$(".rec-svh", hd)) hd.lastElementChild.insertAdjacentHTML("beforebegin", `<span class="rec-svh">Shot · Video</span>`);
+    $$(".sr[data-s]", el).forEach((row) => {
+      if ($(".rec-sv", row)) return;
+      const m = recStepFor(t, Number(row.dataset.s)); const s = m && m.s;
+      if (m && m.cp) row.classList.add("rec-cprow");
+      const ra = $(".ra", row);
+      const html = s ? `<span class="rec-sv">${s.shot ? `<img class="rec-mini" loading="lazy" src="${recFile(rc.rid, s.shot)}" alt="" data-rsid="${s.id}">` : '<span class="rec-mini none"></span>'}${rc.video && !s.seg ? `<a class="rec-play" data-rsid="${s.id}" title="Open the video at this step">▶ ${recMMSS(s.vt)}</a>` : `<span class="muted">${recMMSS(s.t)}</span>`}</span>` : `<span class="rec-sv"></span>`;
+      ra ? ra.insertAdjacentHTML("beforebegin", html) : row.insertAdjacentHTML("beforeend", html);
+    });
   });
 }
-new MutationObserver(() => { if (S.view === "review" && recRun()) recTags(); }).observe(document.getElementById("view"), { childList: true, subtree: true });
+document.addEventListener("click", (e) => {
+  const a = e.target.closest && e.target.closest("#rvList [data-rsid]"); if (!a || !recRun()) return;
+  e.preventDefault(); e.stopPropagation(); REC.rsel = a.dataset.rsid; REC.rfilter = "all"; recTab("steps"); recJumpSel(true);
+}, true);
+new MutationObserver(() => {
+  if (S.view !== "review" || !recRun()) return;
+  recTags();
+  const p = $("#rtExpPanel");   // Export ▾ dropdown: extra "Automation script…" item for recorded runs
+  if (p && !$("#recScriptPi", p)) {
+    const last = $$("[data-fmt]", p).pop();
+    if (last) { last.insertAdjacentHTML("afterend", `<div class="pi rec-pi" id="recScriptPi" title="Playwright (Python / JS) or Selenium (Java) from the recorded locators">⟨/⟩ Automation script…<span style="flex:1"></span><span class="pill gr">Record</span></div>`); $("#recScriptPi", p).onclick = () => { closePop(); recScriptModal(); }; }
+  }
+}).observe(document.body, { childList: true, subtree: true });
 
-function recEvidence(groupIx) {
-  const rc = recRun(); const p = $("#recEvidence"); if (!rc || !p) return;
-  if (groupIx === undefined && !p.classList.contains("hidden")) { p.classList.add("hidden"); return; }
-  p.classList.remove("hidden");
-  const steps = rc.steps.filter((s) => !["suggest", "ignored", "divider"].includes(s.kind));
-  const dur = Math.max(1, rc.duration || 1);
-  const vsteps = steps.filter((s) => !s.seg);
+// Recorded steps tab
+function recStepsPane() {
+  const rc = recRun(); const p = $("#recStepsPane"); if (!rc || !p) return;
+  const c = recCounts(rc); const st = rc.steps.filter(recIsStep); const dur = Math.max(1, rc.duration || 1);
+  const by = Object.fromEntries(st.map((s) => [s.id, s])); const f = REC.rfilter || "all";
   const vurl = rc.video ? recFile(rc.rid, rc.video) : "";
-  const grp = (id) => (rc.groups || []).findIndex((g) => g.ids.includes(id));
-  p.innerHTML = `<div class="card rec-ev"><div class="rec-evh"><h3>🎥 Recording evidence</h3><button class="ib" id="recEvX" title="Close">✕</button></div>
-    ${rc.video ? `<div class="rec-video"><video id="recVideo" src="${vurl}" controls preload="metadata"></video>
-      <div class="rec-marks" id="recMarks">${vsteps.map((s, i) => `<i class="${(s.errors || []).length ? "err" : ""}" style="left:${Math.min(99.5, ((s.vt || 0) / dur) * 100)}%" data-t="${s.vt || 0}" title="Step ${i + 1}: ${esc(s.desc)} (${recMMSS(s.vt)})"></i>`).join("")}</div>
-      <div class="sub" style="margin:4px 0 0">Markers = steps (red = error). Click a marker or a step to jump. <a href="${vurl}" download>Download video</a></div></div>` : '<div class="muted">No video was recorded for this run.</div>'}
-    <div class="rec-evlist">${steps.map((s, i) => `<div class="rec-evrow ${(s.errors || []).length ? "has-err" : ""}" data-t="${s.vt || 0}" data-g="${grp(s.id)}"><span class="rec-num">${i + 1}</span><span class="rec-act ${(REC_ACT[s.kind] || ["", "nav"])[1]}">${(REC_ACT[s.kind] || [s.kind])[0]}</span>
-      <div><div>${esc(s.desc)}${s.note ? `<div class="rec-note">💬 ${esc(s.note)}</div>` : ""}</div>${(s.errors || []).map((e) => `<div class="rec-err">⚠ ${esc(e.kind)}: ${esc(e.text)}</div>`).join("")}${(s.errors || []).length ? `<button class="btn g sm" data-ev="${s.id}">Attach to test case as evidence</button>` : ""}</div>
-      ${s.shot ? `<a href="${recFile(rc.rid, s.shot)}" target="_blank" rel="noopener"><img class="rec-thumb" loading="lazy" src="${recFile(rc.rid, s.shot)}" alt="screenshot"></a>` : '<span class="rec-thumb none"></span>'}<span class="rec-t">${recMMSS(s.vt)} ${rc.video && !s.seg ? "▶ jump" : ""}</span></div>`).join("")}</div>
-    ${Object.keys(rc.params || {}).length ? `<div class="sub" style="margin:8px 0 0">Test data: ${Object.entries(rc.params).map(([k, x]) => `<span class="rec-param">{{${esc(k)}}}</span> = ${x.masked ? "(masked)" : esc(x.value)}`).join(" · ")}</div>` : ""}</div>`;
-  const vid = $("#recVideo");
-  const jump = (t) => { if (!vid) return; vid.currentTime = Number(t) || 0; vid.play && vid.play().catch(() => {}); };
-  $("#recEvX").onclick = () => p.classList.add("hidden");
-  $$("#recMarks i").forEach((m) => (m.onclick = () => jump(m.dataset.t)));
-  $$(".rec-evrow", p).forEach((r) => (r.onclick = (e) => { if (e.target.closest("button,a")) return; jump(r.dataset.t); }));
-  $$("[data-ev]", p).forEach((b) => (b.onclick = () => guarded(b, async () => { const j = await api("/api/rec/evidence", { method: "PATCH", body: { step: b.dataset.ev } }); S.localDirty = false; toast(`Errors attached to ${j.case} description`); render(); })));
-  if (groupIx !== undefined && groupIx >= 0) { const g = rc.groups[groupIx]; const first = g && steps.find((s) => g.ids.includes(s.id)); if (first) { jump(first.vt); const r = $(`.rec-evrow[data-g="${groupIx}"]`, p); if (r) r.classList.add("sel"); } }
-  p.scrollIntoView({ block: "nearest" });
+  const num = Object.fromEntries(st.map((s, i) => [s.id, i + 1]));
+  const keep = (s) => f === "all" || (f === "cp" && s.kind === "checkpoint") || (f === "err" && (s.errors || []).length) || (f === "data" && s.param);
+  const used = new Set(); const groups = (rc.groups || []).map((g, gi) => { const ids = g.ids.filter((id) => by[id]); ids.forEach((x) => used.add(x)); return { gi, name: (S.cases[gi] && (rc.case_names || [])[gi] === S.cases[gi].name ? S.cases[gi].name : g.name), id: (rc.case_ids || [])[gi] || `TC${String(gi + 1).padStart(3, "0")}`, ids }; });
+  const rest = st.filter((s) => !used.has(s.id)).map((s) => s.id); if (rest.length) groups.push({ gi: -1, name: "Not in a test case", id: "—", ids: rest });
+  const errs = st.filter((s) => (s.errors || []).length);
+  const params = Object.entries(rc.params || {});
+  const row = (s) => { const [lab, cls] = REC_ACT[s.kind] || [s.kind, "nav"]; let d = esc(recLabel(s)); if (s.param && s.value) d = d.replace(esc(`"${s.value}"`), `<span class="rec-param">{{${esc(s.param)}}}</span>`);
+    return `<div class="rec-srow k-${s.kind} ${REC.rsel === s.id ? "sel" : ""} ${(s.errors || []).length ? "has-err" : ""}" data-sid="${s.id}"><span class="rec-num">${num[s.id]}</span><span><span class="rec-act ${cls}">${lab}</span></span>
+      <div>${d}${(s.errors || []).length ? `<div class="rec-errs">${s.errors.map((e) => `<span class="rec-err" title="${esc(e.text)}">⚠ ${esc(e.text.slice(0, 44))}</span>`).join("")}</div>` : ""}${s.note ? `<div class="rec-note">💬 ${esc(s.note)}</div>` : ""}</div>
+      ${s.shot ? `<a href="${recFile(rc.rid, s.shot)}" target="_blank" rel="noopener" title="Open screenshot"><img class="rec-thumb" loading="lazy" src="${recFile(rc.rid, s.shot)}" alt=""></a>` : '<span class="rec-thumb none"></span>'}
+      <span class="rec-play">${rc.video && !s.seg ? "▶ " : ""}${recMMSS(rc.video && !s.seg ? s.vt : s.t)}</span></div>`; };
+  const body = groups.map((g) => { const ids = g.ids.filter((id) => keep(by[id])); if (!ids.length) return ""; return `<div class="rec-sgh"><b>${esc(g.id)}</b> ${esc(g.name)}<span class="muted">${g.ids.length} step${g.ids.length === 1 ? "" : "s"}</span></div>${ids.map((id) => row(by[id])).join("")}`; }).join("") || '<div class="muted" style="padding:14px">No steps match this filter.</div>';
+  p.innerHTML = `<div class="rec-sp"><div class="rec-spl">
+      <div class="card rec-vcard">${rc.video ? `<video id="recVideo" src="${vurl}" controls preload="metadata"></video>
+        <div class="rec-marks" id="recMarks">${st.filter((s) => !s.seg).map((s) => `<i class="${(s.errors || []).length ? "err" : ""} ${REC.rsel === s.id ? "sel" : ""}" style="left:${Math.min(99.3, ((s.vt || 0) / dur) * 100)}%" data-sid="${s.id}" title="Step ${num[s.id]}: ${esc(recLabel(s))} (${recMMSS(s.vt)})"></i>`).join("")}</div>
+        <div class="rec-vleg"><span>Markers = steps · <b class="rec-red">red</b> = error · <b style="color:#f59e0b">orange</b> = selected</span><a href="${vurl}" download>⬇ Video</a></div>` : '<div class="muted" style="padding:10px">No video was recorded for this run.</div>'}
+        <div class="rec-vbtns"><a class="btn g sm" id="recZip" href="/api/rec/zip">⬇ Download recording (.zip)</a><button class="btn g sm" id="recPin">📌 Pin</button></div></div>
+      ${errs.length ? `<div class="card rec-ecard"><h3 class="rec-red">⚠ Errors (${c.errs})</h3>${errs.map((s) => `<div class="rec-erow" data-sid="${s.id}">${s.errors.map((e) => `<div><span class="rec-ek ${e.kind}">${e.kind === "network" ? "Network" : "Console"}</span> Step ${num[s.id]} · ${esc(e.text)}</div>`).join("")}<button class="btn g sm" data-ev="${s.id}">Attach to ${esc(groups.find((g) => g.ids.includes(s.id))?.id || "test case")} as evidence</button><span class="rec-evmsg" id="evm_${s.id}"></span></div>`).join("")}</div>` : ""}
+      ${(rc.previous || []).length ? `<div class="card rec-ccard"><h3>🕘 Recording v${rc.version || (rc.previous.length + 1)}</h3><div class="sub" style="margin:0 0 6px">Re-recorded ${rc.previous.length} time${rc.previous.length === 1 ? "" : "s"}. Compare the steps with an earlier recording:</div>
+        <select id="recCmpSel">${rc.previous.map((x, i) => `<option value="${esc(x.rid)}" ${i === rc.previous.length - 1 ? "selected" : ""}>v${i + 1} · ${esc(recWhen(x.created))}</option>`).reverse().join("")}</select> <button class="btn g sm" id="recCmpGo">Compare</button><div id="recCmpOut"></div></div>` : ""}
+    </div><div class="rec-spr"><div class="rec-chips">${[["all", `All ${c.total}`], ["cp", `✔ Checkpoints ${c.cps}`], ["err", `⚠ Errors ${c.errSteps}`], ["data", `🏷 Test data ${params.length}`]].map(([k, l]) => `<button data-f="${k}" class="${f === k ? "a" : ""}">${l}</button>`).join("")}</div>
+      <div class="card rec-slog"><div class="rec-srow rec-hd"><span>#</span><span>Action</span><span>Step</span><span>Shot</span><span>Time</span></div>${body}
+      ${params.length ? `<div class="rec-tdata"><b>Test data</b> ${params.map(([k, x]) => `<span class="rec-param">{{${esc(k)}}}</span> ${x.masked ? "•••• <span class='muted'>(masked)</span>" : esc(x.value)}`).join(" · ")}</div>` : ""}</div></div></div>`;
+  $$(".rec-chips button", p).forEach((b) => (b.onclick = () => { REC.rfilter = b.dataset.f; recStepsPane(); }));
+  $$(".rec-srow[data-sid], #recMarks i, .rec-erow", p).forEach((el) => (el.onclick = (e) => { if (e.target.closest("a,button")) return; REC.rsel = el.dataset.sid; recJumpSel(el.tagName === "I" || el.classList.contains("rec-erow")); }));
+  $$("[data-ev]", p).forEach((b) => (b.onclick = () => guarded(b, async () => { const j = await api("/api/rec/evidence", { method: "PATCH", body: { step: b.dataset.ev } }); S.localDirty = false; loadCasesFromRun(); renderList(); const m = $("#evm_" + b.dataset.ev); if (m) m.textContent = `✓ Added to ${j.case} description`; })));
+  recPinBtn();
+  const cg = $("#recCmpGo"); if (cg) cg.onclick = () => guarded(cg, async () => {
+    const j = await api("/api/rec/compare?rid=" + encodeURIComponent($("#recCmpSel").value)); const sm = j.summary;
+    $("#recCmpOut").innerHTML = `<div class="sub" style="margin:6px 0">${sm.same} same · <span class="rec-ok">${sm.added} added</span> · <span class="rec-red">${sm.removed} removed</span> · ${sm.changed} changed</div><div class="rec-diff">${j.rows.map((r) => `<div class="d-${r.op}">${r.op === "same" ? "  " : r.op === "added" ? "+ " : r.op === "removed" ? "− " : "~ "}${esc(r.op === "removed" ? r.old : r.op === "changed" ? r.old + " → " + r.new : r.new)}</div>`).join("")}</div>`;
+  });
+}
+async function recPinBtn() {
+  const rc = recRun(); const b = $("#recPin"); if (!b) return;
+  let st; try { st = await api("/api/rec/storage"); } catch { return; }
+  const draw = () => { const on = st.pinned.includes(rc.rid); b.textContent = on ? "📌 Pinned" : "📌 Pin"; b.classList.toggle("on", on); b.title = on ? "Pinned — never removed by storage retention (click to unpin)" : "Pin — never remove this recording by storage retention"; };
+  draw(); b.onclick = () => guarded(b, async () => { st = await api("/api/rec/pin", { method: "POST", body: { rid: rc.rid, pinned: !st.pinned.includes(rc.rid) } }); draw(); });
+}
+function recJumpSel(scroll) {
+  const rc = recRun(); const s = rc && rc.steps.find((x) => x.id === REC.rsel); if (!s) return;
+  $$(".rec-srow.sel, #recMarks i.sel").forEach((x) => x.classList.remove("sel"));
+  const r = $(`.rec-srow[data-sid="${s.id}"]`); if (r) { r.classList.add("sel"); if (scroll) r.scrollIntoView({ block: "center" }); }
+  const m = $(`#recMarks i[data-sid="${s.id}"]`); if (m) m.classList.add("sel");
+  const vid = $("#recVideo"); if (vid && !s.seg) { const go = () => { vid.currentTime = Number(s.vt) || 0; }; vid.readyState >= 1 ? go() : vid.addEventListener("loadedmetadata", go, { once: true }); }
 }
 function recScriptModal() {
   const old = $("#recScript"); if (old) old.remove();
@@ -328,11 +410,30 @@ function recScriptModal() {
     <div class="sub" style="margin:6px 0 0">Generated from recorded locators — no AI. Edits made in Review are not reflected in the script.</div></div>`;
   document.body.appendChild(m);
   let lang = "py", cur = null;
-  const load = async () => { $("#rsCode").textContent = "Loading…"; try { cur = await api("/api/rec/script", { method: "POST", body: { lang, assertions: $("#rsAs").checked, params: $("#rsPa").checked } }); $("#rsCode").textContent = cur.script; $("#rsDl").textContent = "⬇ Download " + cur.filename; } catch (e) { $("#rsCode").textContent = e.message; } };
+  const load = async () => { $("#rsCode").textContent = "Loading…"; try { cur = await api("/api/rec/script", { method: "POST", body: { lang, assertions: $("#rsAs").checked, params: $("#rsPa").checked } }); $("#rsCode").textContent = cur.script; $("#rsDl").textContent = "⬇ Download ." + cur.filename.split(".").pop(); $("#rsDl").title = cur.filename; } catch (e) { $("#rsCode").textContent = e.message; } };
   $$(".rec-tabs button", m).forEach((b) => (b.onclick = () => { $$(".rec-tabs button", m).forEach((x) => x.classList.toggle("a", x === b)); lang = b.dataset.l; load(); }));
   $("#rsAs").onchange = load; $("#rsPa").onchange = load;
   $("#rsX").onclick = () => m.remove(); m.onclick = (e) => { if (e.target === m) m.remove(); };
-  $("#rsCopy").onclick = async () => { try { await navigator.clipboard.writeText(cur.script); } catch { const ta = document.createElement("textarea"); ta.value = cur.script; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } toast("Script copied to clipboard"); };
+  $("#rsCopy").onclick = async () => { try { await navigator.clipboard.writeText(cur.script); } catch { const ta = document.createElement("textarea"); ta.value = cur.script; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } $("#rsCopy").textContent = "✓ Copied"; setTimeout(() => { const b = $("#rsCopy"); if (b) b.textContent = "📋 Copy"; }, 1800); };
   $("#rsDl").onclick = () => { if (!cur) return; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([cur.script], { type: "text/plain" })); a.download = cur.filename; document.body.appendChild(a); a.click(); a.remove(); };
   load();
+}
+
+// ------------------------------------------------------------------ Run history (recorded runs: 🎥 meta, zip, pin, "Recorded only")
+const _recOrigViewHistory = viewHistory;
+viewHistory = async function (v) { await _recOrigViewHistory(v); await recDecorateHistory(v); };
+async function recDecorateHistory(v) {
+  let j, st; try { j = await api("/api/history"); st = await api("/api/rec/storage"); } catch { return; }
+  const recs = j.items.filter((e) => e.rec); const tbl = $("table.rh", v); if (!recs.length || !tbl || !document.body.contains(tbl)) return;
+  if (!$("#recOnly", v)) tbl.insertAdjacentHTML("beforebegin", `<div class="rec-hf"><label class="rec-chk"><input type="checkbox" id="recOnly" ${REC.hOnly ? "checked" : ""}> 🎥 Recorded only <span class="muted">(${recs.length})</span></label></div>`);
+  $$("tr[data-id]", tbl).forEach((tr) => {
+    const e = j.items.find((x) => x.run_id === tr.dataset.id); if (!e || !e.rec || tr.classList.contains("rec-hrow")) return;
+    tr.classList.add("rec-hrow"); const r = e.rec;
+    const ttl = $(".ttl", tr); if (ttl) ttl.insertAdjacentHTML("afterend", `<div class="rec-hmeta">${r.video ? "🎥 " : "⏺ "}<span class="rec-url" title="${esc(r.url)}">${esc(r.url.replace(/^https?:\/\//, "").slice(0, 46))}</span> · ${recMMSS(r.duration)} · ${r.steps || 0} actions${r.checkpoints ? ` · ${r.checkpoints} cp` : ""}${r.errors ? ` · <span class="rec-red">⚠ ${r.errors} error${r.errors === 1 ? "" : "s"}</span>` : ""}${(r.version || 1) > 1 ? ` · v${r.version}` : ""}<div class="rec-hlinks"><a class="rec-hzip" href="/api/rec/zip?run_id=${encodeURIComponent(e.run_id)}" title="Download recording (video, screenshots, steps, scripts)">⬇ Zip</a> · <a class="rec-hpin ${st.pinned.includes(r.rid) ? "on" : ""}" title="Pin: never delete this recording by storage retention">📌 ${st.pinned.includes(r.rid) ? "Pinned" : "Pin"}</a></div></div>`);
+    const src = tr.children[2] && $(".pill", tr.children[2]); if (src) src.textContent = "🎥 Recorded";
+    const pin = $(".rec-hpin", tr);
+    if (pin) pin.onclick = () => guarded(null, async () => { st = await api("/api/rec/pin", { method: "POST", body: { rid: r.rid, pinned: !st.pinned.includes(r.rid) } }); const on = st.pinned.includes(r.rid); pin.classList.toggle("on", on); pin.textContent = on ? "📌 Pinned" : "📌 Pin"; });
+  });
+  const apply = () => $$("tr", tbl).forEach((tr) => { if (tr.querySelector("th")) return; tr.style.display = REC.hOnly && !tr.classList.contains("rec-hrow") ? "none" : ""; });
+  $("#recOnly", v).onchange = (e) => { REC.hOnly = e.target.checked; apply(); }; apply();
 }

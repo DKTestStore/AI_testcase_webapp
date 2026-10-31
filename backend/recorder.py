@@ -340,7 +340,7 @@ class Recorder:
             cur = self.cur
             exp = (c.get("expected") or "").strip() or (f'Page shows "{cur["heading"]}"' if cur["heading"] else "Page is displayed")
             a = c.get("assert") or ("heading" if cur["heading"] else "url")
-            s = self._new_step("checkpoint", desc="✔ Checkpoint", expected=exp, url=cur["url"],
+            s = self._new_step("checkpoint", desc=f"✔ Expected: {exp}", expected=exp, url=cur["url"],
                                loc={"assert": a, "url": _short_url(cur["url"]), "heading": cur["heading"],
                                     "text": c.get("text", ""), "css": c.get("css", "")})
             self.add(s)
@@ -502,12 +502,13 @@ def build_cases(setup: Dict[str, Any], steps: List[Dict[str, Any]], params: Dict
                 last = cur["steps"][-1]
                 base = last["expected"]
                 last["expected"] = exp if (not base or base in ("Value is entered",)) else f"{base}; {exp}"
+                last["_cp"] = s["id"]
             else:
-                cur["steps"].append({"description": "Verify checkpoint", "expected": exp})
+                cur["steps"].append({"description": f"Verify: {exp}", "expected": exp, "_sid": s["id"], "_cp": s["id"]})
             if split:
                 close()
             continue
-        cur["steps"].append({"description": _step_text(s, params), "expected": s.get("expected", "")})
+        cur["steps"].append({"description": _step_text(s, params), "expected": s.get("expected", ""), "_sid": s["id"]})
         cur["ids"].append(s["id"])
     if cur["steps"]:   # trailing actions after the last checkpoint become their own test case
         groups.append(cur)
@@ -532,7 +533,8 @@ def build_cases(setup: Dict[str, Any], steps: List[Dict[str, Any]], params: Dict
         desc = desc or (f"Recorded flow — part {i + 1} of {n}: {name0}." if n > 1 else f"Recorded flow: {name0}.")
         cases.append({"id": f"TC{i + 1:03d}", "name": nm[:200], "description": desc,
                       "precondition": "\n".join(p for p in pre if p), "steps": g["steps"], "priority": pri,
-                      "type": typ, "acs": [], "status": "not", "_rec_ids": g["ids"]})
+                      "type": typ, "acs": [], "status": "not", "_rec_ids": g["ids"],
+                      "_sids": [x.get("_sid") for x in g["steps"]], "_cps": [x.get("_cp") for x in g["steps"]]})
     return cases
 
 
@@ -752,6 +754,62 @@ def build_script(rec: Dict[str, Any], lang: str, assertions: bool = True, use_pa
 
 
 # --------------------------------------------------------------------------- #
+# B4 storage retention (per browser/history id). Default keep all; pinned never deleted.
+# --------------------------------------------------------------------------- #
+def load_settings(key: str) -> Dict[str, Any]:
+    p = REC_DIR / key / "settings.json"
+    d = {}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:
+        d = {}
+    return {"keep_last": int(d.get("keep_last") or 0), "keep_days": int(d.get("keep_days") or 0),
+            "pinned": [str(x) for x in d.get("pinned") or []]}
+
+
+def save_settings(key: str, st: Dict[str, Any]):
+    p = REC_DIR / key / "settings.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(st, indent=1), encoding="utf-8")
+
+
+def rec_dirs(key: str) -> List[Path]:
+    base = REC_DIR / key
+    if not base.exists():
+        return []
+    ds = [d for d in base.iterdir() if d.is_dir() and re.match(r"^\d{8}_\d{6}_", d.name)]
+    return sorted(ds, key=lambda d: d.name, reverse=True)   # rid starts with a timestamp -> newest first
+
+
+def retention_cleanup(key: str, keep=None) -> List[str]:
+    """Delete recordings beyond 'keep last N' / older than X days. Pinned, active and `keep` rids are never removed."""
+    st = load_settings(key)
+    n, days = st["keep_last"], st["keep_days"]
+    if not n and not days:
+        return []
+    protect = set(st["pinned"]) | set(keep or [])
+    act = REC.get(key)
+    if act and not act.done.is_set():
+        protect.add(act.rid)
+    removed, kept = [], 0
+    now = datetime.now()
+    for d in rec_dirs(key):
+        if d.name in protect:
+            continue
+        try:
+            age = (now - datetime.strptime(d.name[:15], "%Y%m%d_%H%M%S")).days
+        except ValueError:
+            age = 0
+        kept += 1
+        if (n and kept > max(0, n - len([p for p in (keep or []) if (REC_DIR / key / p).exists()]))) or (days and age >= days):
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d.name)
+    if removed:
+        log.info("rec retention removed %s", removed)
+    return removed
+
+
+# --------------------------------------------------------------------------- #
 # API
 # --------------------------------------------------------------------------- #
 def install(app, current, get_run, save, public_run, validate_cases, version_hooks=None, hcookie="atg_history"):
@@ -870,6 +928,8 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
             for k in ("desc", "expected", "note"):
                 if k in data:
                     s[k] = str(data[k])[:1000]
+            if s["kind"] == "checkpoint" and "expected" in data:   # keep the checkpoint label in sync
+                s["desc"] = f"✔ Expected: {s['expected']}"
             if "param" in data:   # #4 mark value as test data
                 p = _slug(str(data.get("param") or ""), 30) if data.get("param") else ""
                 old = s.get("param")
@@ -924,8 +984,8 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
             if not s or s["kind"] not in ("suggest", "ignored"):
                 raise ServiceError("Suggestion not found.", 404)
             if act == "accept" and s["kind"] == "suggest":
-                s.update({"kind": "checkpoint", "desc": "✔ Checkpoint",
-                          "expected": str(data.get("expected") or s["expected"])[:300]})
+                exp = str(data.get("expected") or s["expected"])[:300]
+                s.update({"kind": "checkpoint", "desc": f"✔ Expected: {exp}", "expected": exp})
             elif act == "keep" and s["kind"] == "ignored":   # #14 keep a skipped (ignore-listed) click
                 s.update({"kind": "click", "desc": f'Click "{s.get("name") or "element"}"'})
             elif act in ("dismiss", "drop"):
@@ -940,14 +1000,39 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
             c["acs"] = ["AC-01"]
         if not cases:
             raise ServiceError("Nothing was recorded yet — perform at least one action in the recorder window.")
-        groups = [{"name": c["name"], "ids": c.pop("_rec_ids")} for c in cases]
-        from . import parsing   # local import keeps module load light
+        groups = [{"name": c["name"], "ids": c.pop("_rec_ids"), "sids": c.pop("_sids"), "cps": c.pop("_cps")} for c in cases]
+        from . import parsing, session_store, history_store   # local import keeps module load light
         clean = parsing.sanitize_cases(cases)
         validate_cases(clean)
         run = get_run(sess)
+        name = (setup.get("name") or "").strip().lower()
+        same = run.get("source") == "record" and ((run.get("recording") or {}).get("setup") or {}).get("name", "").strip().lower() == name
+        prev_snap = None
+        if not same:
+            # B3: re-recording a test with the same name -> new version of that recording (same run in history)
+            hid = sess.get("hid")
+            for e in history_store.list_items(hid) if hid else []:
+                if e.get("kind") != "batch" and ((e.get("rec") or {}).get("name") or "").strip().lower() == name:
+                    prev_snap = history_store.load_run(hid, e["run_id"])
+                    break
+            if run.get("test_cases") and sess.get("mode") != "batch":   # never overwrite a different saved run
+                save(sess, history=True)
+                session_store.reset_run(sess["sid"])
+                run = get_run(sess)
+            if prev_snap:
+                run["run_id"], run["rid"] = prev_snap["run_id"], prev_snap.get("rid")
+        old = (run.get("recording") if same else (prev_snap or {}).get("recording")) or None
+        previous = list((old or {}).get("previous") or [])
+        if old and old.get("rid") != rid:
+            previous.append({"rid": old.get("rid"), "created": old.get("created"), "duration": old.get("duration"),
+                             "name": (old.get("setup") or {}).get("name"),
+                             "steps": [{"kind": x.get("kind"), "desc": x.get("desc"), "expected": x.get("expected")}
+                                       for x in old.get("steps", []) if x.get("kind") not in ("suggest", "ignored")]})
+        previous = previous[-10:]
         meta = {"rid": rid, "setup": setup, "steps": steps, "params": params, "groups": groups,
                 "case_ids": [c["id"] for c in clean], "case_names": [c["name"] for c in clean],
-                "video": video, "duration": round(elapsed, 1), "created": _now(),
+                "video": video, "duration": round(elapsed, 1), "created": _now(), "previous": previous,
+                "version": len(previous) + 1,
                 "n_steps": sum(1 for s in steps if s["kind"] not in ("suggest", "ignored", "divider", "checkpoint")),
                 "n_checkpoints": sum(1 for s in steps if s["kind"] == "checkpoint"),
                 "n_errors": sum(len(s.get("errors") or []) for s in steps)}
@@ -959,7 +1044,11 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
                                  "text": summary_text(setup, steps)}],
                     "recording": meta})
         save(sess, history=True)
-        return {"ok": True, "count": len(clean), "run": public_run(run)}
+        try:
+            retention_cleanup(key_of(sess), keep={rid})
+        except Exception:
+            log.exception("retention cleanup failed (ignored)")
+        return {"ok": True, "count": len(clean), "run": public_run(run), "rerecorded": bool(previous)}
 
     @router.post("/stop")
     def rec_stop(sess=Depends(current)):
@@ -1028,6 +1117,110 @@ def install(app, current, get_run, save, public_run, validate_cases, version_hoo
                      float(d.get("elapsed") or 0))
         draft_path(sess).unlink(missing_ok=True)
         return res
+
+    # ---------------------------------------------------------------- B4 retention / pin
+    @router.get("/storage")
+    def rec_storage(sess=Depends(current)):
+        k = key_of(sess)
+        st = load_settings(k)
+        dirs = rec_dirs(k)
+        size = sum(f.stat().st_size for d in dirs for f in d.rglob("*") if f.is_file())
+        return {"ok": True, **st, "count": len(dirs), "mb": round(size / 1048576, 1), "rids": [d.name for d in dirs]}
+
+    @router.put("/storage")
+    def rec_storage_put(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+        k = key_of(sess)
+        st = load_settings(k)
+        for f in ("keep_last", "keep_days"):
+            if f in data:
+                try:
+                    st[f] = max(0, min(10000, int(data[f] or 0)))
+                except (TypeError, ValueError):
+                    raise ServiceError(f"{f} must be a number (0 = keep all).")
+        save_settings(k, st)
+        removed = retention_cleanup(k, keep=set()) if data.get("apply") else []
+        return {"ok": True, **st, "removed": removed}
+
+    @router.post("/pin")
+    def rec_pin(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+        k = key_of(sess)
+        rid = str(data.get("rid", ""))
+        if not re.match(r"^[\w-]+$", rid):
+            raise ServiceError("Bad recording id.")
+        st = load_settings(k)
+        pins = set(st["pinned"])
+        (pins.add if data.get("pinned", True) else pins.discard)(rid)
+        st["pinned"] = sorted(pins)
+        save_settings(k, st)
+        return {"ok": True, **st}
+
+    def rec_of(sess, run_id: str = ""):
+        run = get_run(sess)
+        if run_id and run_id != run.get("run_id"):
+            from . import history_store
+            snap = history_store.load_run(sess.get("hid"), run_id)
+            if not snap:
+                raise ServiceError("This run is no longer in history.", 404)
+            run = snap
+        rec = run.get("recording")
+        if not rec:
+            raise ServiceError("This run was not created from a recording.", 400)
+        return run, rec
+
+    # ---------------------------------------------------------------- B5 zip export
+    @router.get("/zip")
+    def rec_zip(run_id: str = "", sess=Depends(current)):
+        import io
+        import zipfile
+        run, rec = rec_of(sess, run_id)
+        base = REC_DIR / key_of(sess) / rec["rid"]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("steps.json", json.dumps({k: v for k, v in rec.items() if k != "previous"}, indent=1, ensure_ascii=False))
+            z.writestr("test_cases.json", json.dumps(run.get("test_cases") or [], indent=1, ensure_ascii=False))
+            for lang in ("py", "js", "java"):
+                sc = build_script(rec, lang)
+                z.writestr("scripts/" + sc["filename"], sc["script"])
+            missing = []
+            if rec.get("video"):
+                vp = base / rec["video"]
+                z.write(vp, "video/" + rec["video"]) if vp.exists() else missing.append(rec["video"])
+            for s in rec.get("steps", []):
+                if s.get("shot"):
+                    sp = base / "shots" / s["shot"]
+                    z.write(sp, "screenshots/" + s["shot"]) if sp.exists() else missing.append(s["shot"])
+            if missing:
+                z.writestr("MISSING_FILES.txt", "Removed by storage retention:\n" + "\n".join(missing))
+        fn = f"recording_{_slug((rec.get('setup') or {}).get('name', ''), 40)}_{rec['rid']}.zip"
+        return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{fn}"'})
+
+    # ---------------------------------------------------------------- B3 compare with a previous recording
+    @router.get("/compare")
+    def rec_compare(rid: str = "", sess=Depends(current)):
+        import difflib
+        run, rec = rec_of(sess)
+        prev = next((p for p in rec.get("previous", []) if p.get("rid") == rid), None) or (rec.get("previous") or [None])[-1]
+        if not prev:
+            raise ServiceError("There is no earlier recording of this test.", 404)
+        line = lambda x: x.get("desc") or ""
+        a = [line(x) for x in prev["steps"]]
+        b = [line(x) for x in rec["steps"] if x.get("kind") not in ("suggest", "ignored")]
+        rows = []
+        for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+            if op == "equal":
+                rows += [{"op": "same", "old": a[i], "new": a[i]} for i in range(i1, i2)]
+            elif op == "replace":
+                m = min(i2 - i1, j2 - j1)
+                rows += [{"op": "changed", "old": a[i1 + k], "new": b[j1 + k]} for k in range(m)]
+                rows += [{"op": "removed", "old": a[i], "new": ""} for i in range(i1 + m, i2)]
+                rows += [{"op": "added", "old": "", "new": b[j]} for j in range(j1 + m, j2)]
+            elif op == "delete":
+                rows += [{"op": "removed", "old": a[i], "new": ""} for i in range(i1, i2)]
+            else:
+                rows += [{"op": "added", "old": "", "new": b[j]} for j in range(j1, j2)]
+        return {"ok": True, "old": {k: prev.get(k) for k in ("rid", "created", "duration")}, "new": {"rid": rec["rid"], "created": rec.get("created")},
+                "rows": rows, "summary": {o: sum(r["op"] == o for r in rows) for o in ("same", "changed", "added", "removed")},
+                "previous": [{k: p.get(k) for k in ("rid", "created", "duration")} for p in rec.get("previous", [])]}
 
     @router.get("/file/{rid}/{name}")
     def rec_file(rid: str, name: str, sess=Depends(current)):
