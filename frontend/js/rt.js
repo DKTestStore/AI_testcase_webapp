@@ -69,7 +69,24 @@ window.filtered = function () {
   if (RT.sort === "score") f = [...f].sort((a, b) => rtQ(a).score - rtQ(b).score);
   return f;
 };
-window.markDirty = function () { RT.qc.clear(); return _rtMarkDirty(); };
+// Any content change to a test case (any field, steps, priority, type, AC mapping, regenerate) resets ITS
+// review status to Not reviewed. Reordering (ID renumbering) and status changes themselves don't count.
+const RT_FP = new Map();
+function rtFp(t) { return JSON.stringify([t.name, t.description, t.precondition, (t.steps || []).map((x) => [x.description, x.expected]), t.priority, t.type || "", [...(t.acs || [])].sort(), !!t.regenerated]); }
+function rtStatusSync() {
+  const live = new Set();
+  (S.cases || []).forEach((t) => {
+    live.add(t._k); const f = rtFp(t), o = RT_FP.get(t._k);
+    if (o !== undefined && o !== f && t.status !== "not") {
+      t.status = "not";
+      const b = typeof STATUS !== "undefined" && $(`.tc[data-k="${t._k}"] .stp`);
+      if (b) { b.className = `stp ${STATUS.not.cls}`; b.innerHTML = `${STATUS.not.label} <span class="caret">▾</span>`; const c = b.closest(".tc"); c.classList.remove("st-reviewed", "st-changes"); c.classList.add("st-not"); }
+    }
+    RT_FP.set(t._k, f);
+  });
+  [...RT_FP.keys()].forEach((k) => { if (!live.has(k)) RT_FP.delete(k); });
+}
+window.markDirty = function () { RT.qc.clear(); rtStatusSync(); return _rtMarkDirty(); };
 window.jumpTo = function (v) { if (RT.type || RT.weak) { RT.type = ""; RT.weak = false; } return _rtJumpTo(v); };
 
 window.card = function (t, i, total) {
@@ -78,7 +95,7 @@ window.card = function (t, i, total) {
   if (editing) { const was = RV.open.has(t._k); RV.open.delete(t._k); h = _rtCard(t, i, total); if (was) RV.open.add(t._k); h = h.replace(/<\/div>$/, ""); }
   else h = _rtCard(t, i, total);
   h = h.replace('<div class="tc ', `<div class="tc ${editing ? "rt-editing " : ""}${q.weak ? "rt-isweak " : ""}`);
-  const tags = `<span class="rt-tags"><button class="rt-edb ${editing ? "on" : ""}" data-rt="edit" title="${editing ? "Close edit mode" : "Edit test case (title, steps, expected results)"}">✎ ${editing ? "Close editor" : "Edit"}</button><button class="rt-sc ${rtQCls(q.score)}" data-rt="q" title="Quality score ${q.score}/100 — click for breakdown">${q.score}</button><button class="rt-type t-${typ}" data-rt="type" title="Test type: ${typ}${t.type ? "" : " (auto-detected)"} — click to change">${typ}</button>${q.weak ? '<span class="rt-weak" title="Quality score below 50">⚑ Weak</span>' : ""}<span class="rt-pc rt-p-${t.priority}" title="Priority: ${t.priority}"><i></i>${t.priority === "Medium" ? "Med" : t.priority}</span></span>`;
+  const tags = `<span class="rt-tags"><button class="rt-edb ${editing ? "on" : ""}" data-rt="edit" title="${editing ? "Close edit mode" : "Edit test case (title, steps, expected results)"}">✎ ${editing ? "Close editor" : "Edit"}</button><button class="rt-sc ${rtQCls(q.score)}" data-rt="q" title="Quality score ${q.score}/100 — click for breakdown">${q.score}</button><button class="rt-type t-${typ}" data-rt="type" title="Test type: ${typ}${t.type ? "" : " (auto-detected)"} — click to change">${typ}</button>${q.weak ? '<span class="rt-weak" title="Quality score below 50">⚑ Weak</span>' : ""}</span>`;
   if (h.includes('<div class="tc-desc" data-act="toggle">')) h = h.replace('<div class="tc-desc" data-act="toggle">', `<div class="tc-desc" data-act="toggle">${tags}`);
   else h = h.replace(/<\/div>(\s*)<div class="tc-meta">/, `<div class="rt-tagline">${tags}</div></div>$1<div class="tc-meta">`);
   if (editing) h += rtEditBody(t) + "</div>";
@@ -95,7 +112,7 @@ function rtEditBody(t) {
 }
 
 window.renderList = function () {
-  RT.qc.clear();
+  RT.qc.clear(); rtStatusSync(); if (typeof updateProgress === "function") updateProgress();
   _rtRenderList();
   const list = $("#rvList"); if (!list) return;
   if (!$("#rtAddBottom", list)) list.insertAdjacentHTML("beforeend", `<button class="rt-addb" id="rtAddBottom" title="Add a new test case at the end (opens in edit mode)">＋ Add test case</button>`);
@@ -327,24 +344,84 @@ function rtWD(x, y) {   // word-level diff -> [oldHtml, newHtml, unifiedHtml]
   }
   return [o, nw, u];
 }
-function rtCaseFields(t) {
-  const f = [["Title", t.name], ["Description", t.description], ["Precondition", t.precondition], ["Priority", t.priority], ["ACs", (t.acs || []).join(", ")]];
-  if (t.type) f.push(["Type", t.type]);
-  (t.steps || []).forEach((s, i) => { f.push([`Step ${i + 1}`, s.description], [`Step ${i + 1} expected`, s.expected]); });
-  return f;
+const rtHas = (t, k) => t && Object.prototype.hasOwnProperty.call(t, k) && t[k] !== undefined && t[k] !== null;
+const RT_STL = { not: "Not reviewed", reviewed: "Reviewed", changes: "Needs changes" };
+function rtStepCh(SA, SB) {   // LCS-align steps on exact match; unmatched in each gap -> changed / added / removed
+  const key = (x) => `${x.description || ""}\u0001${x.expected || ""}`, n = SA.length, m = SB.length;
+  const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = key(SA[i]) === key(SB[j]) ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0, ga = [], gb = [];
+  const flush = () => {
+    const k = Math.min(ga.length, gb.length);
+    for (let x = 0; x < k; x++) {
+      const [ia, ib] = [ga[x], gb[x]], o = SA[ia], nw = SB[ib], lab = ia === ib ? `Step ${ib + 1}` : `Step ${ia + 1}→${ib + 1}`;
+      if ((o.description || "") !== (nw.description || "")) out.push({ f: "step", label: `${lab} description`, o: o.description || "", n: nw.description || "" });
+      if ((o.expected || "") !== (nw.expected || "")) out.push({ f: "expected", label: `${lab} expected`, o: o.expected || "", n: nw.expected || "" });
+    }
+    ga.slice(k).forEach((ia) => out.push({ f: "stepdel", label: `Step ${ia + 1} removed`, o: `${SA[ia].description || ""} → ${SA[ia].expected || ""}`, n: "" }));
+    gb.slice(k).forEach((ib) => out.push({ f: "stepadd", label: `Step ${ib + 1} added`, o: "", n: `${SB[ib].description || ""} → ${SB[ib].expected || ""}` }));
+    ga = []; gb = [];
+  };
+  while (i < n || j < m) {
+    if (i < n && j < m && key(SA[i]) === key(SB[j])) { flush(); i++; j++; }
+    else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) gb.push(j++);
+    else ga.push(i++);
+  }
+  flush(); return out;
 }
+function rtCaseDiff(o, t) {   // every changed field, labelled; fields missing from an older snapshot are skipped
+  const ch = [], txt = [["name", "Test name"], ["description", "Test description"], ["precondition", "Precondition"]];
+  txt.forEach(([k, l]) => { if (rtHas(o, k) && rtHas(t, k) && String(o[k]) !== String(t[k])) ch.push({ f: k, label: l, o: String(o[k]), n: String(t[k]) }); });
+  if (rtHas(o, "steps") && rtHas(t, "steps")) ch.push(...rtStepCh(o.steps || [], t.steps || []));
+  if (rtHas(o, "regenerated") && rtHas(t, "regenerated") && !!o.regenerated !== !!t.regenerated) ch.push({ f: "regenerated", label: "Regenerated", o: o.regenerated ? "Yes" : "No", n: t.regenerated ? "Yes" : "No" });
+  if (rtHas(o, "priority") && rtHas(t, "priority") && o.priority !== t.priority) ch.push({ f: "priority", label: "Priority", o: o.priority, n: t.priority });
+  if (rtHas(o, "type") && rtHas(t, "type") && o.type !== t.type) ch.push({ f: "type", label: "Type", o: o.type, n: t.type });
+  if (rtHas(o, "acs") && rtHas(t, "acs")) {
+    const A = o.acs || [], B = t.acs || [], add = B.filter((x) => !A.includes(x)), rem = A.filter((x) => !B.includes(x));
+    if (add.length || rem.length) ch.push({ f: "acs", label: "AC mapping", o: A.join(", ") || "(none)", n: B.join(", ") || "(none)", add, rem });
+  }
+  if (rtHas(o, "status") && rtHas(t, "status") && o.status !== t.status) ch.push({ f: "status", label: "Review status", o: RT_STL[o.status] || o.status, n: RT_STL[t.status] || t.status });
+  return ch;
+}
+function rtVTok(t) { return new Set(`${t.name || ""} ${t.description || ""} ${(t.steps || []).map((s) => (s.description || "") + " " + (s.expected || "")).join(" ")}`.toLowerCase().match(/[a-z0-9]+/g) || []); }
+function rtVSim(a, b) { let i = 0; a.forEach((x) => { if (b.has(x)) i++; }); const u = a.size + b.size - i; return u ? i / u : 1; }
 function rtCompare(A, B) {
-  const ma = new Map(A.map((t) => [t.id, t])), mb = new Map(B.map((t) => [t.id, t])), rows = [], same = [];
-  B.forEach((t) => {
-    const o = ma.get(t.id);
-    if (!o) { rows.push({ id: t.id, k: "added", t }); return; }
-    const fo = new Map(rtCaseFields(o)), fn = new Map(rtCaseFields(t)), ch = [];
-    new Set([...fo.keys(), ...fn.keys()]).forEach((k) => { if ((fo.get(k) || "") !== (fn.get(k) || "")) ch.push([k, fo.get(k) || "", fn.get(k) || ""]); });
-    if (ch.length) rows.push({ id: t.id, k: "modified", ch }); else same.push(t.id);
+  // Pair test cases: 1) identical content (ignores ID renumbering) 2) same ID if similar 3) best content similarity.
+  const fp = (t) => JSON.stringify([t.name, t.description, t.precondition, (t.steps || []).map((s) => [s.description, s.expected])]);
+  const pa = new Map(), ua = new Set(A.map((_, i) => i)), ub = new Set(B.map((_, i) => i)), ta = A.map(rtVTok), tb = B.map(rtVTok);
+  const pair = (i, j) => { pa.set(j, i); ua.delete(i); ub.delete(j); };
+  B.forEach((t, j) => { const i = A.findIndex((o, x) => ua.has(x) && o.id === t.id && fp(o) === fp(t)); if (i >= 0) pair(i, j); });
+  B.forEach((t, j) => { if (!ub.has(j)) return; const i = A.findIndex((o, x) => ua.has(x) && fp(o) === fp(t)); if (i >= 0) pair(i, j); });
+  B.forEach((t, j) => {
+    if (!ub.has(j)) return; const i = A.findIndex((o, x) => ua.has(x) && o.id === t.id); if (i < 0) return;
+    // same ID: keep the pairing unless another unmatched old TC is a clearly better match (TC deleted above it)
+    const s = rtVSim(ta[i], tb[j]); let best = -1, bs = s;
+    ua.forEach((x) => { if (x !== i) { const v = rtVSim(ta[x], tb[j]); if (v > bs + 0.2 && v >= 0.5) { bs = v; best = x; } } });
+    pair(best >= 0 ? best : i, j);
   });
-  A.forEach((t) => { if (!mb.has(t.id)) rows.push({ id: t.id, k: "removed", t }); });
-  rows.sort((x, y) => x.id.localeCompare(y.id));
+  B.forEach((t, j) => { if (!ub.has(j)) return; let best = -1, bs = 0.5; ua.forEach((x) => { const v = rtVSim(ta[x], tb[j]); if (v >= bs) { bs = v; best = x; } }); if (best >= 0) pair(best, j); });
+  const rows = [], same = [];
+  B.forEach((t, j) => {
+    if (!pa.has(j)) { rows.push({ id: t.id, k: "added", t }); return; }
+    const o = A[pa.get(j)], ch = rtCaseDiff(o, t), was = o.id !== t.id ? o.id : "";
+    if (ch.length) rows.push({ id: t.id, was, k: "modified", ch }); else same.push(t.id + (was ? ` (was ${was})` : ""));
+  });
+  ua.forEach((i) => rows.push({ id: A[i].id, k: "removed", t: A[i] }));
+  rows.sort((x, y) => x.id.localeCompare(y.id) || (x.k === "removed" ? -1 : 1));
   return { rows, same };
+}
+function rtChHtml(c, side) {   // side: 0 = old column, 1 = new column, 2 = unified
+  const lab = `<b class="rt-fl">${esc(c.label)}:</b> `;
+  if (c.f === "acs") {
+    const A = c.o === "(none)" ? [] : c.o.split(", "), B = c.n === "(none)" ? [] : c.n.split(", ");
+    if (side === 0) return lab + (A.map((x) => (c.rem.includes(x) ? `<del>${esc(x)}</del>` : esc(x))).join(", ") || "(none)");
+    if (side === 1) return lab + (B.map((x) => (c.add.includes(x) ? `<ins>${esc(x)}</ins>` : esc(x))).join(", ") || "(none)");
+    return lab + [...c.add.map((x) => `<ins>+${esc(x)}</ins>`), ...c.rem.map((x) => `<del>−${esc(x)}</del>`)].join(" ") + ` <span class="sub" style="margin:0">(${esc(c.o)} → ${esc(c.n)})</span>`;
+  }
+  if (c.f === "stepadd") return side === 0 ? `<span class="sub" style="margin:0">${esc(c.label)}</span>` : lab + `<ins>${esc(c.n)}</ins>`;
+  if (c.f === "stepdel") return side === 1 ? `<span class="sub" style="margin:0">${esc(c.label)}</span>` : lab + `<del>${esc(c.o)}</del>`;
+  if (["priority", "type", "regenerated", "status"].includes(c.f)) return lab + (side === 0 ? `<del>${esc(c.o)}</del>` : side === 1 ? `<ins>${esc(c.n)}</ins>` : `<del>${esc(c.o)}</del> → <ins>${esc(c.n)}</ins>`);
+  return lab + rtWD(c.o, c.n)[side];
 }
 function rtVDiff(a, b) {
   const vs = RTV.data.versions, A = vs.find((x) => x.v === a), B = vs.find((x) => x.v === b); if (!A || !B) return;
@@ -352,8 +429,8 @@ function rtVDiff(a, b) {
   const sum = (t) => `${esc(t.name)} · ${(t.steps || []).length} steps${(t.acs || []).length ? " · " + esc(t.acs.join(", ")) : ""}`;
   const body = d.rows.map((r) => {
     if (r.k !== "modified") return `<tr class="rt-d ${r.k}"><td><b>${esc(r.id)}</b></td><td><span class="rt-dk ${r.k}">${r.k === "added" ? "Added" : "Removed"}</span></td>${sbs ? (r.k === "added" ? `<td></td><td>${sum(r.t)}</td>` : `<td><del>${sum(r.t)}</del></td><td></td>`) : `<td>${r.k === "added" ? sum(r.t) : `<del>${sum(r.t)}</del>`}</td>`}</tr>`;
-    const w = r.ch.map(([k, o, n]) => [k, rtWD(o, n)]);
-    return `<tr class="rt-d modified"><td><b>${esc(r.id)}</b></td><td><span class="rt-dk modified">Modified</span></td>${sbs ? `<td>${w.map(([k, x]) => `<div><b>${esc(k)}:</b> ${x[0]}</div>`).join("")}</td><td>${w.map(([k, x]) => `<div><b>${esc(k)}:</b> ${x[1]}</div>`).join("")}</td>` : `<td>${w.map(([k, x]) => `<div><b>${esc(k)}:</b> ${x[2]}</div>`).join("")}</td>`}</tr>`;
+    const fc = (sd) => r.ch.map((c) => `<div class="rt-fc" data-f="${c.f}">${rtChHtml(c, sd)}</div>`).join("");
+    return `<tr class="rt-d modified"><td><b>${esc(r.id)}</b>${r.was ? `<div class="sub" style="margin:0">was ${esc(r.was)}</div>` : ""}</td><td><span class="rt-dk modified">Modified</span><div class="sub" style="margin:2px 0 0">${r.ch.length} field change${r.ch.length === 1 ? "" : "s"}</div></td>${sbs ? `<td>${fc(0)}</td><td>${fc(1)}</td>` : `<td>${fc(2)}</td>`}</tr>`;
   }).join("") + (d.same.length ? `<tr class="rt-d same"><td class="sub">${esc(d.same.join(", "))}</td><td><span class="rt-dk same">Unchanged</span></td><td ${sbs ? 'colspan="2"' : ""} class="sub">${d.same.length} test case${d.same.length === 1 ? "" : "s"} unchanged</td></tr>` : "");
   $("#rtVDiff").innerHTML = `<div class="rt-vdh"><b>Diff: v${a} → v${b}</b><span class="rt-dk added">+${cnt("added")} added</span><span class="rt-dk removed">−${cnt("removed")} removed</span><span class="rt-dk modified">~${cnt("modified")} modified</span><span style="flex:1"></span>
     <div class="rt-tg"><button data-dm="unified" class="${sbs ? "" : "a"}">Unified</button><button data-dm="side" class="${sbs ? "a" : ""}">Side by side</button></div></div>
