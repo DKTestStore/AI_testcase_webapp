@@ -4,7 +4,7 @@ An AI-assisted manual test case generator. It turns a **Jira story** (or pasted 
 structured test cases with **Google Gemini** (default model `gemini-3.5-flash`), lets you review and edit them,
 exports them to **Excel**, and uploads them to **qTest Manager** with requirement traceability (RTM).
 
-- **Backend:** FastAPI (`backend/`), wrapping the existing `ai_test_generator` package (Jira, Gemini/Codex/Ollama, qTest helpers).
+- **Backend:** FastAPI (`backend/`), wrapping the existing `ai_test_generator` package (Jira, one LiteLLM client for Gemini/Codex/Ollama/Hugging Face, qTest helpers).
 - **Frontend:** static HTML/CSS/vanilla JS (`frontend/`) served by FastAPI, with no build step.
 - **Integrations:** Gemini (generation + optional AI reviewer), Jira (story fetch), qTest (module, test cases, requirement links).
 
@@ -13,7 +13,7 @@ exports them to **Excel**, and uploads them to **qTest Manager** with requiremen
 ## 1. Setup
 
 **Requirements:** Python **3.10+** (the existing `jira_worker.py` uses `str | None` syntax), pip. Dependencies are in `requirements.txt`
-(FastAPI, uvicorn, python-dotenv, requests, google-genai, openai, ollama, jira, fastmcp, pandas, openpyxl).
+(FastAPI, uvicorn, python-dotenv, requests, litellm, jira, fastmcp, pandas, openpyxl).
 
 ```bash
 python -m venv .venv
@@ -37,8 +37,9 @@ Open **http://localhost:8000** and click **Welcome →**. No username or passwor
 | Feature | Keys |
 |---|---|
 | Generate with Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` (e.g. `gemini-3.5-flash`) |
-| Generate with Codex (optional) | `OPENAI_API_KEY` |
+| Generate with Codex (optional) | `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-5-mini`) |
 | Generate with Ollama (optional) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (default `http://localhost:11434`) |
+| Any other LiteLLM model | On Generate, choose **Other model id** and paste an id such as `huggingface/org/model`. Hugging Face also needs `HUGGINGFACE_API_KEY`. |
 | Jira story input | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
 | qTest upload | `QTEST_BASE_URL` (`https://<site>.qtestnet.com/api/v3/projects`), `QTEST_TOKEN` (`Bearer …`), `QTEST_PROJECT_ID`; optional `QTEST_REQUIREMENT_ID`, `QTEST_PARENT_MODULE_ID` |
 | Original CLI only | `ENABLE_JIRA_REQURIMENT`, `STORY_ID` |
