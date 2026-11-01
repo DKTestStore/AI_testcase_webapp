@@ -143,65 +143,41 @@ def fetch_jira(story_id: str) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Generation
+# Generation — one client (ai_test_generator.ai_helpers.llm). The model argument
+# is "gemini", "codex", "ollama", or any LiteLLM id such as "huggingface/org/model".
 # --------------------------------------------------------------------------- #
-def _gemini_module():
+def _run_model(model: str, system: str, user: str, temperature: float, json_mode: bool = False) -> Dict[str, Any]:
     reload_env()
-    if not env("GEMINI_API_KEY"):
-        raise ServiceError("GEMINI_API_KEY is not set. Add it in Settings.")
-    if not env("GEMINI_MODEL"):
-        raise ServiceError("GEMINI_MODEL is not set (e.g. gemini-2.5-pro). Add it in Settings.")
+    from ai_test_generator.ai_helpers.llm import (
+        DAILY_REQUEST_LIMIT, LLMError, bump_gemini_quota, complete, gemini_blocked, is_gemini,
+    )
+    model = (model or "gemini").strip()
+    if is_gemini(model) and gemini_blocked():
+        raise ServiceError(f"Gemini daily request limit ({DAILY_REQUEST_LIMIT}) reached.", 429)
     try:
-        g = importlib.import_module("ai_test_generator.ai_helpers.test_generator_gemini")
-    except Exception as ex:
-        raise ServiceError(f"Could not initialise Gemini module: {ex}", 500)
-    # The module builds its client/model at import time; refresh them if Settings changed.
-    key = env("GEMINI_API_KEY")
-    if getattr(g, "_webapp_key", None) != key:
-        g.client = g.genai.Client(api_key=key)
-        g._webapp_key = key
-    g.gemini_model = (env("GEMINI_MODEL") or "").strip().strip("\"'")
-    return g
-
-
-def _codex_module():
-    reload_env()
-    if not env("OPENAI_API_KEY"):
-        raise ServiceError("OPENAI_API_KEY is not set. Add it in Settings to use Codex.")
-    try:
-        c = importlib.import_module("ai_test_generator.ai_helpers.test_generator_codex")
-    except Exception as ex:
-        raise ServiceError(f"Could not initialise Codex/OpenAI module: {ex}", 500)
-    key = env("OPENAI_API_KEY")
-    if getattr(c, "_webapp_key", None) != key:
-        c.client = c.OpenAI(api_key=key)
-        c._webapp_key = key
-    return c
-
-
-def _ollama_chat(system_prompt: str, user_content: str) -> str:
-    """test_generator_ollama.generate_test_cases() uses a hard-coded prompt and only
-    prints the result (returns None), so call ollama.chat the same way here but with
-    the selected prompt, and return the text."""
-    reload_env()
-    try:
-        import ollama
-    except Exception as ex:
-        raise ServiceError(f"ollama package not installed: {ex}", 500)
-    model = env("OLLAMA_MODEL", "gemma3:4b")
-    host = env("OLLAMA_HOST")
-    try:
-        client = ollama.Client(host=host) if host else ollama
-        resp = client.chat(model=model, messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ])
-    except Exception as ex:
-        raise ServiceError(f"Ollama call failed (is `ollama serve` running and model '{model}' pulled?): {ex}", 502)
-    try:
-        return resp["message"]["content"]
-    except Exception:
-        return getattr(getattr(resp, "message", None), "content", "") or ""
+        result = complete(model, system, user, temperature=temperature, json_mode=json_mode)
+    except LLMError as ex:
+        raise ServiceError(str(ex), 502)
+    if not (result.text or "").strip():
+        raise ServiceError(f"{result.model_id} returned an empty response.", 502)
+    if is_gemini(model):
+        try:
+            bump_gemini_quota(result.total_tokens)
+        except Exception:
+            pass
+    short = model.lower()
+    if short not in ("gemini", "codex", "openai", "ollama") and "/" in model:
+        short = model.split("/", 1)[0]
+    return {
+        "text": result.text,
+        "usage": {
+            "model": short,
+            "model_name": result.model_id,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "total_tokens": result.total_tokens,
+        },
+    }
 
 
 def read_gemini_usage() -> Dict[str, Any]:
@@ -219,12 +195,6 @@ def read_gemini_usage() -> Dict[str, Any]:
             "daily_request_limit": 400, "daily_token_limit": 5000000}
 
 
-def _today_tokens() -> int:
-    u = read_gemini_usage()
-    t = (u.get("today") or {}) if u.get("available") else {}
-    return int(t.get("tokens_used") or t.get("tokens") or 0)
-
-
 TYPE_HINT = ("\n\nAdditionally, directly below each 'Test Case Name:' line add one line "
              "'Test Case Type: Positive' or 'Test Case Type: Negative' or 'Test Case Type: Edge' "
              "classifying that test case. Keep every other part of the required output template unchanged.")
@@ -237,70 +207,12 @@ def generate(model: str, feature_text: str, prompt: str, tag: str = "") -> Dict[
         return _mock_generate(feature_text, tag)
     if os.environ.get("ATG_TYPE_HINT", "1") != "0":
         prompt = (prompt or "") + TYPE_HINT   # additive: ask for Positive/Negative/Edge (parsing falls back to a heuristic)
-    model = (model or "gemini").lower()
-    usage: Dict[str, Any] = {"model": model}
-    if model == "gemini":
-        g = _gemini_module()
-        _, today = g.get_today_quota()
-        if today.get("requests_used", 0) >= g.DAILY_REQUEST_LIMIT:
-            raise ServiceError(f"Gemini daily request limit ({g.DAILY_REQUEST_LIMIT}) reached.", 429)
-        before = _today_tokens()
-        # Bug 03: capture usage_metadata from the response the helper receives
-        captured: Dict[str, Any] = {}
-        models = g.client.models
-        orig = models.generate_content
-
-        def _capture(*a, **k):
-            r = orig(*a, **k)
-            captured["um"] = getattr(r, "usage_metadata", None)
-            return r
-        models.generate_content = _capture
-        try:
-            text = g.generate_test_cases(feature_text, prompt)
-        finally:
-            try:
-                del models.generate_content
-            except AttributeError:
-                models.generate_content = orig
-        if not text:
-            # The original function swallows exceptions; repeat the same call here to surface the real error.
-            model_id = (env("GEMINI_MODEL") or "").strip().strip("\"'")
-            try:
-                resp = g.client.models.generate_content(
-                    model=model_id, contents=feature_text,
-                    config=g.types.GenerateContentConfig(system_instruction=prompt, temperature=0.2))
-                text = getattr(resp, "text", None)
-                captured["um"] = getattr(resp, "usage_metadata", None)
-            except Exception as ex:
-                print(f"Gemini API error: {type(ex).__name__}: {ex}")
-                raise ServiceError(f"Gemini API error (model '{model_id}'): {type(ex).__name__}: {ex}", 502)
-            if not text:
-                fb = getattr(resp, "prompt_feedback", None)
-                raise ServiceError(f"Gemini returned an empty response (possibly blocked). Feedback: {fb}", 502)
-        um = captured.get("um")
-        usage["input_tokens"] = getattr(um, "prompt_token_count", None) or 0
-        usage["output_tokens"] = getattr(um, "candidates_token_count", None) or 0
-        usage["total_tokens"] = (getattr(um, "total_token_count", None) or 0) or max(_today_tokens() - before, 0)
-        usage["model_name"] = (env("GEMINI_MODEL") or "").strip().strip("\"'")
-    elif model == "codex":
-        c = _codex_module()
-        text = c.generate_test_cases(feature_text, prompt)
-        if not text:
-            raise ServiceError("Codex/OpenAI returned no response (see server console for the error).", 502)
-        usage["model_name"] = getattr(c, "MODEL", "")
-    elif model == "ollama":
-        text = _ollama_chat(prompt, feature_text)
-        if not text:
-            raise ServiceError("Ollama returned an empty response.", 502)
-        usage["model_name"] = env("OLLAMA_MODEL", "gemma3:4b")
-    else:
-        raise ServiceError(f"Unknown model '{model}'.")
-    return {"markdown": text, "usage": usage}
+    out = _run_model(model, prompt, feature_text, temperature=0.2)
+    return {"markdown": out["text"], "usage": out["usage"]}
 
 
 def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
-    """AI Reviewer. Gemini's review function is commented out in the original code, so
-    for Gemini this mirrors that commented implementation using the module's client."""
+    """AI Reviewer. Same client as generate(); only the prompt and temperature change."""
     if not (markdown or "").strip():
         raise ServiceError("No test cases to review.")
     reviewer_prompt = read_reviewer_prompt()
@@ -308,42 +220,8 @@ def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
                f"Draft Test Cases To Review:\n{markdown}\n\n"
                "Review the draft against the acceptance criteria, fix gaps, duplicates and formatting, "
                "and return the COMPLETE corrected set using the Required Output Template.")
-    model = (model or "gemini").lower()
-    usage: Dict[str, Any] = {"model": model}
-    if model == "gemini":
-        g = _gemini_module()
-        try:
-            resp = g.client.models.generate_content(
-                model=g.gemini_model, contents=content,
-                config=g.types.GenerateContentConfig(system_instruction=reviewer_prompt, temperature=0.0))
-        except Exception as ex:
-            raise ServiceError(f"Gemini reviewer error: {ex}", 502)
-        um = getattr(resp, "usage_metadata", None)
-        total = getattr(um, "total_token_count", 0) or 0
-        usage.update({"input_tokens": getattr(um, "prompt_token_count", 0) or 0,
-                      "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
-                      "total_tokens": total})
-        # keep the shared quota tracker accurate
-        try:
-            data, today = g.get_today_quota()
-            today["requests_used"] = today.get("requests_used", 0) + 1
-            today["requests_left"] = g.DAILY_REQUEST_LIMIT - today["requests_used"]
-            today["tokens_used"] = today.get("tokens_used", 0) + total
-            today["tokens_left"] = g.DAILY_TOKEN_LIMIT - today["tokens_used"]
-            g.save_quota(data)
-        except Exception:
-            pass
-        text = getattr(resp, "text", "") or ""
-    elif model == "codex":
-        c = _codex_module()
-        text = c.review_test_cases(content, reviewer_prompt) or ""
-    elif model == "ollama":
-        text = _ollama_chat(reviewer_prompt, content)
-    else:
-        raise ServiceError(f"Unknown model '{model}'.")
-    if not text.strip():
-        raise ServiceError("Reviewer returned no response.", 502)
-    return {"markdown": text, "usage": usage}
+    out = _run_model(model, reviewer_prompt, content, temperature=0.0)
+    return {"markdown": out["text"], "usage": out["usage"]}
 
 
 # --------------------------------------------------------------------------- #
@@ -402,41 +280,22 @@ def _mock_regen(tc: Dict[str, Any], instruction: str) -> str:
 
 
 def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], tc: Dict[str, Any],
-                   instruction: str) -> Dict[str, Any]:
+                   instruction: str, model: str = "gemini") -> Dict[str, Any]:
     ac_txt = "\n".join(f"- {a.get('id')}: {a.get('title', '')}" for a in acs) or "(none linked)"
     cur = {k: tc.get(k) for k in ("name", "description", "precondition", "priority")}
     cur["steps"] = [{"description": s.get("description", ""), "expected": s.get("expected", "")} for s in tc.get("steps") or []]
     content = (f"Story: {story_id or '(none)'}\n\nRequirements / story text (truncated):\n{(feature_text or '')[:12000]}\n\n"
                f"Linked acceptance criteria:\n{ac_txt}\n\nCurrent test case (JSON):\n{json.dumps(cur, ensure_ascii=False)}\n\n"
                f"Instruction: {instruction or 'Improve this test case: make steps concrete and complete.'}")
-    usage: Dict[str, Any] = {"model": "gemini"}
+    usage: Dict[str, Any] = {"model": (model or "gemini")}
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
         text = _mock_regen(tc, instruction or "")
         usage.update({"mock": True, "model_name": "mock", "input_tokens": len(content) // 4 + 400,
                       "output_tokens": len(text) // 4 + 150, "total_tokens": len(content) // 4 + len(text) // 4 + 550})
     else:
-        g = _gemini_module()
-        try:
-            resp = g.client.models.generate_content(
-                model=g.gemini_model, contents=content,
-                config=g.types.GenerateContentConfig(system_instruction=REGEN_SYSTEM, temperature=0.4,
-                                                     response_mime_type="application/json"))
-        except Exception as ex:
-            raise ServiceError(f"Gemini regenerate error: {ex}", 502)
-        um = getattr(resp, "usage_metadata", None)
-        total = getattr(um, "total_token_count", 0) or 0
-        usage.update({"input_tokens": getattr(um, "prompt_token_count", 0) or 0,
-                      "output_tokens": getattr(um, "candidates_token_count", 0) or 0, "total_tokens": total})
-        try:
-            data, today = g.get_today_quota()
-            today["requests_used"] = today.get("requests_used", 0) + 1
-            today["requests_left"] = g.DAILY_REQUEST_LIMIT - today["requests_used"]
-            today["tokens_used"] = today.get("tokens_used", 0) + total
-            today["tokens_left"] = g.DAILY_TOKEN_LIMIT - today["tokens_used"]
-            g.save_quota(data)
-        except Exception:
-            pass
-        text = getattr(resp, "text", "") or ""
+        out = _run_model(model or "gemini", REGEN_SYSTEM, content, temperature=0.4, json_mode=True)
+        text = out["text"]
+        usage = out["usage"]
     return {"test_case": _parse_regen(text), "usage": usage}
 
 

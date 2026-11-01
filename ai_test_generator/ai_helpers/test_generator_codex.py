@@ -1,81 +1,50 @@
+"""OpenAI / Codex entry point. Switching the model is OPENAI_MODEL, not a new file."""
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-MODEL = "gpt-5-mini"
+from .llm import LLMError, complete
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+
 
 def generate_test_cases(acceptance_criteria, test_case_generation_prompt, html_source=""):
-
-    try:
-        user_input = f"""
+    user_input = f"""
         Acceptance Criteria:
         {acceptance_criteria}
         HTML Page Source:
         {html_source}
         Please generate test cases based on the provided acceptance criteria and HTML page source.
         """
-        print("Generating test cases using OpenAI...\n")
-
-        response = client.responses.create(
-            model=MODEL,
-            instructions=test_case_generation_prompt,
-            input=user_input,
-            temperature=0.2
-        )
-
-        if not response:
-            print("ERROR: No response received from OpenAI.")
-            return None
-
-        usage = response.usage
-
-        print("\n========== TOKEN USAGE ==========")
-        print(f"Input Tokens  : {usage.input_tokens}")
-        print(f"Output Tokens : {usage.output_tokens}")
-        print(f"Total Tokens  : {usage.total_tokens}")
-        print("=================================\n")
-
-        return response.output_text
-
-    except Exception as ex:
+    print("Generating test cases using OpenAI...\n")
+    try:
+        result = complete("codex", test_case_generation_prompt, user_input, temperature=0.2)
+    except LLMError as ex:
         print("\n========== ERROR ==========")
         print("Failed to generate test cases.")
-        print(f"Error: {str(ex)}")
+        print(f"Error: {ex}")
         print("===========================\n")
         return None
+    _print_usage("TOKEN USAGE", result)
+    return result.text
 
 
 def review_test_cases(test_cases, reviewer_prompt):
+    print("Reviewer Agent validating test cases...\n")
     try:
-        print("Reviewer Agent validating test cases...\n")
-        response = client.responses.create(
-            model=MODEL,
-            instructions=reviewer_prompt,
-            input=test_cases,
-            temperature=0.0
-        )
-
-        if not response:
-            print("ERROR: No response received from Reviewer Agent.")
-            return None
-
-        usage = response.usage
-
-        print("\n========== REVIEW TOKEN USAGE ==========")
-        print(f"Input Tokens  : {usage.input_tokens}")
-        print(f"Output Tokens : {usage.output_tokens}")
-        print(f"Total Tokens  : {usage.total_tokens}")
-        print("========================================\n")
-        return response.output_text
-
-    except Exception as ex:
+        result = complete("codex", reviewer_prompt, test_cases, temperature=0.0)
+    except LLMError as ex:
         print("\n========== REVIEW ERROR ==========")
         print("Failed to review test cases.")
-        print(f"Error: {str(ex)}")
+        print(f"Error: {ex}")
         print("==================================\n")
         return None
+    _print_usage("REVIEW TOKEN USAGE", result)
+    return result.text
+
+
+def _print_usage(title, result):
+    print(f"\n========== {title} ==========")
+    print(f"Model         : {result.model_id}")
+    print(f"Input Tokens  : {result.input_tokens}")
+    print(f"Output Tokens : {result.output_tokens}")
+    print(f"Total Tokens  : {result.total_tokens}")
+    print("=================================\n")

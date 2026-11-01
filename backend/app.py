@@ -257,10 +257,16 @@ def usage(sess=Depends(current)):
     return {"ok": True, "usage": services.read_gemini_usage(), "last": _run(sess).get("last_usage")}
 
 
+def _model_name(raw) -> str:
+    """Keep gemini/codex/ollama lowercase. Leave provider/model ids untouched (they are case-sensitive)."""
+    model = str(raw or "gemini").strip()
+    return model.lower() if model.lower() in ("gemini", "codex", "openai", "ollama") else model
+
+
 @app.post("/api/generate")
 def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run = _run(sess)
-    model = str(data.get("model", "gemini")).lower()
+    model = _model_name(data.get("model", "gemini"))
     mode = "custom" if data.get("prompt_mode") == "custom" else "default"
     custom = str(data.get("custom_prompt", ""))[:50_000]
     run_reviewer = bool(data.get("run_reviewer"))
@@ -345,13 +351,14 @@ def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     instruction = str(data.get("instruction") or "").strip()[:1000]
     ac_list = run.get("ac_list") or _ac_list(run)
     linked = [a for a in ac_list if a["id"] in tc["acs"]]
-    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction)
+    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction,
+                                 model=run.get("model", "gemini"))
     prop = res["test_case"]
     if data.get("keep_title_priority"):
         prop["name"], prop["priority"] = tc["name"], tc["priority"]
     prop["priority"] = prop["priority"] or tc["priority"]
     prop.update({"acs": tc["acs"], "status": "not", "regenerated": True})
-    log.info("regenerate %s (%s)", tc.get("id"), "mock" if res["usage"].get("mock") else "gemini")
+    log.info("regenerate %s (%s)", tc.get("id"), res["usage"].get("model_name") or res["usage"].get("model"))
     _tok(sess, "Regenerate", res["usage"], run)
     return {"ok": True, "proposal": prop, "usage": res["usage"]}
 
@@ -1006,7 +1013,7 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
     if it["gen"]["status"] == "generating":
         raise ServiceError("Already generating.")
     run = it["run"]
-    model = str(data.get("model", "gemini")).lower()
+    model = _model_name(data.get("model", "gemini"))
     mode = "custom" if data.get("prompt_mode") == "custom" else "default"
     custom = str(data.get("custom_prompt", ""))[:50_000]
     run.update({"model": model, "prompt_mode": mode, "custom_prompt": custom})

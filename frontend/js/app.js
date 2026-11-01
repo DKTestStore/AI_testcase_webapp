@@ -241,7 +241,9 @@ async function viewGenerate(v) {
       <div><label style="margin-top:0">Model</label><select id="model">
         <option value="gemini" ${r.model === "gemini" ? "selected" : ""}>Gemini</option>
         <option value="codex" ${r.model === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
-        <option value="ollama" ${r.model === "ollama" ? "selected" : ""}>Ollama (local)</option></select></div></div>
+        <option value="ollama" ${r.model === "ollama" ? "selected" : ""}>Ollama (local)</option>
+        <option value="custom" ${!["gemini", "codex", "ollama"].includes(r.model) ? "selected" : ""}>Other model id</option></select>
+        <input id="modelId" placeholder="huggingface/org/model" value="${esc(!["gemini", "codex", "ollama"].includes(r.model) ? r.model : "")}" style="margin-top:6px;display:${["gemini", "codex", "ollama"].includes(r.model) ? "none" : "block"};width:100%"></div></div>
     <div id="promptArea"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid #edf0f5;gap:10px;flex-wrap:wrap">
       <label class="sw" style="margin:0;text-transform:none;font-size:13px;color:#1e2433;font-weight:400"><input type="checkbox" id="runRev" ${r.run_reviewer ? "checked" : ""}><span class="t"></span>Also run AI Reviewer after generation</label>
@@ -265,7 +267,12 @@ async function viewGenerate(v) {
     }
     viewGenerate(v);
   }));
-  $("#model").onchange = (e) => (S.run.model = e.target.value);
+  $("#model").onchange = (e) => {
+    const custom = e.target.value === "custom";
+    $("#modelId").style.display = custom ? "block" : "none";
+    S.run.model = custom ? ($("#modelId").value.trim() || "custom") : e.target.value;
+  };
+  $("#modelId").oninput = (e) => { if ($("#model").value === "custom") S.run.model = e.target.value.trim(); };
   $("#runRev").onchange = (e) => (S.run.run_reviewer = e.target.checked);
   renderPromptArea(custom, src);
   loadTokens();
@@ -280,7 +287,9 @@ async function viewGenerate(v) {
     st.innerHTML = `<div style="margin-top:12px"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0" id="elapsed">Generating… 0s</div></div>`;
     const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
     try {
-      const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
+      const picked = $("#model").value === "custom" ? ($("#modelId").value || "").trim() : $("#model").value;
+      if (!picked || picked === "custom") throw new Error("Enter a model id, for example huggingface/org/model.");
+      const j = await api("/api/generate", { method: "POST", body: { model: picked, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
       S.localDirty = false; S.cases = []; if (typeof RV !== "undefined") { RV.open.clear(); RV.sel.clear(); RV.page = 0; }
       let msg = `<div class="note">✅ Generated <b>${j.count}</b> test cases in ${Math.round((Date.now() - t0) / 1000)}s.${j.template_appended ? " (Required output template was appended to your custom prompt.)" : ""}</div>`;
       if (j.review) msg += j.review.error ? `<div class="warn">AI Reviewer failed: ${esc(j.review.error)}</div>` : `<div class="note">🤖 AI Reviewer produced ${j.review.test_cases.length} test cases — compare and apply them on the Review step.</div>`;
