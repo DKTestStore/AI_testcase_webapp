@@ -312,6 +312,7 @@ def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
     usage: Dict[str, Any] = {"model": model}
     if model == "gemini":
         g = _gemini_module()
+        usage["model_name"] = g.gemini_model
         try:
             resp = g.client.models.generate_content(
                 model=g.gemini_model, contents=content,
@@ -336,8 +337,10 @@ def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
         text = getattr(resp, "text", "") or ""
     elif model == "codex":
         c = _codex_module()
+        usage["model_name"] = getattr(c, "MODEL", "")
         text = c.review_test_cases(content, reviewer_prompt) or ""
     elif model == "ollama":
+        usage["model_name"] = env("OLLAMA_MODEL", "gemma3:4b")
         text = _ollama_chat(reviewer_prompt, content)
     else:
         raise ServiceError(f"Unknown model '{model}'.")
@@ -416,6 +419,7 @@ def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], 
                       "output_tokens": len(text) // 4 + 150, "total_tokens": len(content) // 4 + len(text) // 4 + 550})
     else:
         g = _gemini_module()
+        usage["model_name"] = g.gemini_model
         try:
             resp = g.client.models.generate_content(
                 model=g.gemini_model, contents=content,
