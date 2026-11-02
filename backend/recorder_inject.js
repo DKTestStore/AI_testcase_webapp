@@ -2,7 +2,9 @@
    Captures user actions and posts them to the backend through the exposed binding window.__atgRec.
    Sensitive values (password / OTP / card) are masked here, before they leave the page. */
 (() => {
-  if (window.__atgRecInit || window.top !== window) return; window.__atgRecInit = true;
+  if (window.__atgRecInit) return; window.__atgRecInit = true;
+  // H2: also runs inside iframes (Playwright init scripts reach every frame, same- and cross-origin)
+  const TOP = (() => { try { return window.top === window; } catch (e) { return false; } })();
   const CFG = __ATG_CFG__;
   const ST = { paused: false, t0: Date.now(), n: 0 };
   const send = (o) => { try { return window.__atgRec ? window.__atgRec(Object.assign({ url: location.href, title: document.title, ts: Date.now() }, o)) : null; } catch (e) { return null; } };
@@ -42,6 +44,14 @@
     }
     return parts.join(" > ");
   }
+  // H2: CSS selector of the <iframe> this document lives in (frameElement for same-origin, name / src for cross-origin)
+  const FRAME = TOP ? "" : (() => {
+    try { const f = window.frameElement; if (f) { if (okId(f.id)) return "#" + f.id; if (f.getAttribute("name")) return `iframe[name="${f.getAttribute("name")}"]`; if (f.getAttribute("src")) return `iframe[src="${f.getAttribute("src")}"]`; if (f.getAttribute("title")) return `iframe[title="${f.getAttribute("title")}"]`; } } catch (e) {}
+    if (window.name && /^[\w -]+$/.test(window.name)) return `iframe[name="${window.name}"]`;
+    // cross-origin iframes always use an absolute src -> host + path identifies it (a relative same-origin src never contains the host)
+    const hp = (location.host || "") + (location.pathname || "");
+    return hp ? `iframe[src*="${hp}"]` : "iframe";
+  })();
   // #1 smart element names: label -> aria-label -> placeholder -> visible text -> title -> name -> id
   function describe(el) {
     const tag = el.tagName.toLowerCase(); const isField = /^(input|textarea|select)$/.test(tag);
@@ -52,7 +62,7 @@
     const cands = [["label", label], ["aria-label", aria], ["placeholder", ph], ["text", text], ["title", title], ["name", el.getAttribute("name")], ["id", el.id]];
     const hit = cands.find((c) => c[1]) || ["tag", tag];
     return { name: String(hit[1]).slice(0, 60), source: hit[0], role: roleOf(el), label, aria, placeholder: ph, text, title,
-      form: !!(el.closest && el.closest("form")), testid: el.getAttribute("data-testid") || "", id: okId(el.id) ? el.id : "", nameAttr: el.getAttribute("name") || "", css: cssPath(el), tag, type: el.type || "" };
+      form: !!(el.closest && el.closest("form")), testid: el.getAttribute("data-testid") || "", id: okId(el.id) ? el.id : "", nameAttr: el.getAttribute("name") || "", css: cssPath(el), tag, type: el.type || "", frame: FRAME };
   }
   // #12 auto-masking
   function sensitive(el) {
@@ -81,7 +91,15 @@
   document.addEventListener("click", (e) => {
     if (ST.paused || !e.isTrusted) return;
     const raw = e.target; if (!raw || raw.nodeType !== 1 || inTB(raw)) return;
-    const el = raw.closest(CLICKABLE) || raw;
+    let el = raw.closest(CLICKABLE);
+    if (!el) {   // M4: clicks on page background / big containers are not test steps
+      const tg = raw.tagName;
+      const bigText = txt(raw.innerText || "").length > 80;
+      let pointer = false; try { pointer = getComputedStyle(raw).cursor === "pointer"; } catch (e) {}
+      if (tg === "HTML" || tg === "BODY" || raw.id === "root" || raw.id === "app" || raw.id === "__next") return;
+      if (!pointer && (bigText || raw.querySelector(CLICKABLE) || !txt(raw.innerText || ""))) return;
+      el = raw;
+    }
     const ig = ignoredBy(el);
     if (ig) { send({ type: "ignored", by: ig, el: describe(el) }); return; }
     if (el.tagName === "SELECT" || isText(el)) return;                      // focus only; typing/select recorded separately
@@ -104,19 +122,37 @@
     keys.set(el, 0);
   }, true);
   // scroll (only when "ignore hover/scroll" is off)
-  if (!CFG.ignoreScroll) { let t; window.addEventListener("scroll", () => { clearTimeout(t); t = setTimeout(() => !ST.paused && send({ type: "scroll", y: Math.round(window.scrollY) }), 900); }, true); }
+  if (!CFG.ignoreScroll && TOP) { let t; window.addEventListener("scroll", () => { clearTimeout(t); t = setTimeout(() => !ST.paused && send({ type: "scroll", y: Math.round(window.scrollY) }), 900); }, true); }
   // #3 visible success / error messages -> checkpoint suggestion
-  const MSG = "[role=alert],[role=status],.toast,.alert,.success,.error,.flash,.notice,.notification,.message,.msg";
+  const MSG = "[role=alert],[role=status],[aria-live=assertive],[aria-live=polite]:not(:empty),.toast,.alert,.success,.error,.flash,.notice,.notification,.message,.msg,"
+    + ".invalid-feedback,.error-message,.errorMessage,.field-error,.validation-message,.validation-summary-errors,.help-block.error,.form-error,.text-danger,.text-error,.Toastify__toast,.MuiAlert-root,.ant-message-notice,.ant-alert,.v-alert,.snackbar";
+  // M1: text patterns for messages styled only with utility classes (e.g. Tailwind "text-red-600")
+  const MSG_TXT = /\b(invalid|incorrect|error|failed|failure|denied|not found|required|wrong|unable|expired|locked|success|successful(ly)?|saved|created|updated|deleted|welcome)\b/i;
+  const ERR_TXT = /\b(invalid|incorrect|error|failed|failure|denied|not found|required|wrong|unable|expired|locked)\b/i;
+  const ERR_CLS = /error|danger|fail|alert|invalid|red-|rose-|destructive|negative|warn/i;
   const seen = {};
-  function scanMsgs(root) {
-    if (ST.paused) return;
-    const list = []; if (root.matches && root.matches(MSG)) list.push(root); if (root.querySelectorAll) list.push(...root.querySelectorAll(MSG));
+  function ownText(el) { let t = ""; for (const n of el.childNodes) if (n.nodeType === 3) t += n.textContent; return txt(t); }
+  function textMsgs(root) {   // only for nodes that APPEAR / change after load -> no noise from static page text
+    const out = []; const cand = [root, ...(root.querySelectorAll ? root.querySelectorAll("div,p,span,li,small,strong") : [])].slice(0, 60);
+    for (const el of cand) {
+      if (!el.tagName || /^(BUTTON|A|LABEL|INPUT|TEXTAREA|SELECT|OPTION|H1|H2|SCRIPT|STYLE)$/.test(el.tagName)) continue;
+      const t = txt(el.innerText); if (!t || t.length > 160 || !MSG_TXT.test(t)) continue;
+      if (!ownText(el) && el.children.length > 2) continue;
+      out.push(el);
+    }
+    return out.slice(0, 3);
+  }
+  function scanMsgs(root, dyn) {
+    if (ST.paused || !root) return;
+    const list = []; try { if (root.matches && root.matches(MSG)) list.push(root); if (root.querySelectorAll) list.push(...root.querySelectorAll(MSG)); } catch (e) {}
+    if (dyn) for (const x of textMsgs(root)) if (!list.some((m) => m === x || m.contains(x) || x.contains(m))) list.push(x);
     for (const m of list) {
       if (inTB(m) || ignoredBy(m)) continue;
       const t = txt(m.innerText); if (!t || t.length > 160 || !m.getClientRects().length) continue;
       if (seen[t] && Date.now() - seen[t] < 5000) continue; seen[t] = Date.now();
-      const cls = (m.className || "") + " " + (m.getAttribute("role") || "");
-      send({ type: "msg", text: t, level: /error|danger|fail|alert/i.test(cls) ? "error" : "success", el: describe(m) });
+      if (m.closest && m.closest("label,button,a,h1,h2")) continue;
+      const cls = (typeof m.className === "string" ? m.className : "") + " " + (m.getAttribute("role") || "");
+      send({ type: "msg", text: t, level: ERR_CLS.test(cls) || ERR_TXT.test(t) ? "error" : "success", el: describe(m) });
     }
   }
   // #5 hotkeys
@@ -149,13 +185,13 @@
   window.__atgSetState = (s) => { Object.assign(ST, s || {}); paint(); };
   async function hello() { try { const r = await send({ type: "hello" }); if (r) window.__atgSetState(r); } catch (e) {} }
   function boot() {
-    const st = document.createElement("style");
-    st.textContent = "[data-atg-sensitive]{filter:blur(4px)!important}";      // #12 blur sensitive fields in video
-    (document.head || document.documentElement).appendChild(st);
-    toolbar(); markSensitive(document); hello(); paint(); setInterval(paint, 1000);
+    // M5: sensitive fields are NOT blurred in the live window (the user must see what they type); values are masked in
+    // the steps, the {{params}} and the step screenshots instead.
+    if (TOP) toolbar();
+    markSensitive(document); hello(); paint(); setInterval(paint, 1000);
     scanMsgs(document.body);
-    new MutationObserver((ms) => { for (const m of ms) { for (const n of m.addedNodes) if (n.nodeType === 1) { scanMsgs(n); markSensitive(n); } if (m.type === "attributes" && m.target.nodeType === 1) scanMsgs(m.target); } })
-      .observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
+    new MutationObserver((ms) => { for (const m of ms) { for (const n of m.addedNodes) { if (n.nodeType === 1) { scanMsgs(n, true); markSensitive(n); } else if (n.nodeType === 3 && n.parentElement) scanMsgs(n.parentElement, true); } if (m.type === "characterData" && m.target.parentElement) scanMsgs(m.target.parentElement, true); if (m.type === "attributes" && m.target.nodeType === 1) scanMsgs(m.target, true); } })
+      .observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

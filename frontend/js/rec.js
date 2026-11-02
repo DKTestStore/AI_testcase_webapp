@@ -81,7 +81,7 @@ function recSetup(v) {
       <label>Browser</label><select id="rBrowser"><option value="chromium">Chromium (recorder window)</option></select>
       <label>Ignore list <span class="muted">(CSS selectors — clicks inside are skipped: cookie banners, chat widgets)</span></label>
       <textarea id="rIgnore" rows="3" class="rec-mono">${esc(ign)}</textarea>
-      <div class="rec-info">ℹ A separate recorder browser opens. Click, type, select and navigate as usual — each action becomes a step. Use <b>Add checkpoint</b> (or Ctrl+Shift+C) to record expected results.${REC.defaults.display === false ? "<br><b>No display detected — the recorder runs headless on the server.</b>" : ""}</div></div></div>
+      <div class="rec-info">ℹ A separate recorder browser opens. Click, type, select and navigate as usual — each action becomes a step. Use <b>Add checkpoint</b> (or Ctrl+Shift+C) to record expected results.</div>${REC.defaults.headless ? `<div class="warn rec-hl" id="rHeadlessWarn">⚠ <b>Headless mode:</b> no display was found on the machine running this app (Linux without DISPLAY / WAYLAND_DISPLAY), so the recorder browser would run <b>invisibly</b> and you <b>cannot click or type in it</b>. Run the app on your Windows / macOS / desktop machine (or start it with a display) to record.</div>` : ""}</div></div>
     <div style="margin-top:14px"><button class="btn r" id="rStart">⏺ Start recording</button> <button class="btn g" id="rCancel">Cancel</button></div></div><div id="recDraftHost"></div>
     <details class="card rec-store" id="recStore"><summary>🗄 Recording storage <span class="muted" id="rsSum">— loading…</span></summary>
       <div class="rec-storeb"><label>Keep last <input type="number" min="0" id="rsN" style="width:70px"> recordings</label><label>and/or last <input type="number" min="0" id="rsD" style="width:70px"> days</label>
@@ -96,9 +96,14 @@ function recSetup(v) {
       ignore: $("#rIgnore").value.split(/\n|,/).map((x) => x.trim()).filter(Boolean) };
     if (!body.url) throw new Error("Enter the target URL to record.");
     if (!body.name) throw new Error("Enter a test name.");
+    if (/^[a-z][a-z0-9+.-]*:/i.test(body.url) && !/^(https?|file):\/\//i.test(body.url) && !/^[\w.-]+:\d+(\/|$)/.test(body.url)) throw new Error("Enter a valid target URL, e.g. https://example.com/login");
+    { const u = /^[a-z][a-z0-9+.-]*:\/\//i.test(body.url) ? body.url : "https://" + body.url; let ok = false;   // M6: obvious typos caught before a browser starts
+      try { const x = new URL(u); ok = ["http:", "https:", "file:"].includes(x.protocol) && (x.protocol === "file:" || (!!x.hostname && !/\s/.test(body.url))); } catch { ok = false; }
+      if (!ok) throw new Error("Enter a valid target URL, e.g. https://example.com/login"); }
     localStorage.setItem(REC_SETUP_KEY, JSON.stringify(body));
     REC.st = await api("/api/rec/start", { method: "POST", body }); REC.sel = null; REC.sig = "";
-    if (REC.st.error) toast(REC.st.error, true); else toast("Recorder window opened — start interacting with the site");
+    if (REC.st.headless) toast("Recorder started HEADLESS — no window is visible and you cannot interact with it (no display on this machine).", true);   // C1
+    else if (REC.st.error) toast(REC.st.error, true); else toast("Recorder window opened — start interacting with the site");
     render();
   });
   recDraftCard(v2, $("#recDraftHost"));
@@ -160,7 +165,7 @@ function recPaint(force) {
   const pill = $("#rPill"); pill.textContent = st.paused ? "❚❚ PAUSED" : st.state === "closed" ? "■ WINDOW CLOSED" : "● REC"; pill.classList.toggle("p", !!st.paused);
   $("#rPause").innerHTML = st.paused ? "▶ Resume" : "⏸ Pause";
   $("#rBanner").innerHTML = st.state === "closed" ? `<div class="warn">The recorder window was closed. Click <b>Stop &amp; go to Review</b> to create the test cases, or Discard on the Input page later.</div>`
-    : st.error ? `<div class="warn">${esc(st.error)}</div>` : st.headless ? `<div class="note">The recorder browser is running headless on the server (no display available).</div>` : "";
+    : st.error ? `<div class="warn">${esc(st.error)}</div>` : st.headless ? `<div class="warn">⚠ <b>Headless mode:</b> no display was found on the machine running this app (Linux without DISPLAY / WAYLAND_DISPLAY), so the recorder browser would run <b>invisibly</b> and you <b>cannot click or type in it</b>. Run the app on your Windows / macOS / desktop machine (or start it with a display) to record.</div>` : "";
   const sig = JSON.stringify(st.steps) + st.paused;
   if (force || sig !== REC.sig) { REC.sig = sig; recRenderLog(); recSide(); }
 }
@@ -390,7 +395,7 @@ async function recPinBtn() {
   const rc = recRun(); const b = $("#recPin"); if (!b) return;
   let st; try { st = await api("/api/rec/storage"); } catch { return; }
   const draw = () => { const on = st.pinned.includes(rc.rid); b.textContent = on ? "📌 Pinned" : "📌 Pin"; b.classList.toggle("on", on); b.title = on ? "Pinned — never removed by storage retention (click to unpin)" : "Pin — never remove this recording by storage retention"; };
-  draw(); b.onclick = () => guarded(b, async () => { st = await api("/api/rec/pin", { method: "POST", body: { rid: rc.rid, pinned: !st.pinned.includes(rc.rid) } }); draw(); });
+  draw(); b.onclick = async () => { await guarded(b, async () => { const want = !st.pinned.includes(rc.rid); const r = await api("/api/rec/pin", { method: "POST", body: { rid: rc.rid, pinned: want } }); st = Object.assign({}, st, { pinned: r.pinned || [] }); draw(); toast(want ? "Recording pinned" : "Recording unpinned"); }); draw(); };   // L1: redraw AFTER guarded() restored the old label
 }
 function recJumpSel(scroll) {
   const rc = recRun(); const s = rc && rc.steps.find((x) => x.id === REC.rsel); if (!s) return;
@@ -437,3 +442,34 @@ async function recDecorateHistory(v) {
   const apply = () => $$("tr", tbl).forEach((tr) => { if (tr.querySelector("th")) return; tr.style.display = REC.hOnly && !tr.classList.contains("rec-hrow") ? "none" : ""; });
   $("#recOnly", v).onchange = (e) => { REC.hOnly = e.target.checked; apply(); }; apply();
 }
+
+// ------------------------------------------------------------------ M7: evidence removed by storage retention -> clear placeholder
+const REC_GONE = "Evidence removed by storage policy";
+document.addEventListener("error", (e) => {
+  const el = e.target; if (!el || !el.tagName) return;
+  if (el.tagName === "IMG" && /\/api\/rec\/file\//.test(el.getAttribute("src") || "") && !el.dataset.gone) {
+    el.dataset.gone = "1"; const sp = document.createElement("span");
+    sp.className = (el.className || "rec-thumb") + " rec-gone"; sp.title = REC_GONE; sp.textContent = el.classList.contains("rec-big") ? "🗑 " + REC_GONE : "🗑";
+    el.replaceWith(sp); recGoneNote();
+  } else if ((el.tagName === "VIDEO" || el.tagName === "SOURCE") && /\/api\/rec\/file\//.test(el.getAttribute("src") || "")) {
+    const v = el.tagName === "VIDEO" ? el : el.closest("video"); if (!v || v.dataset.gone) return; v.dataset.gone = "1";
+    const d = document.createElement("div"); d.className = "muted rec-gone-v"; d.style.padding = "10px"; d.textContent = "🗑 " + REC_GONE + " — the video of this recording was deleted.";
+    v.replaceWith(d); const m = $("#recMarks"); if (m) m.remove(); recGoneNote();
+  }
+}, true);
+function recGoneNote() {
+  const b = $("#recBanner"); if (!b || $(".rec-gone-n", b)) return;
+  b.insertAdjacentHTML("beforeend", `<span>·</span><span class="rec-gone-n rec-amber" title="Screenshots / video were deleted by the storage retention setting (Input → Record → Recording storage)">🗑 ${REC_GONE}</span>`);
+}
+
+// ------------------------------------------------------------------ M8: app reloaded while a recording is running -> reopen the Record panel
+(function recRestoreOnLoad() {
+  const go = async () => {
+    let st; try { st = await api("/api/rec/status"); } catch { return; }
+    if (!st || !["recording", "paused", "closed", "starting"].includes(st.state)) return;
+    REC.st = st; S.inputMode = "record";
+    if (S.view === "input") render();
+    else toast("⏺ A recording is in progress — open Input → ⏺ Record to continue or stop it.");
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(go, 300)); else setTimeout(go, 300);
+})();
