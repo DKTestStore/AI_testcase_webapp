@@ -160,6 +160,40 @@ app.include_router(test_repo.router, dependencies=[Depends(current)])
 app.include_router(test_runs.router, dependencies=[Depends(current)])
 
 
+@app.post("/api/repo/review")
+def repo_review(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    """Open selected repo cases as a new single run (source 'Repo') in Review. The current run (if it has
+    test cases) is saved to Run history first - nothing is lost. Batch mode is left untouched."""
+    if sess.get("mode") == "batch":
+        raise ServiceError("Exit Batch mode first to review repo cases.")
+    d = test_repo._load()
+    byid = {c["id"]: c for c in d["cases"]}
+    picked = [byid[i] for i in (data.get("ids") or []) if i in byid]
+    if not picked:
+        raise ServiceError("Select at least one test case.")
+    saved = ""
+    old = sess["run"]
+    if old.get("test_cases"):
+        if sess.get("hid"):
+            ent = history_store.record(sess["hid"], old)
+            saved = (ent or {}).get("rid") or old.get("rid") or ""
+    run = session_store.reset_run(sess["sid"])
+    stories = sorted({c.get("story") or "" for c in picked if c.get("story")})
+    cases = []
+    for n, c in enumerate(picked, 1):
+        cases.append({"id": f"TC{n:03d}", "name": c["title"], "description": c.get("description", ""),
+                      "precondition": c.get("precondition", ""), "priority": c.get("priority") or "Medium",
+                      "type": c.get("type", ""), "acs": c.get("acs") or [], "status": "not",
+                      "steps": [{"description": s.get("step", ""),
+                                 "expected": s.get("expected", "")} for s in c.get("steps") or []] or [{"description": "", "expected": ""}]})
+    run.update({"source": "repo", "story_id": stories[0] if len(stories) == 1 else "",
+                "feature_text": "Test cases opened from the Test Case Repo:\n" + "\n".join(f"- {c['id']} v{c.get('version', 1)}: {c['title']}" for c in picked),
+                "test_cases": parsing.sanitize_cases(cases), "dirty": True,
+                "repo_links": [c["id"] for c in picked], "repo_versions": [c.get("version", 1) for c in picked]})
+    _save(sess, history=True)
+    return {"ok": True, "saved_rid": saved, "run": _public_run(run)}
+
+
 # --------------------------------------------------------------------------- #
 # Session
 # --------------------------------------------------------------------------- #

@@ -26,7 +26,7 @@ log = logging.getLogger("atg.repo")
 DATA_DIR = Path(__file__).resolve().parent / "test_repo"
 REPO_FILE = DATA_DIR / "repo.json"
 _LOCK = threading.RLock()
-STATUSES = ["Draft", "Ready", "Obsolete"]
+STATUSES = ["Draft", "Ready", "Obsolete", "Archived"]
 SOURCES = ["AI", "Manual", "Record"]
 router = APIRouter()
 
@@ -69,7 +69,33 @@ def write_json(path: Path, data) -> None:
 def _load() -> Dict[str, Any]:
     d = load_json(REPO_FILE, {})
     d.setdefault("seq", 0); d.setdefault("fseq", 0); d.setdefault("folders", []); d.setdefault("cases", [])
+    if d.get("fver", 1) < 2 and (d["folders"] or d["cases"]):
+        with _LOCK:   # one-time migration, persisted immediately so folder ids stay stable
+            d = load_json(REPO_FILE, d)
+            d.setdefault("seq", 0); d.setdefault("fseq", 0); d.setdefault("folders", []); d.setdefault("cases", [])
+            if d.get("fver", 1) < 2:
+                _migrate(d)
+                try:
+                    write_json(REPO_FILE, d)
+                except Exception:
+                    log.exception("repo migration write failed")
+    d["fver"] = 2
     return d
+
+
+def _migrate(d) -> None:
+    """v1 -> v2: folders become first-class records (id, name, parent, order, description);
+    cases pointing at a missing folder get one rebuilt from their story key, so nothing is lost."""
+    for i, f in enumerate(d["folders"]):
+        f.setdefault("parent", f.get("parent_id", "") or "")
+        f.setdefault("order", i + 1)
+        f.setdefault("description", "")
+    ids = {f["id"] for f in d["folders"]}
+    for c in d["cases"]:
+        if c.get("folder_id") not in ids:
+            c["folder_id"] = default_folder(d, c.get("story", ""))
+            ids.add(c["folder_id"])
+    d["fver"] = 2
 
 
 def _s(v, n=5000) -> str:
@@ -118,8 +144,17 @@ def _ensure_folder(d, name: str, parent: str = "") -> str:
         return f["id"]
     d["fseq"] += 1
     fid = f"F{d['fseq']}"
-    d["folders"].append({"id": fid, "name": name, "parent": parent})
+    order = max([x.get("order", 0) for x in d["folders"] if x.get("parent", "") == parent] or [0]) + 1
+    d["folders"].append({"id": fid, "name": name, "parent": parent, "order": order, "description": ""})
     return fid
+
+
+def _norm_name(n: str) -> str:
+    return re.sub(r"\s+", " ", (n or "").strip()).lower()
+
+
+def _dup_name(d, name, parent, exclude="") -> bool:
+    return any(f["id"] != exclude and f.get("parent", "") == parent and _norm_name(f["name"]) == _norm_name(name) for f in d["folders"])
 
 
 def project_of(story: str) -> str:
@@ -209,7 +244,7 @@ def _match(d, case) -> Optional[Dict[str, Any]]:
     t1, title = _text(case), (case.get("title") or "").lower()
     story = (case.get("story") or "").strip().lower()
     for c in d["cases"]:
-        if c.get("status") == "Obsolete":
+        if c.get("status") in ("Obsolete", "Archived"):
             continue
         if story and (c.get("story") or "").strip().lower() != story:
             continue  # duplicates are checked within the same story
@@ -261,10 +296,12 @@ def save_many(cases: List[Dict[str, Any]], *, story="", story_title="", folder_i
 
 def _tree(d) -> List[Dict[str, Any]]:
     out = []
-    for f in d["folders"]:
+    for f in sorted(d["folders"], key=lambda x: (x.get("order", 0), x["name"].lower())):
         ids = set(_desc_ids(d, f["id"]))
-        cs = [c for c in d["cases"] if c.get("folder_id") in ids]
-        out.append({**f, "count": len(cs), "ready": sum(1 for c in cs if c["status"] == "Ready"), "path": _folder_path(d, f["id"])})
+        cs = [c for c in d["cases"] if c.get("folder_id") in ids and c.get("status") != "Archived"]
+        out.append({**f, "parent_id": f.get("parent", ""), "count": len(cs), "ready": sum(1 for c in cs if c["status"] == "Ready"),
+                    "archived": sum(1 for c in d["cases"] if c.get("folder_id") in ids and c.get("status") == "Archived"),
+                    "path": _folder_path(d, f["id"])})
     return out
 
 
@@ -325,8 +362,23 @@ def repo_bulk(data: Dict[str, Any] = Body(...)):
     with locked(REPO_FILE):
         d = _load()
         n = 0
+        archived = []
         if op == "delete":
-            before = len(d["cases"]); d["cases"] = [c for c in d["cases"] if c["id"] not in ids]; n = before - len(d["cases"])
+            # cases with execution history / cycle membership are archived, never deleted (keeps cycle results intact)
+            used = _usage(ids)
+            keep = []
+            for c in d["cases"]:
+                if c["id"] in ids and used.get(c["id"], {}).get("in_use"):
+                    c["status"], c["updated"] = "Archived", now(); archived.append(c["id"]); keep.append(c)
+                elif c["id"] in ids:
+                    n += 1
+                else:
+                    keep.append(c)
+            d["cases"] = keep
+        elif op in ("archive", "restore"):
+            for c in d["cases"]:
+                if c["id"] in ids and (op == "archive" or c.get("status") == "Archived"):
+                    c["status"] = "Archived" if op == "archive" else "Draft"; c["updated"] = now(); n += 1
         elif op in ("status", "move"):
             if op == "status" and data.get("status") not in STATUSES:
                 raise ServiceError("Unknown status.")
@@ -339,7 +391,7 @@ def repo_bulk(data: Dict[str, Any] = Body(...)):
         else:
             raise ServiceError("Unknown bulk action.")
         write_json(REPO_FILE, d)
-    return {"ok": True, "count": n}
+    return {"ok": True, "count": n, "archived": archived}
 
 
 @router.post("/api/repo/folders")
@@ -350,7 +402,10 @@ def repo_folder(data: Dict[str, Any] = Body(...)):
     with locked(REPO_FILE):
         d = _load()
         parent = data.get("parent") if _folder(d, data.get("parent", "")) else ""
+        if _dup_name(d, name, parent):
+            raise ServiceError(f"A folder named “{name}” already exists there. Choose another name.", 409)
         fid = _ensure_folder(d, name, parent)
+        _folder(d, fid)["description"] = _s(data.get("description"), 1000)
         write_json(REPO_FILE, d)
     return {"ok": True, "id": fid, "folders": _tree(d)}
 
@@ -362,6 +417,7 @@ def repo_check(data: Dict[str, Any] = Body(...)):
     d = _load()
     cases = [from_review_case(tc, story) for tc in data.get("test_cases") or []]
     sugg = next((f for f in d["folders"] if story and f["name"].split(" · ")[0] == story and f.get("parent")), None)
+    # a missing default folder is only *suggested* here ("(new) Project › Story"); it is created on save
     return {"ok": True, "matches": [_match(d, c) for c in cases], "folders": _tree(d),
             "suggest": {"folder_id": sugg["id"] if sugg else "", "project": project_of(story),
                         "story_folder": (story or "Unfiled") + (f" · {_s(data.get('story_title'), 60)}" if data.get("story_title") else "")}}
@@ -522,3 +578,130 @@ def repo_ai_review(data: Dict[str, Any] = Body(...)):
     if not _s(case.get("title")) and not case.get("steps"):
         raise ServiceError("Add a title or steps before asking the AI to review.")
     return {"ok": True, "review": ai_review(case, _s(data.get("acs"), 8000))}
+
+
+# ------------------------------------------------------------------ v4: usage check, folder management
+def _usage(ids) -> Dict[str, Dict[str, Any]]:
+    from . import test_runs
+    rd = test_runs._load()
+    out = {}
+    for cid in ids:
+        cyc = [c["name"] for c in rd["cycles"] if any(i["case_id"] == cid for i in c.get("items", []))]
+        ex = sum(1 for e in rd["executions"] if e["case_id"] == cid)
+        out[cid] = {"cycles": cyc, "executions": ex, "in_use": bool(cyc or ex)}
+    return out
+
+
+@router.post("/api/repo/delete_check")
+def repo_delete_check(data: Dict[str, Any] = Body(...)):
+    ids = [str(x) for x in data.get("ids") or []]
+    d = _load()
+    byid = {c["id"]: c for c in d["cases"]}
+    u = _usage(ids)
+    return {"ok": True, "cases": [{"id": i, "title": byid.get(i, {}).get("title", ""), "versions": len(byid.get(i, {}).get("versions") or []), **u[i]} for i in ids if i in byid]}
+
+
+@router.put("/api/repo/folders/{fid}")
+def repo_folder_update(fid: str, data: Dict[str, Any] = Body(...)):
+    with locked(REPO_FILE):
+        d = _load()
+        f = _folder(d, fid)
+        if not f:
+            raise ServiceError("Folder not found.", 404)
+        name = _s(data.get("name", f["name"]), 120)
+        parent = f.get("parent", "")
+        if "parent" in data:
+            parent = data.get("parent") or ""
+            if parent and (not _folder(d, parent) or parent in _desc_ids(d, fid)):
+                raise ServiceError("Invalid parent folder.")
+        if not name:
+            raise ServiceError("Folder name is required.")
+        if _dup_name(d, name, parent, fid):
+            raise ServiceError(f"A folder named “{name}” already exists there. Choose another name.", 409)
+        if parent != f.get("parent", ""):
+            f["order"] = max([x.get("order", 0) for x in d["folders"] if x.get("parent", "") == parent] or [0]) + 1
+        f.update({"name": name, "parent": parent})
+        if "description" in data:
+            f["description"] = _s(data.get("description"), 1000)
+        write_json(REPO_FILE, d)
+    return {"ok": True, "folders": _tree(d)}
+
+
+@router.post("/api/repo/folders/reorder")
+def repo_folder_reorder(data: Dict[str, Any] = Body(...)):
+    """Either {id, dir: 'up'|'down'} or {parent, ids: [...]} (drag & drop; may also move into a new parent)."""
+    with locked(REPO_FILE):
+        d = _load()
+        if data.get("dir") in ("up", "down"):
+            f = _folder(d, data.get("id", ""))
+            if not f:
+                raise ServiceError("Folder not found.", 404)
+            sib = sorted([x for x in d["folders"] if x.get("parent", "") == f.get("parent", "")], key=lambda x: x.get("order", 0))
+            i = sib.index(f); j = i - 1 if data["dir"] == "up" else i + 1
+            if 0 <= j < len(sib):
+                sib[i], sib[j] = sib[j], sib[i]
+            for n, x in enumerate(sib, 1):
+                x["order"] = n
+        else:
+            parent = data.get("parent") or ""
+            if parent and not _folder(d, parent):
+                raise ServiceError("Invalid parent folder.")
+            for n, fid in enumerate(data.get("ids") or [], 1):
+                f = _folder(d, fid)
+                if not f or (parent and parent in _desc_ids(d, fid)):
+                    continue
+                if f.get("parent", "") != parent and _dup_name(d, f["name"], parent, fid):
+                    raise ServiceError(f"A folder named “{f['name']}” already exists there.", 409)
+                f["parent"], f["order"] = parent, n
+        write_json(REPO_FILE, d)
+    return {"ok": True, "folders": _tree(d)}
+
+
+@router.delete("/api/repo/folders/{fid}")
+def repo_folder_delete(fid: str, mode: str = "move", target: str = "", confirm: str = ""):
+    with locked(REPO_FILE):
+        d = _load()
+        f = _folder(d, fid)
+        if not f:
+            raise ServiceError("Folder not found.", 404)
+        if _norm_name(confirm) != _norm_name(f["name"]):
+            raise ServiceError("Type the folder name to confirm.")
+        gone = set(_desc_ids(d, fid))
+        cases = [c for c in d["cases"] if c.get("folder_id") in gone]
+        if cases and mode == "move":
+            if not _folder(d, target) or target in gone:
+                raise ServiceError("Choose a folder to move the cases to.")
+            for c in cases:
+                c["folder_id"], c["updated"] = target, now()
+        elif cases:
+            # archive: cases keep a home so they can be restored -> park them in an 'Archived cases' folder
+            home = _ensure_folder(d, "Archived cases")
+            for c in cases:
+                c["folder_id"], c["status"], c["updated"] = home, "Archived", now()
+        d["folders"] = [x for x in d["folders"] if x["id"] not in gone]
+        write_json(REPO_FILE, d)
+    return {"ok": True, "moved": len(cases) if mode == "move" else 0, "archived": len(cases) if mode != "move" else 0, "folders": _tree(d)}
+
+
+@router.post("/api/repo/save_back")
+def repo_save_back(data: Dict[str, Any] = Body(...)):
+    """Review run opened from the repo: write edits back as new versions of the linked cases (no duplicates)."""
+    links = data.get("links") or []          # repo id per review case (same order), "" = new case
+    story = _s(data.get("story"), 60)
+    res = {"updated": [], "unchanged": [], "created": []}
+    with locked(REPO_FILE):
+        d = _load()
+        for i, tc in enumerate(data.get("test_cases") or []):
+            rc = from_review_case(tc, story)
+            rid = links[i] if i < len(links) else ""
+            c = next((x for x in d["cases"] if x["id"] == rid), None)
+            if c:
+                rc["story"] = c.get("story") or story
+                for k, st in enumerate(rc["steps"]):      # Review has no test-data column: keep the repo's
+                    if k < len(c.get("steps") or []) and not st.get("data"):
+                        st["data"] = c["steps"][k].get("data", "")
+                (res["updated"] if _update_case(c, rc, "Saved back from Review") else res["unchanged"]).append(c["id"])
+            else:
+                res["created"].append(_new_case(d, rc, "AI", "Draft", "", "Created from Review (repo run)")["id"])
+        write_json(REPO_FILE, d)
+    return {"ok": True, **res}
