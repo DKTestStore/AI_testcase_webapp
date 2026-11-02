@@ -1,6 +1,6 @@
 /* Test Runs (additive feature): cycles, cycle run list, add cases, execution screen with attachments. */
 "use strict";
-const RS = { cycle: null, exec: null, archived: false, f: { q: "", st: "", asg: "" }, sel: new Set() };
+const RS = { cpg: { page: 1, size: 25 }, rpg: { page: 1, size: 25 }, cq: "", cst: "", cycle: null, exec: null, archived: false, f: { q: "", st: "", asg: "" }, sel: new Set() };
 window.RS = RS;
 const TR_RUN_ST = ["Not run", "Pass", "Fail", "Blocked", "Skipped", "Retest"];
 const TR_DOT = { Pass: "#12a150", Fail: "#d33", Blocked: "#f59e0b", Retest: "#a855f7", Skipped: "#64748b", "Not run": "#cbd5e1" };
@@ -19,18 +19,25 @@ async function viewRuns(v) {
   $("#trArch").onchange = (e) => { RS.archived = e.target.checked; render(); };
   $("#trNewCy").onclick = () => trCycleModal();
   let j; try { j = await api("/api/runs" + (RS.archived ? "?archived=1" : "")); } catch (e) { $("#trCyBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
-  const cs = j.cycles; const act = cs.filter((c) => c.status === "Active");
+  const allc = j.cycles; const act = cs.filter((c) => c.status === "Active");
+  const stOf = (c) => c.status === "Archived" ? "Archived" : (c.counts["Not run"] === Object.values(c.counts).reduce((a, b) => a + b, 0) ? "Not started" : "In progress");
+  const filt = allc.filter((c) => (!RS.cq || [c.name, c.id, c.build, c.env, c.release, c.sprint].join(" ").toLowerCase().includes(RS.cq.toLowerCase())) && (!RS.cst || stOf(c) === RS.cst));
+  const cs = trPage(filt, RS.cpg);
   const sum = (k) => act.reduce((a, c) => a + (c.counts[k] || 0), 0); const inPlay = act.reduce((a, c) => a + Object.values(c.counts).reduce((x, y) => x + y, 0), 0);
   const exd = sum("Pass") + sum("Fail") + sum("Blocked");
   $("#trCyBody").outerHTML = `<div id="trCyBody"><div class="kp"><div class="card"><small class="muted">ACTIVE CYCLES</small><b>${act.length}</b></div><div class="card"><small class="muted">CASES IN PLAY</small><b>${inPlay}</b></div><div class="card"><small class="muted">PASS RATE (ACTIVE)</small><b style="color:#12a150">${exd ? Math.round((sum("Pass") * 100) / exd) : 0}%</b></div><div class="card"><small class="muted">OPEN FAILURES</small><b style="color:#d33">${sum("Fail")}</b></div></div>
-    <div class="card">${cs.length ? `<table id="trCyT"><tr><th>Cycle</th><th>Release / Sprint</th><th>Env</th><th>Build</th><th>Assignee</th><th>Dates</th><th>Progress</th><th>Status</th><th></th></tr>
+    <div class="card"><div class="tb"><input id="trCyQ" placeholder="🔍 Search cycles…" style="width:260px" value="${esc(RS.cq)}"><select id="trCySt"><option value="">All statuses</option>${["Not started", "In progress", "Archived"].map((x) => `<option ${RS.cst === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+    ${allc.length ? `<table id="trCyT"><tr><th>Cycle</th><th>Release / Sprint</th><th>Env</th><th>Build</th><th>Assignee</th><th>Dates</th><th>Progress</th><th>Status</th><th></th></tr>
     ${cs.map((c) => `<tr class="clk" data-id="${c.id}"><td><b style="color:#4361ee">${esc(c.name)}</b><br><small class="muted">${c.id}</small></td><td>${esc([c.release, c.sprint].filter(Boolean).join(" / ") || "—")}</td><td>${esc(c.env || "—")}</td><td>${esc(c.build || "—")}</td><td>${esc(c.assignee || "—")}</td><td>${esc([c.start, c.end].filter(Boolean).join(" – ") || "—")}</td><td>${trPb(c)}</td>
       <td><span class="pill ${c.status === "Archived" ? "gr" : "b"}">${c.status === "Archived" ? "Archived" : (c.counts["Not run"] === Object.values(c.counts).reduce((a, b) => a + b, 0) ? "Not started" : "In progress")}</span></td>
       <td style="white-space:nowrap"><button class="btn g sm" data-a="edit" title="Edit">✎</button> <button class="btn g sm" data-a="clone" title="Clone">⧉</button> <button class="btn g sm" data-a="arch" title="${c.status === "Archived" ? "Restore" : "Archive"}">🗄</button> <button class="btn g sm" data-a="del" title="Delete" style="color:#d33">🗑</button></td></tr>`).join("")}</table>`
-    : `<div class="tr-empty">No cycles yet. Create one here, or use <b>▶ Execute now</b> on the Review page.</div>`}</div></div>`;
+    + trPager("trCyPg", filt.length, RS.cpg) : `<div class="tr-empty">No cycles yet. Create one here, or use <b>▶ Execute now</b> on the Review page.</div>`}</div></div>`;
+  trBindPager("trCyPg", RS.cpg, render);
+  $("#trCyQ").oninput = (e) => { RS.cq = e.target.value; RS.cpg.page = 1; clearTimeout(viewRuns._q); viewRuns._q = setTimeout(() => { render(); setTimeout(() => { const i = $("#trCyQ"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 300); }, 300); };
+  $("#trCySt").onchange = (e) => { RS.cst = e.target.value; RS.cpg.page = 1; render(); };
   $$("#trCyT tr[data-id]").forEach((tr) => (tr.onclick = async (e) => {
     const id = tr.dataset.id, b = e.target.closest("button"), c = cs.find((x) => x.id === id);
-    if (!b) { RS.cycle = id; RS.sel.clear(); return render(); }
+    if (!b) { RS.cycle = id; RS.sel.clear(); RS.rpg.page = 1; return render(); }
     try {
       if (b.dataset.a === "edit") return trCycleModal(c);
       if (b.dataset.a === "clone") { const r = await api(`/api/runs/${id}/clone`, { method: "POST" }); toast(`Cloned as ${r.cycle.name}`); }
@@ -58,9 +65,10 @@ function trCycleModal(c) {
 function trDeleteCycle(c) {
   const ov = trModal(`<div class="hd"><h3 style="color:#d33">Delete cycle</h3><span class="tr-x">✕</span></div>
     <div class="warn" style="margin:0">This permanently deletes <b>${esc(c.name)}</b> and all its execution results and history. Repo test cases are not affected.</div>
-    <label>Type the cycle name to confirm</label><input class="w" id="trDelName" placeholder="${esc(c.name)}">
+    <label>Type the cycle name to confirm <small class="muted" style="text-transform:none">(any dash works: - or –)</small></label><input class="w" id="trDelName" placeholder="${esc(c.name)}">
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn r" id="trDelGo" disabled>🗑 Delete cycle</button></div>`, 520);
-  $("#trDelName", ov).oninput = (e) => ($("#trDelGo").disabled = e.target.value.trim() !== c.name);
+  const nn = (x) => String(x || "").replace(/[\u2010-\u2015\u2212-]/g, "-").replace(/\s+/g, " ").trim().toLowerCase();
+  $("#trDelName", ov).oninput = (e) => ($("#trDelGo").disabled = nn(e.target.value) !== nn(c.name));
   $("#trDelGo", ov).onclick = () => guarded($("#trDelGo"), async () => { await api(`/api/runs/${c.id}?confirm=${encodeURIComponent($("#trDelName").value)}`, { method: "DELETE" }); trClose(); toast("Cycle deleted"); if (RS.cycle === c.id) RS.cycle = null; render(); });
 }
 
@@ -73,24 +81,29 @@ async function trCycleView(v) {
   const f = RS.f; const asgs = [...new Set(c.items.map((i) => i.assignee).filter(Boolean))];
   const list = c.items.filter((i) => (!f.st || i.status === f.st) && (!f.asg || i.assignee === f.asg) && (!f.q || (i.case_id + " " + i.title).toLowerCase().includes(f.q.toLowerCase())));
   RS.sel = new Set([...RS.sel].filter((k) => c.items.some((i) => i.key === k)));
-  const next = c.items.find((i) => i.status === "Not run" || i.status === "Retest");
+  const runnable = (i) => !i.case_state;
+  const next = c.items.find((i) => runnable(i) && (i.status === "Not run" || i.status === "Retest"));
+  const page = trPage(list, RS.rpg);
   $("#trCyc").innerHTML = `<div class="hd"><div><small class="muted"><a href="#runs" id="trBack" style="color:inherit">Test Runs</a> ›</small><h1>${esc(c.name)} <span class="pill ${c.status === "Archived" ? "gr" : "b"}">${c.status === "Archived" ? "Archived" : done ? "In progress" : "Not started"}</span></h1>
     <div class="sub">${[c.build && "Build " + esc(c.build), c.env && "Env " + esc(c.env), tot + " cases", c.description && esc(c.description)].filter(Boolean).join(" · ")}</div></div>
-    <div class="fl"><button class="btn g" id="trEditCy">✎ Edit</button><button class="btn g" id="trAddCases">＋ Add cases</button><button class="btn" id="trCont" ${tot ? "" : "disabled"}>▶ Continue execution${next ? ` (next: ${esc(next.case_id)})` : ""}</button></div></div>
+    <div class="fl"><button class="btn g" id="trEditCy">✎ Edit</button><button class="btn g" id="trDelCy" style="color:#d33">🗑 Delete cycle</button><button class="btn g" id="trAddCases">＋ Add cases</button><button class="btn" id="trCont" ${tot ? "" : "disabled"}>▶ Continue execution${next ? ` (next: ${esc(next.case_id)})` : ""}</button></div></div>
     <div class="card"><div class="fl"><b>${done} of ${tot} executed</b><small class="muted">${n.Pass || 0} Pass · ${n.Fail || 0} Fail · ${n.Blocked || 0} Blocked · ${n.Retest || 0} Retest · ${n.Skipped || 0} Skipped · ${n["Not run"] || 0} Not run</small></div><div style="margin-top:8px">${trPb(c, 9999).replace("width:9999px", "width:100%;height:10px")}</div></div>
     <div class="card"><div class="tb"><input id="trRq" placeholder="🔍 Search" style="width:220px" value="${esc(f.q)}"><span class="fc ${f.st ? "" : "a"}" data-st="">Status: All</span>${TR_RUN_ST.map((s) => `<span class="fc ${f.st === s ? "a" : ""}" data-st="${s}">${s} ${n[s] || 0}</span>`).join("")}
       <select id="trRasg"><option value="">Assignee: All</option>${asgs.map((a) => `<option ${f.asg === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
       <span style="margin-left:auto" class="fl" id="trRsel" ${RS.sel.size ? "" : 'style="display:none"'}><small class="muted" id="trRselN">${RS.sel.size} selected</small><input id="trReAsg" placeholder="Reassign to…" style="width:130px"><button class="btn g sm" id="trReGo">Reassign</button><button class="btn g sm" id="trRemove" style="color:#d33">Remove</button><button class="btn sm" id="trRunSel">▶ Run selected (${RS.sel.size})</button></span></div>
     ${tot ? `<table id="trRunT"><tr><th>Order</th><th><input type="checkbox" id="trRall"></th><th>TC-ID</th><th>Title</th><th>Priority</th><th>Assignee</th><th>Status</th><th>Last run</th><th>Defects</th><th></th></tr>
-    ${list.map((i) => `<tr class="clk" data-k="${i.key}"><td class="drag" style="white-space:nowrap"><button class="btn g sm" data-a="up" title="Move up">▲</button>${i.order}</td><td><input type="checkbox" class="trRk" ${RS.sel.has(i.key) ? "checked" : ""}></td><td><b style="color:#4361ee">${esc(i.case_id)}</b></td><td>${esc(i.title)}</td><td><span class="pill ${TR_PRIO(i.priority)}">${esc(i.priority || "—")}</span></td><td>${esc(i.assignee || "—")}</td>
+    ${page.map((i) => `<tr class="clk ${i.case_state ? "arc" : ""}" data-k="${i.key}"><td class="drag" style="white-space:nowrap"><button class="btn g sm" data-a="up" title="Move up">▲</button>${i.order}</td><td><input type="checkbox" class="trRk" ${RS.sel.has(i.key) ? "checked" : ""}></td><td><b style="color:#4361ee">${esc(i.case_id)}</b></td><td>${esc(i.title)}${i.case_state ? ` <span class="pill d">${i.case_state === "archived" ? "Case archived" : "Case removed"}</span>` : ""}</td><td><span class="pill ${TR_PRIO(i.priority)}">${esc(i.priority || "—")}</span></td><td>${esc(i.assignee || "—")}</td>
       <td><span class="pill ${TR_RES[i.status]}">${esc(i.status)}</span></td><td>${trTime(i.last_run)}</td><td>${i.defects.length ? `<b style="color:#d33" title="${esc(i.defects.join(", "))}">🐞 ${i.defects.length}</b>` : "—"}</td>
-      <td><button class="btn ${["Not run", "Retest"].includes(i.status) ? "" : "g "}sm" data-a="run">${["Not run", "Retest"].includes(i.status) ? "▶ Run" : "↻ Re-run"}</button></td></tr>`).join("")}</table>
-    <div class="muted" style="margin-top:8px">${list.length} of ${tot} shown · clicking a row or ▶ Run opens the detailed execution screen</div>` : `<div class="tr-empty">No cases in this cycle yet. Use <b>＋ Add cases</b> to pick from the Test Case Repo.</div>`}</div>`;
+      <td>${i.case_state ? `<button class="btn g sm" data-a="rm" style="color:#d33">Remove from cycle</button>` : `<button class="btn ${["Not run", "Retest"].includes(i.status) ? "" : "g "}sm" data-a="run">`}${["Not run", "Retest"].includes(i.status) ? "▶ Run" : "↻ Re-run"}${i.case_state ? "" : "</button>"}</td></tr>`).join("")}</table>
+    ${list.length > 25 ? trPager("trRunPg", list.length, RS.rpg) : `<div class="muted" style="margin-top:8px">${list.length} of ${tot} shown · clicking a row or ▶ Run opens the detailed execution screen</div>`}
+    ${c.items.some((i) => i.case_state) ? `<div class="note">Archived / removed cases keep their past results but can't be executed; “Remove from cycle” drops them from this list.</div>` : ""}` : `<div class="tr-empty">No cases in this cycle yet. Use <b>＋ Add cases</b> to pick from the Test Case Repo.</div>`}</div>`;
   if (!RS.sel.size) $("#trRsel").style.display = "none";
   $("#trBack").onclick = (e) => { e.preventDefault(); RS.cycle = null; render(); };
   $("#trEditCy").onclick = () => trCycleModal(c);
+  $("#trDelCy").onclick = () => trDeleteCycle(c);
+  trBindPager("trRunPg", RS.rpg, render);
   $("#trAddCases").onclick = () => trSelectCases(c);
-  $("#trCont").onclick = () => { const q = c.items.filter((i) => i.status === "Not run" || i.status === "Retest").map((i) => i.key); trStartExec(q.length ? q : c.items.map((i) => i.key)); };
+  $("#trCont").onclick = () => { const q = c.items.filter((i) => runnable(i) && (i.status === "Not run" || i.status === "Retest")).map((i) => i.key); trStartExec(q.length ? q : c.items.filter(runnable).map((i) => i.key)); };
   $("#trRq").oninput = (e) => { f.q = e.target.value; clearTimeout(trCycleView._t); trCycleView._t = setTimeout(() => { render(); }, 300); };
   $$("#trCyc .fc").forEach((x) => (x.onclick = () => { f.st = x.dataset.st; render(); }));
   $("#trRasg").onchange = (e) => { f.asg = e.target.value; render(); };
@@ -101,12 +114,15 @@ async function trCycleView(v) {
     if (e.target.classList.contains("trRk")) { e.target.checked ? RS.sel.add(key) : RS.sel.delete(key); sync(); return; }
     const b = e.target.closest("button");
     if (b && b.dataset.a === "up") { const ord = c.items.map((i) => i.key); const ix = ord.indexOf(key); if (ix > 0) { [ord[ix - 1], ord[ix]] = [ord[ix], ord[ix - 1]]; await api(`/api/runs/${c.id}/items/bulk`, { method: "POST", body: { op: "reorder", order: ord } }); render(); } return; }
-    trStartExec(list.map((i) => i.key), key);
+    if (b && b.dataset.a === "rm") { try { await api(`/api/runs/${c.id}/items/bulk`, { method: "POST", body: { op: "remove", keys: [key] } }); toast("Removed from cycle"); render(); } catch (er) { toast(er.message, true); } return; }
+    const it = c.items.find((i) => i.key === key);
+    if (it && it.case_state) return toast(it.case_state === "archived" ? "This case is archived – restore it in the repo to run it." : "This case was removed from the repo – use “Remove from cycle”.", true);
+    trStartExec(list.filter(runnable).map((i) => i.key), key);
   }));
   const bulk = async (body, msg) => { try { await api(`/api/runs/${c.id}/items/bulk`, { method: "POST", body: { keys: [...RS.sel], ...body } }); toast(msg); render(); } catch (er) { toast(er.message, true); } };
   $("#trReGo").onclick = () => { const a = $("#trReAsg").value.trim(); if (!a) return toast("Enter an assignee name.", true); bulk({ op: "assign", assignee: a }, `Reassigned to ${a}`); };
   $("#trRemove").onclick = () => { if (confirm(`Remove ${RS.sel.size} case(s) from this cycle? Their results in this cycle are kept in history.`)) bulk({ op: "remove" }, "Removed"); RS.sel.clear(); };
-  $("#trRunSel").onclick = () => trStartExec(c.items.filter((i) => RS.sel.has(i.key)).map((i) => i.key));
+  $("#trRunSel").onclick = () => trStartExec(c.items.filter((i) => RS.sel.has(i.key) && runnable(i)).map((i) => i.key));
 }
 
 async function trSelectCases(c) {
@@ -114,7 +130,7 @@ async function trSelectCases(c) {
   const inCy = new Set(c.items.map((i) => i.case_id));
   const M = { folder: "", ready: true, failed: false, prio: "", q: "", sel: new Set() };
   const desc = (fid) => { const ids = new Set([fid]); let g = true; while (g) { g = false; d.folders.forEach((f) => { if (ids.has(f.parent) && !ids.has(f.id)) { ids.add(f.id); g = true; } }); } return ids; };
-  const pool = () => d.cases.filter((x) => !inCy.has(x.id) && (!M.ready || x.status === "Ready") && x.status !== "Obsolete" && (!M.failed || x.last_result === "Fail") && (!M.prio || x.priority === M.prio));
+  const pool = () => d.cases.filter((x) => !inCy.has(x.id) && (!M.ready || x.status === "Ready") && x.status !== "Obsolete" && x.status !== "Archived" && (!M.failed || x.last_result === "Fail") && (!M.prio || x.priority === M.prio));
   const ov = trModal(`<div class="hd" style="padding:18px 22px;border-bottom:1px solid #e3e7f0;margin:0"><div><h3>Add test cases to <span style="color:#4361ee">${esc(c.name)}</span></h3><small class="muted">From Test Case Repo · testers are assigned later in the cycle</small></div><span class="tr-x">✕</span></div>
     <div style="display:grid;grid-template-columns:290px 1fr;min-height:420px"><div style="border-right:1px solid #e3e7f0;padding:14px;max-height:60vh;overflow:auto" class="tree" id="trScTree"></div>
     <div style="padding:14px 18px;max-height:60vh;overflow:auto"><div class="fl" style="margin-bottom:10px"><input id="trScQ" placeholder="🔍 Search" style="flex:1"><select id="trScP"><option value="">Priority: All</option><option>High</option><option>Medium</option><option>Low</option></select>
@@ -160,7 +176,7 @@ async function trExecView(v) {
   // working state: start from the last attempt in this cycle when status is Retest/Not run partial, else fresh
   const st = X.st && X.st.key === it.key ? X.st : (X.st = { key: it.key, t0: Date.now(), cur: 0, override: "", reason: "", comments: "", defects: (it.defects || []).join(", "),
     steps: (cs.steps || []).map((_, i) => ({ status: "", actual: "", attachments: [] })) });
-  const ord = X.queue.map((k) => c.items.find((i) => i.key === k));
+  const ord = X.queue.map((k) => c.items.find((i) => i.key === k)).filter(Boolean);
   const pos = X.queue.indexOf(it.key);
   const auto = () => { const s = st.steps.map((x) => x.status); return s.includes("Fail") ? "Fail" : s.includes("Blocked") ? "Blocked" : s.length && s.every((x) => x === "Pass" || x === "N/A") ? "Pass" : "Not run"; };
   const SC = { Pass: "P", Fail: "F", Blocked: "B", "N/A": "N" };

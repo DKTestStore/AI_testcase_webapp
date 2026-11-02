@@ -240,6 +240,24 @@ Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file 
    with the case version it ran against; history is shown per case. *Log defect to Jira* and *Sync to qTest* are shown
    disabled (“coming soon”).
 
+**Folders, archive and review from repo (v4)**
+- **Folders are stored records** (`id, name, parent, order, description` in `repo.json`). The Repo tree and the Review
+  *Save to Test Case Repo* modal read the same list. A missing default folder is only *suggested* as
+  “(new) Project › Story” and is created when you save. Older `repo.json` files are migrated once on first load:
+  folder records are rebuilt from the cases' folder/story, so nothing is lost.
+- Folder **⋯ menu**: Rename (inline, Enter/Esc), New sub-folder, Move up / down, Delete…. Drag ⋮⋮ to reorder (order is saved).
+  **＋ New folder** opens a modal (name, parent picker, description, duplicate-name check). **Delete folder** asks to
+  move the cases to another folder or archive them, and you type the folder name to confirm.
+- **Archived** test cases are hidden by default (*Show archived* toggle or Status filter), can be restored (↺ Restore),
+  can't be added to new cycles, and still appear in execution history. **Delete** on a case that was executed or is in
+  a cycle archives it instead. In a cycle such cases show muted as *Case archived* / *Case removed* with *Remove from cycle*.
+  Cycles can always be deleted or archived, even when their cases are gone. The name confirmation ignores dash type, spacing and case.
+- **Pagination** (25 / 50 / 100 rows) on the Repo table, the cycles list (with search and status filter) and the cycle run list.
+- **🔍 Review** (bulk bar, one or more cases): opens the cases as a new run (source *Repo*) in Review step 3. If a run is
+  already open, a confirm dialog appears and that run is saved to Run history first. A toast links to it and Run history
+  marks it *Just saved*. On a repo run the Review button becomes **Save back to repo (update N)**, which writes edits back as
+  new versions of the same cases (no duplicates; repo test data is kept).
+
 Mock for tests: with `ATG_MOCK_GEMINI=1` the AI review returns deterministic suggestions (no Gemini call).
 E2E: `/workspace/e2e/test_testrun.py` (`ATG_BASE=http://127.0.0.1:8001`).
 

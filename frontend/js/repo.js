@@ -1,6 +1,6 @@
 /* Test Case Repo (additive feature): Review actions (Save to repo / Execute now), Repo page, editor, AI review. */
 "use strict";
-const RP = { folder: "", q: "", prio: "", status: "", source: "", result: "", sel: new Set(), data: null, edit: null, ai: null, ftree: "" };
+const RP = { showArch: false, pg: { page: 1, size: 25 }, renaming: null, drag: null, folder: "", q: "", prio: "", status: "", source: "", result: "", sel: new Set(), data: null, edit: null, ai: null, ftree: "" };
 const TR_PRIO = (p) => (p === "High" ? "r" : p === "Medium" ? "y" : "gr");
 const TR_ST = { Draft: "gr", Ready: "", Obsolete: "r" };
 const TR_RES = { Pass: "", Fail: "r", Blocked: "k", Skipped: "gr", Retest: "v", "Not run": "gr", "": "gr" };
@@ -24,7 +24,7 @@ function trFileB64(file) { return new Promise((res, rej) => { const r = new File
 
 // folder tree (shared with runs.js) --------------------------------------------------------
 function trTreeRows(folders, parent = "", lvl = 1) {
-  return folders.filter((f) => (f.parent || "") === parent).sort((a, b) => a.name.localeCompare(b.name))
+  return folders.filter((f) => (f.parent || "") === parent).sort((a, b) => (a.order || 0) - (b.order || 0) || a.name.localeCompare(b.name))
     .flatMap((f) => [{ f, lvl }, ...trTreeRows(folders, f.id, lvl + 1)]);
 }
 
@@ -41,6 +41,19 @@ function trInjectReview() {
   const left = foot.firstElementChild;
   if (left && left !== wrap && !left.textContent.trim()) left.innerHTML = `<div class="trv"><b id="trRvCnt">${trReviewCases().length} test cases</b><div class="muted" style="font-size:12px">What next? Save them for reuse, run them now, or upload to qTest as before.</div></div>`;
   const dis = !trReviewCases().length; $("#trSaveRepo").disabled = dis; $("#trExecNow").disabled = dis;
+  const links = (S.run && S.run.source === "repo" && S.run.repo_links) || null;
+  if (links && links.length) {
+    const n = Math.min(links.length, trReviewCases().length);
+    $("#trSaveRepo").innerHTML = `🗂 Save back to repo (update ${n})`; $("#trSaveRepo").title = "Write your edits back to the linked repo cases as new versions (no duplicates)";
+    const lt = $("#trRvCnt"); if (lt) { lt.textContent = `${trReviewCases().length} test cases from Repo`; lt.nextElementSibling.textContent = "Save edits back as new versions, run them, or upload to qTest."; }
+    const h = $("#view h1"); if (h && !$("#trSrcPill")) h.insertAdjacentHTML("beforeend", ' <span class="pill b" id="trSrcPill" style="font-size:12px;vertical-align:middle">🗂 Source: Repo</span>');
+    $("#trSaveRepo").onclick = () => guarded($("#trSaveRepo"), async () => {
+      if (S.localDirty && typeof saveCases === "function") await saveCases();
+      const r = await api("/api/repo/save_back", { method: "POST", body: { test_cases: trReviewCases(), links, story: (S.run || {}).story_id || "" } });
+      toast(`Saved back to repo: ${r.updated.length} updated (new version) · ${r.unchanged.length} unchanged${r.created.length ? ` · ${r.created.length} new` : ""}`);
+    });
+    return;
+  }
   $("#trSaveRepo").onclick = () => trSaveModal();
   $("#trExecNow").onclick = () => trExecModal();
 }
@@ -54,7 +67,7 @@ async function trSaveModal() {
   const rows = trTreeRows(j.folders);
   const tree = () => `<div class="card tree" style="padding:8px;margin:0;max-height:210px;overflow:auto" id="trSvTree">
     ${rows.map(({ f, lvl }) => `<a class="l${lvl} ${M.folder === f.id ? "a" : ""}" data-f="${f.id}">${lvl === 1 ? "📁" : "📂"} ${esc(f.name)} <span class="c">${f.count}</span></a>`).join("")}
-    ${j.suggest.folder_id ? "" : `<a class="l2 ${M.folder === "__new_default" ? "a" : ""}" data-f="__new_default">📂 ${esc(j.suggest.project)} › ${esc(j.suggest.story_folder)} <span class="c">new</span></a>`}
+    ${j.suggest.folder_id ? "" : `<a class="l2 ${M.folder === "__new_default" ? "a" : ""}" data-f="__new_default">📂 (new) ${esc(j.suggest.project)} › ${esc(j.suggest.story_folder)} <span class="c">created on save</span></a>`}
     <a class="l2" style="color:#4361ee" id="trNewF">＋ New folder…</a></div>
     <div id="trNewFBox" style="display:none;margin-top:6px" class="fl"><input id="trNewFName" placeholder="Folder name" style="flex:1"><button class="btn sm" id="trNewFOk">Add</button></div>
     <div class="hint">Default: Project › Story from the Jira key</div>`;
@@ -132,54 +145,227 @@ function trInFolder(c) {
 }
 function trRepoFiltered() {
   const q = RP.q.toLowerCase();
-  return RP.data.cases.filter((c) => trInFolder(c) && (!RP.prio || c.priority === RP.prio) && (!RP.status || c.status === RP.status) && (!RP.source || c.source === RP.source) &&
+  return RP.data.cases.filter((c) => trInFolder(c) && (RP.showArch || RP.status === "Archived" || c.status !== "Archived") && (!RP.prio || c.priority === RP.prio) && (!RP.status || c.status === RP.status) && (!RP.source || c.source === RP.source) &&
     (!RP.result || (RP.result === "none" ? !c.last_result : c.last_result === RP.result)) &&
     (!q || [c.id, c.title, c.description, c.story, ...(c.steps || []).map((s) => s.step + " " + s.expected)].join(" ").toLowerCase().includes(q)));
 }
+// pagination (shared with runs.js): st = {page, size}
+function trPage(list, st) { st.size = st.size || 25; const pages = Math.max(1, Math.ceil(list.length / st.size)); st.page = Math.min(Math.max(1, st.page || 1), pages); return list.slice((st.page - 1) * st.size, st.page * st.size); }
+function trPager(id, total, st) {
+  if (!total) return "";
+  const pages = Math.max(1, Math.ceil(total / st.size)), a = (st.page - 1) * st.size + 1, b = Math.min(total, st.page * st.size);
+  const nums = [...new Set([1, st.page - 1, st.page, st.page + 1, pages])].filter((n) => n >= 1 && n <= pages).sort((x, y) => x - y);
+  let last = 0; const btns = nums.map((n) => { const gap = n - last > 1 ? "<span>…</span>" : ""; last = n; return `${gap}<button class="btn ${n === st.page ? "on" : "g"} sm" data-p="${n}">${n}</button>`; }).join("");
+  return `<div class="tr-pg" id="${id}"><span>Showing <b>${a}–${b}</b> of <b>${total}</b></span><span style="margin-left:14px">Rows per page</span><select data-size="1" style="padding:3px 6px">${[25, 50, 100].map((n) => `<option ${n === st.size ? "selected" : ""}>${n}</option>`).join("")}</select>
+    <span style="margin-left:auto" class="fl"><button class="btn g sm" data-p="${st.page - 1}" ${st.page > 1 ? "" : "disabled"}>‹ Prev</button>${btns}<button class="btn g sm" data-p="${st.page + 1}" ${st.page < pages ? "" : "disabled"}>Next ›</button></span></div>`;
+}
+function trBindPager(id, st, rerender) {
+  const el = document.getElementById(id); if (!el) return;
+  $$("button[data-p]", el).forEach((b) => (b.onclick = () => { st.page = +b.dataset.p; rerender(); }));
+  $("select[data-size]", el).onchange = (e) => { st.size = +e.target.value; st.page = 1; rerender(); };
+}
 function trRepoRender() {
-  const d = RP.data; const rows = trTreeRows(d.folders).filter(({ f }) => !RP.ftree || f.name.toLowerCase().includes(RP.ftree.toLowerCase()));
-  const list = trRepoFiltered(); RP.sel = new Set([...RP.sel].filter((id) => d.cases.some((c) => c.id === id)));
+  const d = RP.data; RP.pg = RP.pg || { page: 1, size: 25 };
+  const rows = trTreeRows(d.folders).filter(({ f }) => !RP.ftree || f.name.toLowerCase().includes(RP.ftree.toLowerCase()));
+  const list = trRepoFiltered(); const shown = trPage(list, RP.pg); RP.sel = new Set([...RP.sel].filter((id) => d.cases.some((c) => c.id === id)));
+  const live = d.cases.filter((c) => c.status !== "Archived").length;
   const opt = (id, lab, vals, cur) => `<select id="${id}"><option value="">${lab}: All</option>${vals.map((x) => `<option value="${x[0]}" ${cur === x[0] ? "selected" : ""}>${x[1]}</option>`).join("")}</select>`;
   const pairs = (a) => a.map((x) => [x, x]);
-  $("#trRepoBody").outerHTML = `<div id="trRepoBody" class="g2" style="grid-template-columns:250px 1fr;align-items:start">
-    <div class="card tree" style="padding:10px;margin:0"><input class="w" id="trFq" style="margin-bottom:8px" placeholder="🔍 Filter folders" value="${esc(RP.ftree)}">
-      <a data-f="" class="${RP.folder ? "" : "a"}">🗂 All test cases <span class="c">${d.total}</span></a>
-      ${rows.map(({ f, lvl }) => `<a data-f="${f.id}" class="l${Math.min(lvl + 1, 4)} ${RP.folder === f.id ? "a" : ""}">${lvl === 1 ? "▾ 📁" : (RP.folder === f.id ? "📂" : "📁")} ${esc(f.name)} <span class="c">${f.count}</span></a>`).join("")}
+  const ren = RP.renaming;
+  $("#trRepoBody").outerHTML = `<div id="trRepoBody" class="g2" style="grid-template-columns:270px 1fr;align-items:start">
+    <div class="card tree" style="padding:10px;margin:0;position:relative" id="trTree"><input class="w" id="trFq" style="margin-bottom:8px" placeholder="🔍 Filter folders" value="${esc(RP.ftree)}">
+      <a data-f="" class="${RP.folder ? "" : "a"}">🗂 All test cases <span class="c">${live}</span></a>
+      ${rows.map(({ f, lvl }) => ren === f.id ? `<a class="l${Math.min(lvl + 1, 4)}" style="background:#f5f7ff" data-ren="${f.id}"><input id="trRenIn" value="${esc(f.name)}" style="flex:1;padding:3px 6px;font-size:12px;border-color:#4361ee"><button class="btn s sm" id="trRenOk" style="padding:3px 7px">✓</button><button class="btn g sm" id="trRenNo" style="padding:3px 7px">✕</button></a><div class="hint" style="padding-left:40px">Enter to save · Esc to cancel</div>`
+        : `<a data-f="${f.id}" draggable="true" title="${esc(f.description || f.path)}" class="l${Math.min(lvl + 1, 4)} ${RP.folder === f.id ? "a" : ""}"><span class="dh" title="Drag to reorder">⋮⋮</span>${RP.folder === f.id ? "📂" : "📁"} ${esc(f.name)} <span class="c">${f.count}</span><span class="mn" data-menu="${f.id}" title="Folder actions">⋯</span></a>`).join("")}
       <a style="color:#4361ee" id="trNewFolder">＋ New folder</a></div>
-    <div class="card" style="margin:0"><div class="tb"><input id="trQ" placeholder="🔍 Search title, step text, TC-ID…" style="width:260px" value="${esc(RP.q)}">
-      ${opt("trFP", "Priority", pairs(["High", "Medium", "Low"]), RP.prio)}${opt("trFS", "Status", pairs(["Draft", "Ready", "Obsolete"]), RP.status)}${opt("trFSrc", "Source", pairs(["AI", "Manual", "Record"]), RP.source)}${opt("trFR", "Last result", [["Pass", "Pass"], ["Fail", "Fail"], ["Blocked", "Blocked"], ["none", "Never run"]], RP.result)}</div>
-      <div class="tr-bulk" id="trBulk" style="${RP.sel.size ? "" : "display:none"}"><b id="trSelN">${RP.sel.size} selected</b><span style="margin-left:auto" class="fl"><button class="btn sm" id="trBAdd">＋ Add to cycle</button><button class="btn g sm" id="trBMove">Move</button><button class="btn s sm" id="trBReady">✓ Mark Ready</button><button class="btn g sm" id="trBDel" style="color:#d33">🗑 Delete</button></span></div>
-      ${d.total ? `<table id="trRepoT"><tr><th><input type="checkbox" id="trAll" ${list.length && list.every((c) => RP.sel.has(c.id)) ? "checked" : ""}></th><th>TC-ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Ver</th><th>Source</th><th>Last run</th><th>Story</th><th>Updated</th></tr>
-      ${list.map((c) => `<tr class="clk ${RP.sel.has(c.id) ? "sel" : ""}" data-id="${c.id}"><td><input type="checkbox" class="trCk" ${RP.sel.has(c.id) ? "checked" : ""}></td><td><b style="color:#4361ee">${esc(c.id)}</b></td><td>${esc(c.title)}</td><td><span class="pill ${TR_PRIO(c.priority)}">${esc(c.priority)}</span></td><td><span class="pill ${TR_ST[c.status] ?? "gr"}">${esc(c.status)}</span></td><td>v${c.version}</td><td><span class="pill ${TR_SRC[c.source] || "b"}">${esc(c.source)}</span></td><td><span class="pill ${TR_RES[c.last_result || ""]}">${esc(c.last_result || "—")}</span></td><td>${esc(c.story || "—")}</td><td>${trDate(c.updated)}</td></tr>`).join("")}</table>
-      <div class="muted" style="margin-top:8px">${RP.folder ? "📂 " + esc(trFolderPath(RP.folder)) + " · " : ""}${list.length} of ${d.total} shown</div>`
+    <div class="card" style="margin:0"><div class="tb"><input id="trQ" placeholder="🔍 Search title, step text, TC-ID…" style="width:240px" value="${esc(RP.q)}">
+      ${opt("trFP", "Priority", pairs(["High", "Medium", "Low"]), RP.prio)}${opt("trFS", "Status", pairs(["Draft", "Ready", "Obsolete", "Archived"]), RP.status)}${opt("trFSrc", "Source", pairs(["AI", "Manual", "Record"]), RP.source)}${opt("trFR", "Last result", [["Pass", "Pass"], ["Fail", "Fail"], ["Blocked", "Blocked"], ["none", "Never run"]], RP.result)}
+      <label class="sw" style="margin:0;text-transform:none;font-size:12px;color:#1e2433"><input type="checkbox" id="trShowArch" ${RP.showArch ? "checked" : ""}><span class="t"></span>Show archived</label></div>
+      <div class="tr-bulk" id="trBulk" style="${RP.sel.size ? "" : "display:none"}"><b id="trSelN">${RP.sel.size} selected</b><span style="margin-left:auto" class="fl"><button class="btn g sm" id="trBReview">🔍 Review</button><button class="btn sm" id="trBAdd">＋ Add to cycle</button><button class="btn g sm" id="trBMove">Move</button><button class="btn s sm" id="trBReady">✓ Mark Ready</button><button class="btn g sm" id="trBArch">🗄 Archive</button><button class="btn g sm" id="trBDel" style="color:#d33">🗑 Delete</button></span></div>
+      ${d.total ? `<table id="trRepoT" class="rt"><tr><th><input type="checkbox" id="trAll" ${shown.length && shown.every((c) => RP.sel.has(c.id)) ? "checked" : ""}></th><th>TC-ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Ver</th><th>Source</th><th>Last run</th><th>Story</th><th>Updated</th>${RP.showArch || RP.status === "Archived" ? "<th></th>" : ""}</tr>
+      ${shown.map((c) => `<tr class="clk ${RP.sel.has(c.id) ? "sel" : ""} ${c.status === "Archived" ? "arc" : ""}" data-id="${c.id}"><td><input type="checkbox" class="trCk" ${RP.sel.has(c.id) ? "checked" : ""}></td><td><b style="color:#4361ee">${esc(c.id)}</b></td><td>${esc(c.title)}</td><td><span class="pill ${TR_PRIO(c.priority)}">${esc(c.priority)}</span></td><td><span class="pill ${TR_ST[c.status] ?? "gr"}">${esc(c.status)}</span></td><td>v${c.version}</td><td><span class="pill ${TR_SRC[c.source] || "b"}">${esc(c.source)}</span></td><td><span class="pill ${TR_RES[c.last_result || ""]}">${esc(c.last_result || "—")}</span></td><td>${esc(c.story || "—")}</td><td>${trDate(c.updated)}</td>${RP.showArch || RP.status === "Archived" ? `<td>${c.status === "Archived" ? `<button class="btn g sm" data-restore="${c.id}">↺ Restore</button>` : ""}</td>` : ""}</tr>`).join("")}</table>
+      ${list.length > 25 ? trPager("trRepoPg", list.length, RP.pg) : `<div class="muted" style="margin-top:8px">${RP.folder ? "📂 " + esc(trFolderPath(RP.folder)) + " · " : ""}${list.length} of ${RP.showArch ? d.total : live} shown</div>`}`
       : `<div class="tr-empty">No test cases yet. Use <b>Save to Test Case Repo</b> on the Review page, <b>＋ New test case</b>, or <b>Import</b>.</div>`}</div></div>`;
-  $$("#trRepoBody .tree a[data-f]").forEach((a) => (a.onclick = () => { RP.folder = a.dataset.f; trRepoRender(); }));
+  trBindPager("trRepoPg", RP.pg, trRepoRender);
+  trBindTree();
   $("#trFq").oninput = (e) => { RP.ftree = e.target.value; clearTimeout(trRepoRender._f); trRepoRender._f = setTimeout(() => { trRepoRender(); const i = $("#trFq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
-  $("#trNewFolder").onclick = async () => { const n = prompt(RP.folder ? `New sub-folder in "${trFolderPath(RP.folder)}"` : "New folder name"); if (!n) return;
-    try { await api("/api/repo/folders", { method: "POST", body: { name: n, parent: RP.folder } }); RP.data = await api("/api/repo"); trRepoRender(); } catch (e) { toast(e.message, true); } };
-  $("#trQ").oninput = (e) => { RP.q = e.target.value; clearTimeout(trRepoRender._t); trRepoRender._t = setTimeout(() => { trRepoRender(); const i = $("#trQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
-  [["trFP", "prio"], ["trFS", "status"], ["trFSrc", "source"], ["trFR", "result"]].forEach(([id, k]) => ($("#" + id).onchange = (e) => { RP[k] = e.target.value; trRepoRender(); }));
+  $("#trNewFolder").onclick = () => trFolderModal(RP.folder);
+  $("#trQ").oninput = (e) => { RP.q = e.target.value; RP.pg.page = 1; clearTimeout(trRepoRender._t); trRepoRender._t = setTimeout(() => { trRepoRender(); const i = $("#trQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
+  [["trFP", "prio"], ["trFS", "status"], ["trFSrc", "source"], ["trFR", "result"]].forEach(([id, k]) => ($("#" + id).onchange = (e) => { RP[k] = e.target.value; RP.pg.page = 1; trRepoRender(); }));
+  $("#trShowArch").onchange = (e) => { RP.showArch = e.target.checked; RP.pg.page = 1; trRepoRender(); };
   const syncBulk = () => { $("#trBulk").style.display = RP.sel.size ? "" : "none"; $("#trSelN").textContent = `${RP.sel.size} selected`; };
   $$("#trRepoT tr[data-id]").forEach((tr) => (tr.onclick = (e) => {
     const id = tr.dataset.id;
+    if (e.target.dataset.restore) { RP.sel = new Set([id]); return trBulk({ op: "restore" }, "Restored", true); }
     if (e.target.classList.contains("trCk")) { e.target.checked ? RP.sel.add(id) : RP.sel.delete(id); tr.classList.toggle("sel", e.target.checked); syncBulk(); return; }
     trDrawer(id);
   }));
-  const all = $("#trAll"); if (all) all.onchange = () => { list.forEach((c) => (all.checked ? RP.sel.add(c.id) : RP.sel.delete(c.id))); trRepoRender(); };
+  const all = $("#trAll"); if (all) all.onchange = () => { shown.forEach((c) => (all.checked ? RP.sel.add(c.id) : RP.sel.delete(c.id))); trRepoRender(); };
   const ids = () => [...RP.sel];
-  $("#trBAdd").onclick = () => trAddToCycleModal(ids());
+  $("#trBReview").onclick = () => trReviewSelected(ids());
+  $("#trBAdd").onclick = () => { const ok = ids().filter((i) => (d.cases.find((c) => c.id === i) || {}).status !== "Archived"); if (!ok.length) return toast("Archived cases can't be added to cycles – restore them first.", true); trAddToCycleModal(ok); };
   $("#trBReady").onclick = () => trBulk({ op: "status", status: "Ready" }, "Marked Ready");
-  $("#trBDel").onclick = () => { if (confirm(`Delete ${RP.sel.size} test case(s) from the repo? This cannot be undone.`)) trBulk({ op: "delete" }, "Deleted", true); };
+  $("#trBArch").onclick = () => trBulk({ op: "archive" }, "Archived", true);
+  $("#trBDel").onclick = () => trDeleteCases(ids());
   $("#trBMove").onclick = () => {
     const ov = trModal(`<div class="hd"><h3>Move ${RP.sel.size} test case(s)</h3><span class="tr-x">✕</span></div><label>Destination folder</label>
-      <select class="w" id="trMvF">${trTreeRows(d.folders).map(({ f, lvl }) => `<option value="${f.id}">${"  ".repeat(lvl - 1)}${esc(f.path)}</option>`).join("")}</select>
+      <select class="w" id="trMvF">${trTreeRows(d.folders).map(({ f, lvl }) => `<option value="${f.id}">${esc(f.path)}</option>`).join("")}</select>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn" id="trMvGo" ${d.folders.length ? "" : "disabled"}>Move</button></div>`, 460);
     $("#trMvGo", ov).onclick = () => { trClose(); trBulk({ op: "move", folder_id: $("#trMvF", ov).value }, "Moved"); };
   };
 }
+async function trRepoReload() { RP.data = await api("/api/repo"); if (RP.folder && !RP.data.folders.some((f) => f.id === RP.folder)) RP.folder = ""; trRepoRender(); }
 async function trBulk(body, msg, clear) {
-  try { const r = await api("/api/repo/bulk", { method: "POST", body: { ids: [...RP.sel], ...body } }); toast(`${msg}: ${r.count}`); if (clear) RP.sel.clear(); RP.data = await api("/api/repo"); trRepoRender(); } catch (e) { toast(e.message, true); }
+  try { const r = await api("/api/repo/bulk", { method: "POST", body: { ids: [...RP.sel], ...body } }); toast(`${msg}: ${r.count}${r.archived && r.archived.length ? ` · archived (has history): ${r.archived.length}` : ""}`); if (clear) RP.sel.clear(); await trRepoReload(); } catch (e) { toast(e.message, true); }
 }
+async function trDeleteCases(ids) {
+  let j; try { j = await api("/api/repo/delete_check", { method: "POST", body: { ids } }); } catch (e) { return toast(e.message, true); }
+  const used = j.cases.filter((c) => c.in_use), free = j.cases.filter((c) => !c.in_use);
+  const one = j.cases.length === 1 ? j.cases[0] : null;
+  let html;
+  if (one && one.in_use) html = `<div class="hd"><h3>This case will be archived, not deleted</h3><span class="tr-x">✕</span></div><p><b>${esc(one.id)}</b> · ${esc(one.title)}</p>
+      <div class="note" style="margin-top:10px">It has execution history: used in <b>${one.cycles.length} cycle(s)</b>${one.cycles.length ? ` (${one.cycles.map(esc).join(", ")})` : ""} with <b>${one.executions} execution(s)</b>.</div>
+      <div class="muted" style="margin-top:10px;font-size:12.5px">Archiving hides it from the repo and from case pickers. Past results, attachments and defects stay linked. You can restore it any time.</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn g tr-x">Cancel</button><button class="btn" id="trDcGo">🗄 Archive</button></div>`;
+  else if (one) html = `<div class="hd"><h3 style="color:#d33">🗑 Delete test case?</h3><span class="tr-x">✕</span></div><p><b>${esc(one.id)}</b> · ${esc(one.title)}</p><div class="tr-dz" style="margin-top:10px">Never executed and not in any cycle. This permanently deletes the case and all its versions (v1${one.versions > 1 ? "–v" + one.versions : ""}).</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn g tr-x">Cancel</button><button class="btn r" id="trDcGo">Delete permanently</button></div>`;
+  else html = `<div class="hd"><h3 style="color:#d33">🗑 Delete ${j.cases.length} test cases?</h3><span class="tr-x">✕</span></div>
+      ${free.length ? `<div class="tr-dz">${free.length} case(s) were never executed and will be <b>permanently deleted</b>.</div>` : ""}
+      ${used.length ? `<div class="note">${used.length} case(s) have execution history (${used.map((c) => esc(c.id)).join(", ")}) and will be <b>archived</b> instead, so cycle results stay intact.</div>` : ""}
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn g tr-x">Cancel</button><button class="btn r" id="trDcGo">${free.length ? "Delete" : "Archive"}</button></div>`;
+  const ov = trModal(html, 540);
+  $("#trDcGo", ov).onclick = () => { trClose(); RP.sel = new Set(ids); trBulk({ op: "delete" }, "Deleted", true); };
+}
+
+// ------------------------------------------------------------------ folders (v4)
+function trCloseMenu() { const m = $("#trFm"); if (m) m.remove(); }
+document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest("#trFm")) trCloseMenu(); }, true);
+function trBindTree() {
+  const tree = $("#trTree"); if (!tree) return;
+  $$("a[data-f]", tree).forEach((a) => {
+    a.onclick = (e) => {
+      const m = e.target.closest("[data-menu]"); if (m) { e.stopPropagation(); return trFolderMenu(m.dataset.menu, a); }
+      RP.folder = a.dataset.f; RP.pg.page = 1; trRepoRender();
+    };
+    if (!a.dataset.f) return;
+    a.ondragstart = (e) => { RP.drag = a.dataset.f; e.dataTransfer.effectAllowed = "move"; a.classList.add("ghost"); };
+    a.ondragend = () => { a.classList.remove("ghost"); $$(".dropl", tree).forEach((x) => x.remove()); };
+    a.ondragover = (e) => { if (!RP.drag || RP.drag === a.dataset.f) return; e.preventDefault(); $$(".dropl", tree).forEach((x) => x.remove()); a.insertAdjacentHTML("beforebegin", '<div class="dropl"></div>'); };
+    a.ondrop = async (e) => {
+      e.preventDefault(); const src = RP.drag; RP.drag = null; if (!src || src === a.dataset.f) return;
+      const tgt = RP.data.folders.find((f) => f.id === a.dataset.f); const parent = tgt.parent || "";
+      const sib = trTreeRows(RP.data.folders).map((r) => r.f).filter((f) => (f.parent || "") === parent && f.id !== src).map((f) => f.id);
+      sib.splice(sib.indexOf(tgt.id), 0, src);
+      try { RP.data.folders = (await api("/api/repo/folders/reorder", { method: "POST", body: { parent, ids: sib } })).folders; trRepoRender(); } catch (er) { toast(er.message, true); }
+    };
+  });
+  const ri = $("#trRenIn");
+  if (ri) {
+    ri.focus(); ri.select();
+    const save = async () => { const n = ri.value.trim(); if (!n) return toast("Folder name is required.", true);
+      try { RP.data.folders = (await api(`/api/repo/folders/${RP.renaming}`, { method: "PUT", body: { name: n } })).folders; RP.renaming = null; toast("Folder renamed"); trRepoRender(); } catch (er) { toast(er.message, true); ri.classList.add("ierr"); } };
+    ri.onkeydown = (e) => { if (e.key === "Enter") save(); if (e.key === "Escape") { RP.renaming = null; trRepoRender(); } };
+    $("#trRenOk").onclick = save; $("#trRenNo").onclick = () => { RP.renaming = null; trRepoRender(); };
+  }
+}
+function trFolderMenu(fid, anchor) {
+  trCloseMenu();
+  const tree = $("#trTree"); const r = anchor.getBoundingClientRect(), t = tree.getBoundingClientRect();
+  tree.insertAdjacentHTML("beforeend", `<div class="tr-fm" id="trFm" style="top:${r.bottom - t.top}px;left:${Math.min(r.right - t.left - 20, t.width - 195)}px">
+    <div data-a="ren">✎ Rename</div><div data-a="sub">📁 New sub-folder</div><div data-a="up">↑ Move up</div><div data-a="down">↓ Move down</div><hr><div data-a="del" class="dg">🗑 Delete…</div></div>`);
+  $$("#trFm div[data-a]").forEach((x) => (x.onclick = async () => {
+    trCloseMenu(); const a = x.dataset.a;
+    if (a === "ren") { RP.renaming = fid; return trRepoRender(); }
+    if (a === "sub") return trFolderModal(fid);
+    if (a === "del") return trDeleteFolder(fid);
+    try { RP.data.folders = (await api("/api/repo/folders/reorder", { method: "POST", body: { id: fid, dir: a } })).folders; trRepoRender(); } catch (er) { toast(er.message, true); }
+  }));
+}
+function trFolderModal(parent) {
+  const fs = RP.data.folders; let par = parent || "";
+  const ov = trModal(`<div class="hd"><h3>New folder</h3><span class="tr-x">✕</span></div>
+    <label>Folder name <span class="req">*</span></label><input class="w" id="trFnName" placeholder="e.g. CX-7001 · Checkout"><div class="etxt" id="trFnErr" style="display:none"></div>
+    <label>Parent folder</label><div class="card tree" style="padding:6px;margin:0;max-height:190px;overflow:auto" id="trFnTree"></div><div class="hint">Will be created in: <b id="trFnIn"></b></div>
+    <label>Description (optional)</label><textarea class="w" rows="2" id="trFnDesc" placeholder="What goes in this folder?"></textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn g tr-x">Cancel</button><button class="btn" id="trFnGo" disabled>Create folder</button></div>`, 520);
+  const check = () => {
+    const n = $("#trFnName").value.trim().replace(/\s+/g, " ").toLowerCase();
+    const dup = n && fs.some((f) => (f.parent || "") === par && f.name.trim().replace(/\s+/g, " ").toLowerCase() === n);
+    const pn = par ? (fs.find((f) => f.id === par) || {}).path : "Top level";
+    $("#trFnErr").style.display = dup ? "" : "none"; $("#trFnErr").textContent = dup ? `⚠ A folder named “${$("#trFnName").value.trim()}” already exists in ${pn}. Choose another name.` : "";
+    $("#trFnName").classList.toggle("ierr", !!dup); $("#trFnGo").disabled = !n || dup; $("#trFnIn").textContent = pn;
+  };
+  const paint = () => { $("#trFnTree").innerHTML = `<a data-p="" class="${par ? "" : "a"}">⌂ Top level</a>` + trTreeRows(fs).map(({ f, lvl }) => `<a data-p="${f.id}" class="l${Math.min(lvl + 1, 4)} ${par === f.id ? "a" : ""}">📁 ${esc(f.name)}</a>`).join("");
+    $$("#trFnTree a", ov).forEach((a) => (a.onclick = () => { par = a.dataset.p; paint(); check(); })); };
+  paint(); check(); $("#trFnName", ov).oninput = check; $("#trFnName", ov).focus();
+  $("#trFnGo", ov).onclick = () => guarded($("#trFnGo"), async () => {
+    const r = await api("/api/repo/folders", { method: "POST", body: { name: $("#trFnName").value.trim(), parent: par, description: $("#trFnDesc").value } });
+    trClose(); toast("Folder created"); RP.folder = r.id; await trRepoReload();
+  });
+}
+function trDeleteFolder(fid) {
+  const fs = RP.data.folders, f = fs.find((x) => x.id === fid); if (!f) return;
+  const desc = new Set([fid]); let g = true; while (g) { g = false; fs.forEach((x) => { if (desc.has(x.parent) && !desc.has(x.id)) { desc.add(x.id); g = true; } }); }
+  const subs = fs.filter((x) => desc.has(x.id) && x.id !== fid), n = RP.data.cases.filter((c) => desc.has(c.folder_id)).length;
+  const targets = trTreeRows(fs).filter(({ f: x }) => !desc.has(x.id));
+  let mode = n ? (targets.length ? "move" : "archive") : "none";
+  const ov = trModal(`<div class="hd"><h3 style="color:#d33">🗑 Delete folder “${esc(f.name)}”?</h3><span class="tr-x">✕</span></div>
+    <div class="tr-dz">This folder contains <b>${n} test case(s)</b>${subs.length ? ` and <b>${subs.length} sub-folder(s)</b> (${subs.map((x) => esc(x.name)).join(", ")})` : ""}.</div>
+    ${n ? `<label>What should happen to the cases?</label>
+    <div class="tr-opt ${mode === "move" ? "a" : ""}" data-m="move"><label style="margin:0;text-transform:none;font-size:13px;color:#1e2433"><input type="radio" name="trDfM" value="move" ${mode === "move" ? "checked" : ""} ${targets.length ? "" : "disabled"}> <b>Move cases to</b></label><select class="w" id="trDfT" style="margin-top:8px">${targets.map(({ f: x }) => `<option value="${x.id}">${esc(x.path)}</option>`).join("")}</select><div class="hint">Sub-folder structure is flattened into the target folder</div></div>
+    <div class="tr-opt ${mode === "archive" ? "a" : ""}" data-m="archive"><label style="margin:0;text-transform:none;font-size:13px;color:#1e2433"><input type="radio" name="trDfM" value="archive" ${mode === "archive" ? "checked" : ""}> <b>Archive the cases</b></label><div class="hint">Hidden from the repo; restore any time via “Show archived”</div></div>
+    <div class="note">ℹ Cases with execution history are never deleted — they are always archived or moved so cycle results stay intact.</div>` : ""}
+    <label>Type the folder name to confirm</label><input class="w" id="trDfName" placeholder="${esc(f.name)}">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn g tr-x">Cancel</button><button class="btn r" id="trDfGo" disabled>Delete folder</button></div>`, 560);
+  $$(".tr-opt", ov).forEach((o) => (o.onclick = () => { if (o.dataset.m === "move" && !targets.length) return; mode = o.dataset.m; $$(".tr-opt", ov).forEach((x) => x.classList.toggle("a", x === o)); $$('input[name="trDfM"]', ov).forEach((r) => (r.checked = r.value === mode)); }));
+  const norm = (s) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  $("#trDfName", ov).oninput = (e) => ($("#trDfGo").disabled = norm(e.target.value) !== norm(f.name));
+  $("#trDfGo", ov).onclick = () => guarded($("#trDfGo"), async () => {
+    const q = new URLSearchParams({ mode: mode === "archive" ? "archive" : "move", target: mode === "move" && $("#trDfT") ? $("#trDfT").value : "", confirm: $("#trDfName").value });
+    const r = await api(`/api/repo/folders/${fid}?${q}`, { method: "DELETE" });
+    trClose(); toast(`Folder deleted${r.moved ? ` · ${r.moved} case(s) moved` : ""}${r.archived ? ` · ${r.archived} case(s) archived` : ""}`); await trRepoReload();
+  });
+}
+
+// ------------------------------------------------------------------ Review selected (v4)
+async function trReviewSelected(ids) {
+  if (!ids.length) return;
+  if (S.mode === "batch") return toast("Exit Batch mode first to review repo cases.", true);
+  const r = S.run || {}; const has = (r.test_cases || []).length;
+  const go2 = async () => {
+    if (S.localDirty && typeof saveCases === "function") { try { await saveCases(); } catch (e) { /* best effort */ } }
+    const j = await api("/api/repo/review", { method: "POST", body: { ids } });
+    trClose(); S.localDirty = false; S.cases = []; S.view = "review"; location.hash = "review";
+    if (j.saved_rid) sessionStorage.setItem("trJustSaved", JSON.stringify({ rid: j.saved_rid, t: Date.now() }));
+    render(); if (j.saved_rid) trToast2(j.saved_rid); else toast(`Opened ${ids.length} repo case(s) in Review`);
+  };
+  if (!has) return guarded(null, go2);
+  const ov = trModal(`<div class="hd"><h3>Open selected cases in Review?</h3><span class="tr-x">✕</span></div>
+    <p style="line-height:1.6">You have <b>${esc(r.rid || "the current run")}</b>${r.story_id ? ` (${esc(r.story_id)}` : " ("}${has} cases${S.localDirty || r.dirty ? ', <span style="color:#a36b00">unsaved changes</span>' : ""}) open in Review. We'll save it to Run history and open the <b>${ids.length} selected repo case(s)</b> for review.</p>
+    <div class="note">Nothing is lost — reopen it any time from Run history.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button class="btn g tr-x">Cancel</button><button class="btn" id="trRsGo">Save &amp; continue</button></div>`, 560);
+  $("#trRsGo", ov).onclick = () => guarded($("#trRsGo"), go2);
+}
+function trToast2(rid) {
+  const old = $("#trToast2"); if (old) old.remove();
+  const t = document.createElement("div"); t.className = "tr-toast2"; t.id = "trToast2";
+  t.innerHTML = `✓ Saved ${esc(rid)} to Run history <a href="#history" id="trT2Open" style="color:#7c9cff;font-weight:700">Open</a><span class="x" style="color:#94a3b8;cursor:pointer">✕</span>`;
+  document.body.appendChild(t);
+  $(".x", t).onclick = () => t.remove(); $("#trT2Open").onclick = (e) => { e.preventDefault(); t.remove(); go("history"); };
+  setTimeout(() => t.remove(), 9000);
+}
+// Run history: highlight the run auto-saved by "Review selected" ("Just saved", 10 min)
+function trMarkJustSaved() {
+  if (S.view !== "history") return;
+  let js; try { js = JSON.parse(sessionStorage.getItem("trJustSaved") || "null"); } catch (e) { js = null; }
+  if (!js || Date.now() - js.t > 600000) return;
+  $$("#view table.rh tr").forEach((tr) => {
+    const c = tr.cells && tr.cells[0]; if (!c || tr.classList.contains("tr-jsv") || !c.textContent.includes(js.rid)) return;
+    tr.classList.add("tr-jsv"); c.insertAdjacentHTML("beforeend", '<span class="tr-jb">Just saved</span>');
+  });
+}
+new MutationObserver(() => trMarkJustSaved()).observe(document.getElementById("view"), { childList: true, subtree: true });
+
 async function trAddToCycleModal(ids) {
   let cy = []; try { cy = (await api("/api/runs")).cycles.filter((c) => c.status !== "Archived"); } catch (e) { return toast(e.message, true); }
   const ov = trModal(`<div class="hd"><h3>Add ${ids.length} case(s) to a cycle</h3><span class="tr-x">✕</span></div>

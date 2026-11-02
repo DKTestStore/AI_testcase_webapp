@@ -54,9 +54,14 @@ def _cyc(d, cid):
     return c
 
 
+def _norm(n: str) -> str:
+    """Compare cycle names leniently: any dash (– — -) / whitespace / case differences are ignored."""
+    return re.sub(r"\s+", " ", re.sub(r"[\u2010-\u2015\u2212-]", "-", str(n or ""))).strip().lower()
+
+
 def _counts(c):
     out = {k: 0 for k in RUN_ST}
-    for it in c.get("items", []):
+    for it in c.get("items", []) or []:
         out[it.get("status", "Not run")] = out.get(it.get("status", "Not run"), 0) + 1
     return out
 
@@ -69,7 +74,9 @@ def _pub(c, repo=None):
         r["items"] = [{**it, "title": byid.get(it["case_id"], {}).get("title", "(deleted from repo)"),
                        "priority": byid.get(it["case_id"], {}).get("priority", ""),
                        "repo_status": byid.get(it["case_id"], {}).get("status", ""),
-                       "story": byid.get(it["case_id"], {}).get("story", "")} for it in sorted(c["items"], key=lambda i: i["order"])]
+                       "story": byid.get(it["case_id"], {}).get("story", ""),
+                       "case_state": "removed" if it["case_id"] not in byid else ("archived" if byid[it["case_id"]].get("status") == "Archived" else "")}
+                      for it in sorted(c.get("items", []), key=lambda i: i.get("order", 0))]
     return r
 
 
@@ -122,7 +129,7 @@ def runs_list(archived: int = 0):
     cs = [_pub(c) for c in d["cycles"] if archived or c.get("status") != "Archived"]
     for c in cs:
         c.pop("items", None)
-    return {"ok": True, "cycles": sorted(cs, key=lambda c: c["created"], reverse=True)}
+    return {"ok": True, "cycles": sorted(cs, key=lambda c: c.get("created", ""), reverse=True)}
 
 
 @router.post("/api/runs")
@@ -169,7 +176,7 @@ def runs_delete(cid: str, confirm: str = ""):
     with locked(RUNS_FILE):
         d = _load()
         c = _cyc(d, cid)
-        if confirm.strip() != c["name"]:
+        if _norm(confirm) != _norm(c.get("name", "")):
             raise ServiceError("Type the cycle name exactly to confirm deletion.")
         d["cycles"] = [x for x in d["cycles"] if x["id"] != cid]
         d["executions"] = [e for e in d["executions"] if e["cycle_id"] != cid]
@@ -179,7 +186,7 @@ def runs_delete(cid: str, confirm: str = ""):
 
 @router.post("/api/runs/{cid}/items")
 def runs_add_items(cid: str, data: Dict[str, Any] = Body(...)):
-    repo_ids = {c["id"] for c in test_repo._load()["cases"]}
+    repo_ids = {c["id"] for c in test_repo._load()["cases"] if c.get("status") != "Archived"}
     with locked(RUNS_FILE):
         d = _load()
         c = _cyc(d, cid)
@@ -245,7 +252,11 @@ def runs_execute(cid: str, key: str, data: Dict[str, Any] = Body(...)):
         it = next((i for i in c["items"] if i["key"] == key), None)
         if not it:
             raise ServiceError("Case not in this cycle.", 404)
-        case = test_repo.get_case(it["case_id"]) or {}
+        case = test_repo.get_case(it["case_id"])
+        if not case:
+            raise ServiceError("This case was removed from the repo – remove it from the cycle.", 409)
+        if case.get("status") == "Archived":
+            raise ServiceError("This case is archived – restore it in the repo to execute it.", 409)
         steps = []
         for s in (data.get("steps") or [])[:200]:
             st = s.get("status") if s.get("status") in STEP_ST else ""
