@@ -90,7 +90,7 @@ function render() {
   if (S.mode === "batch") return renderBatch();
   renderNav();
   const v = $("#view");
-  ({ history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  ({ history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
 }
 
 

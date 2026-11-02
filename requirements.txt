@@ -12,4 +12,4 @@ ollama>=0.2
 jira>=3.8
 fastmcp>=2.0
 pandas>=2.0
-openpyxl>=3.1
+openpyxl>=3.1   # also used by Test Case Repo import (.xlsx / .csv); Test Runs need no extra dependency

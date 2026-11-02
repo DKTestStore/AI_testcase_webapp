@@ -27,7 +27,7 @@ function bShellOn() {
   const nav = document.createElement("nav"); nav.className = "nav"; nav.id = "bNav";
   nav.innerHTML = [["b-items", "1", "Batch items"], ["b-gen", "2", "Generate queue"], ["b-review", "3", "Review items"], ["b-qtest", "4", "qTest batch upload"]]
     .map(([v, n, t]) => `<a data-view="${v}"><span class="num">${n}</span>${t}<span class="bcnt"></span></a>`).join("")
-    + `<div class="sep"></div><a data-view="history"><span class="num">🕘</span>Run history</a><a data-view="prompts"><span class="num">📝</span>Prompt templates</a><a data-view="tokens"><span class="num">📊</span>Token Usage<span class="tu-new" style="background:#12a150;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a><a data-view="setup"><span class="num">✓</span>Setup checklist</a><a data-view="settings"><span class="num">⚙</span>Settings</a>`;
+    + `<div class="sep"></div><a data-view="history"><span class="num">🕘</span>Run history</a><a data-view="repo"><span class="num">🗂</span>Test Case Repo<span class="tr-nb">NEW</span></a><a data-view="runs"><span class="num">▶</span>Test Runs<span class="tr-nb">NEW</span></a><a data-view="prompts"><span class="num">📝</span>Prompt templates</a><a data-view="tokens"><span class="num">📊</span>Token Usage<span class="tu-new" style="background:#12a150;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a><a data-view="setup"><span class="num">✓</span>Setup checklist</a><a data-view="settings"><span class="num">⚙</span>Settings</a>`;
   $("#nav").after(nav);
   const ri = document.createElement("div"); ri.className = "runinfo"; ri.id = "bRunInfo"; $("#runinfo").after(ri);
   $$("#bNav a").forEach((a) => (a.onclick = () => go(a.dataset.view)));
@@ -121,7 +121,7 @@ function renderBatch() {
   const v = $("#view");
   const page = { "b-items": bViewItems, "b-gen": bViewGen, "b-review": bViewReview, "b-qtest": bViewQtest }[S.view];
   if (page) return page(v);
-  ({ history: (x) => viewHistory(x), compare: (x) => viewCompare(x), tokens: (x) => viewTokens(x), prompts: (x) => viewPrompts(x), setup: viewSetup, settings: viewSettings }[S.view] || bViewItems)(v);
+  ({ history: (x) => viewHistory(x), compare: (x) => viewCompare(x), tokens: (x) => viewTokens(x), prompts: (x) => viewPrompts(x), repo: (x) => viewRepo(x), runs: (x) => viewRuns(x), setup: viewSetup, settings: viewSettings }[S.view] || bViewItems)(v);
   bInjectBar(v);
 }
 // Shared pages (history/setup/settings) get the batch bar once their content is rendered.

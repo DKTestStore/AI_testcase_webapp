@@ -154,6 +154,11 @@ def app_page(request: Request):
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+# Test Case Repo + Test Runs (additive feature; routes live in their own modules, session auth reused)
+from . import test_repo, test_runs  # noqa: E402
+app.include_router(test_repo.router, dependencies=[Depends(current)])
+app.include_router(test_runs.router, dependencies=[Depends(current)])
+
 
 # --------------------------------------------------------------------------- #
 # Session
