@@ -28,6 +28,31 @@ function trTreeRows(folders, parent = "", lvl = 1) {
     .flatMap((f) => [{ f, lvl }, ...trTreeRows(folders, f.id, lvl + 1)]);
 }
 
+// expand / collapse (shared by Repo tree, Save-to-repo modal, Add-cases picker). Collapsed ids per tree in localStorage.
+const TR_TREE = {};
+function trTreeState(key) {
+  if (!TR_TREE[key]) { try { TR_TREE[key] = new Set(JSON.parse(localStorage.getItem("trTreeClosed:" + key) || "[]")); } catch (e) { TR_TREE[key] = new Set(); } }
+  return TR_TREE[key];
+}
+function trTreeSave(key) { try { localStorage.setItem("trTreeClosed:" + key, JSON.stringify([...trTreeState(key)])); } catch (e) { /* storage full / blocked */ } }
+function trTreeToggle(key, id) { const c = trTreeState(key); c.has(id) ? c.delete(id) : c.add(id); trTreeSave(key); }
+function trTreeAll(key, folders, open) { const c = trTreeState(key); c.clear(); if (!open) folders.forEach((f) => { if (folders.some((x) => (x.parent || "") === f.id)) c.add(f.id); }); trTreeSave(key); }
+// rows visible under the collapse state; ancestors of `sel` are always expanded; `all` (e.g. while filtering) shows everything
+function trTreeView(folders, key, sel, all) {
+  const closed = trTreeState(key), by = Object.fromEntries(folders.map((f) => [f.id, f]));
+  let p = by[sel], changed = false;
+  while (p && p.parent) { if (closed.delete(p.parent)) changed = true; p = by[p.parent]; }
+  if (changed) trTreeSave(key);
+  const kids = new Set(folders.map((f) => f.parent).filter(Boolean));
+  const hidden = (f) => { let q = by[f.parent]; while (q) { if (closed.has(q.id)) return true; q = by[q.parent]; } return false; };
+  return {
+    rows: trTreeRows(folders).filter(({ f }) => all || !hidden(f)),
+    caret: (f) => kids.has(f.id) ? `<span class="tr-car" data-car="${f.id}" title="${closed.has(f.id) ? "Expand" : "Collapse"}">${closed.has(f.id) ? "▸" : "▾"}</span>` : `<span class="tr-car e"></span>`,
+    any: kids.size > 0,
+  };
+}
+function trTreeAllBtns() { return `<span class="tr-xa" data-xa="1" title="Expand all">⊞</span><span class="tr-xa" data-xa="0" title="Collapse all">⊟</span>`; }
+
 // ------------------------------------------------------------------ Review page hook
 function trReviewCases() { return (S.cases && S.cases.length ? S.cases : (S.run && S.run.test_cases) || []); }
 function trStory() { const r = S.run || {}; return { story: (r.story_id || "").trim(), story_title: ((r.jira || {}).summary || "").trim(), source: r.source || "", rid: r.rid || "" }; }
@@ -64,9 +89,9 @@ async function trSaveModal() {
   let j; try { j = await api("/api/repo/check", { method: "POST", body: { test_cases: cases, ...st } }); } catch (e) { return toast(e.message, true); }
   const M = { status: "Draft", folder: j.suggest.folder_id || "__new_default", acts: {} };
   j.matches.forEach((m, i) => { if (m) M.acts[i] = m.identical ? "skip" : "update"; });
-  const rows = trTreeRows(j.folders);
+  const TV = () => trTreeView(j.folders, "save", M.folder);
   const tree = () => `<div class="card tree" style="padding:8px;margin:0;max-height:210px;overflow:auto" id="trSvTree">
-    ${rows.map(({ f, lvl }) => `<a class="l${lvl} ${M.folder === f.id ? "a" : ""}" data-f="${f.id}">${lvl === 1 ? "📁" : "📂"} ${esc(f.name)} <span class="c">${f.count}</span></a>`).join("")}
+    ${TV().any ? `<a class="tr-xrow">${trTreeAllBtns()}</a>` : ""}${(() => { const tv = TV(); return tv.rows.map(({ f, lvl }) => `<a class="l${lvl} ${M.folder === f.id ? "a" : ""}" data-f="${f.id}">${tv.caret(f)}${lvl === 1 ? "📁" : "📂"} ${esc(f.name)} <span class="c">${f.count}</span></a>`).join(""); })()}
     ${j.suggest.folder_id ? "" : `<a class="l2 ${M.folder === "__new_default" ? "a" : ""}" data-f="__new_default">📂 (new) ${esc(j.suggest.project)} › ${esc(j.suggest.story_folder)} <span class="c">created on save</span></a>`}
     <a class="l2" style="color:#4361ee" id="trNewF">＋ New folder…</a></div>
     <div id="trNewFBox" style="display:none;margin-top:6px" class="fl"><input id="trNewFName" placeholder="Folder name" style="flex:1"><button class="btn sm" id="trNewFOk">Add</button></div>
@@ -83,7 +108,9 @@ async function trSaveModal() {
     ${cases.map((c, i) => { const m = j.matches[i]; return `<tr><td style="white-space:nowrap"><b>${esc(c.id)}</b></td><td>${esc(c.name)}</td><td><small style="color:${m ? "#a36b00" : "#94a3b8"}">${m ? `Match: REPO ${esc(m.id)} v${m.version} (${m.score}%${m.identical ? " identical" : ""})` : "No match"}</small></td><td>${actSeg(m, i)}</td></tr>`; }).join("")}</table></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn" id="trSvGo">${label()}</button></div>`, 940);
   const bindTree = () => {
-    $$("#trSvTree a[data-f]", ov).forEach((a) => (a.onclick = () => { M.folder = a.dataset.f; $("#trTreeBox").innerHTML = tree(); bindTree(); }));
+    const re = () => { $("#trTreeBox").innerHTML = tree(); bindTree(); };
+    $$("#trSvTree a[data-f]", ov).forEach((a) => (a.onclick = (e) => { const c = e.target.closest("[data-car]"); if (c) { trTreeToggle("save", c.dataset.car); return re(); } M.folder = a.dataset.f; re(); }));
+    $$("#trSvTree [data-xa]", ov).forEach((x) => (x.onclick = (e) => { e.stopPropagation(); trTreeAll("save", j.folders, x.dataset.xa === "1"); re(); }));
     $("#trNewF", ov).onclick = () => { $("#trNewFBox").style.display = "flex"; $("#trNewFName").focus(); };
     $("#trNewFOk", ov).onclick = () => { const n = $("#trNewFName").value.trim(); if (!n) return; M.newFolder = n; M.folder = "__custom";
       $("#trSvTree").insertAdjacentHTML("beforeend", `<a class="l2 a" data-f="__custom">📂 ${esc(n)} <span class="c">new</span></a>`); $$("#trSvTree a").forEach((x) => x.classList.toggle("a", x.dataset.f === "__custom")); $("#trNewFBox").style.display = "none"; };
@@ -166,7 +193,8 @@ function trBindPager(id, st, rerender) {
 }
 function trRepoRender() {
   const d = RP.data; RP.pg = RP.pg || { page: 1, size: 25 };
-  const rows = trTreeRows(d.folders).filter(({ f }) => !RP.ftree || f.name.toLowerCase().includes(RP.ftree.toLowerCase()));
+  const tv = trTreeView(d.folders, "repo", RP.folder, !!RP.ftree);
+  const rows = tv.rows.filter(({ f }) => !RP.ftree || f.name.toLowerCase().includes(RP.ftree.toLowerCase()));
   const list = trRepoFiltered(); const shown = trPage(list, RP.pg); RP.sel = new Set([...RP.sel].filter((id) => d.cases.some((c) => c.id === id)));
   const live = d.cases.filter((c) => c.status !== "Archived").length;
   const opt = (id, lab, vals, cur) => `<select id="${id}"><option value="">${lab}: All</option>${vals.map((x) => `<option value="${x[0]}" ${cur === x[0] ? "selected" : ""}>${x[1]}</option>`).join("")}</select>`;
@@ -174,9 +202,9 @@ function trRepoRender() {
   const ren = RP.renaming;
   $("#trRepoBody").outerHTML = `<div id="trRepoBody" class="g2" style="grid-template-columns:270px 1fr;align-items:start">
     <div class="card tree" style="padding:10px;margin:0;position:relative" id="trTree"><input class="w" id="trFq" style="margin-bottom:8px" placeholder="🔍 Filter folders" value="${esc(RP.ftree)}">
-      <a data-f="" class="${RP.folder ? "" : "a"}">🗂 All test cases <span class="c">${live}</span></a>
+      <a data-f="" class="${RP.folder ? "" : "a"}">🗂 All test cases <span class="c">${live}</span>${tv.any ? trTreeAllBtns() : ""}</a>
       ${rows.map(({ f, lvl }) => ren === f.id ? `<a class="l${Math.min(lvl + 1, 4)}" style="background:#f5f7ff" data-ren="${f.id}"><input id="trRenIn" value="${esc(f.name)}" style="flex:1;padding:3px 6px;font-size:12px;border-color:#4361ee"><button class="btn s sm" id="trRenOk" style="padding:3px 7px">✓</button><button class="btn g sm" id="trRenNo" style="padding:3px 7px">✕</button></a><div class="hint" style="padding-left:40px">Enter to save · Esc to cancel</div>`
-        : `<a data-f="${f.id}" draggable="true" title="${esc(f.description || f.path)}" class="l${Math.min(lvl + 1, 4)} ${RP.folder === f.id ? "a" : ""}"><span class="dh" title="Drag to reorder">⋮⋮</span>${RP.folder === f.id ? "📂" : "📁"} ${esc(f.name)} <span class="c">${f.count}</span><span class="mn" data-menu="${f.id}" title="Folder actions">⋯</span></a>`).join("")}
+        : `<a data-f="${f.id}" draggable="true" title="${esc(f.description || f.path)}" class="l${Math.min(lvl + 1, 4)} ${RP.folder === f.id ? "a" : ""}"><span class="dh" title="Drag to reorder">⋮⋮</span>${tv.caret(f)}${RP.folder === f.id ? "📂" : "📁"} ${esc(f.name)} <span class="c">${f.count}</span><span class="mn" data-menu="${f.id}" title="Folder actions">⋯</span></a>`).join("")}
       <a style="color:#4361ee" id="trNewFolder">＋ New folder</a></div>
     <div class="card" style="margin:0"><div class="tb"><input id="trQ" placeholder="🔍 Search title, step text, TC-ID…" style="width:240px" value="${esc(RP.q)}">
       ${opt("trFP", "Priority", pairs(["High", "Medium", "Low"]), RP.prio)}${opt("trFS", "Status", pairs(["Draft", "Ready", "Obsolete", "Archived"]), RP.status)}${opt("trFSrc", "Source", pairs(["AI", "Manual", "Record"]), RP.source)}${opt("trFR", "Last result", [["Pass", "Pass"], ["Fail", "Fail"], ["Blocked", "Blocked"], ["none", "Never run"]], RP.result)}
@@ -245,6 +273,8 @@ function trBindTree() {
   $$("a[data-f]", tree).forEach((a) => {
     a.onclick = (e) => {
       const m = e.target.closest("[data-menu]"); if (m) { e.stopPropagation(); return trFolderMenu(m.dataset.menu, a); }
+      const car = e.target.closest("[data-car]"); if (car) { e.stopPropagation(); trTreeToggle("repo", car.dataset.car); return trRepoRender(); }
+      const xa = e.target.closest("[data-xa]"); if (xa) { e.stopPropagation(); trTreeAll("repo", RP.data.folders, xa.dataset.xa === "1"); return trRepoRender(); }
       RP.folder = a.dataset.f; RP.pg.page = 1; trRepoRender();
     };
     if (!a.dataset.f) return;

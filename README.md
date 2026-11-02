@@ -252,6 +252,7 @@ Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file 
   can't be added to new cycles, and still appear in execution history. **Delete** on a case that was executed or is in
   a cycle archives it instead. In a cycle such cases show muted as *Case archived* / *Case removed* with *Remove from cycle*.
   Cycles can always be deleted or archived, even when their cases are gone. The name confirmation ignores dash type, spacing and case.
+- **Expand / collapse folders**: every folder that has sub-folders gets a ▸/▾ caret, and *All test cases* has ⊞ Expand all / ⊟ Collapse all. The state is remembered per browser (localStorage), and the selected folder's parents open automatically. This works the same in the Repo tree, the Save-to-repo modal and the Add-cases picker.
 - **Pagination** (25 / 50 / 100 rows) on the Repo table, the cycles list (with search and status filter) and the cycle run list.
 - **🔍 Review** (bulk bar, one or more cases): opens the cases as a new run (source *Repo*) in Review step 3. If a run is
   already open, a confirm dialog appears and that run is saved to Run history first. A toast links to it and Run history

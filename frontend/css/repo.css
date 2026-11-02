@@ -68,3 +68,8 @@
 .trv .tr-dz,.tr-dz{background:#fdeaea;border:1px solid #f3b4b4;color:#a12020;border-radius:8px;padding:10px;font-size:12.5px}
 .tr-toast2{position:fixed;top:56px;right:24px;background:#141a2e;color:#fff;padding:10px 16px;border-radius:8px;box-shadow:0 8px 20px #0004;z-index:70;display:flex;gap:14px;align-items:center;font-size:13px}
 tr.tr-jsv td{background:#f0fdf4!important}.tr-jb{background:#12a150;color:#fff;font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;margin-left:6px}
+/* expand / collapse carets */
+.trv .tree .tr-car{display:inline-block;width:14px;text-align:center;color:#6b7385;font-size:11px;cursor:pointer;border-radius:4px;flex-shrink:0}.trv .tree .tr-car:hover{background:#e3e7f0}.trv .tree .tr-car.e{cursor:default;background:none}
+.trv .tree .tr-xa{margin-left:4px;color:#6b7385;font-size:12px;cursor:pointer;padding:0 4px;border-radius:4px}.trv .tree .tr-xa:hover{background:#e3e7f0;color:#4361ee}
+.trv .tree a.tr-xrow{justify-content:flex-end;padding:2px 8px;cursor:default}.trv .tree a.tr-xrow:hover{background:none}
+.trv .tree a .c+.tr-xa{margin-left:6px}
