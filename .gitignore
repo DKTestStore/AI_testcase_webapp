@@ -10,3 +10,5 @@ backend/app_settings.json
 backend/token_usage.json
 backend/prompt_templates.json
 backend/recordings/
+backend/test_repo/
+backend/attachments/

@@ -170,12 +170,14 @@ Runtime data is git-ignored: `ai_test_generator/.env`, `ai_test_generator/report
 │   ├── parsing.py              # markdown ⇄ test cases, AC splitting / TC→AC mapping
 │   ├── excel_io.py             # review columns + AC List sheet, template, Excel import (validate / modes)
 │   ├── history_store.py        # rolling run history (index + snapshots, FIFO)
+│   ├── test_repo.py            # Test Case Repo: folders, versions, duplicate check, import, AI review (/api/repo/*)
+│   ├── test_runs.py            # Test Runs: cycles, executions, attachments (/api/runs/*, /api/attachments/*)
 │   ├── session_store.py        # per-browser current run (memory + backend/sessions/*.json)
 │   ├── settings_store.py       # .env settings (masked) + app_settings.json (history limit)
 │   └── config.py               # paths, .env loading, data folders
 ├── frontend/
 │   ├── welcome.html  app.html  css/app.css
-│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js
+│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js  repo.js  runs.js  (css/repo.css)
 ├── requirements.txt
 ├── README.md
 └── NOTES.md                    # assumptions and known gaps
@@ -195,6 +197,51 @@ Offline test switches (process environment only, never read from `.env`): `ATG_M
 - Test data can be created **without Gemini calls** through Excel import (`POST /api/excel/import`) or by saving test cases
   (`PUT /api/review/test_cases`) after a Local text input. Use **Preview payload** to check qTest output without uploading.
 - Useful endpoints: `GET /api/health`, `GET /api/setup/status`, `GET /api/history`, `GET|PUT /api/settings/history_limit`.
+
+## Test Case Repo & Test Runs
+
+Store reviewed test cases for reuse, group them into cycles and execute them step by step. No extra setup:
+no new Python dependency (uploads are sent as base64 JSON like the Excel upload; `openpyxl` is already required)
+and no new `.env` key — AI review uses the existing Gemini settings.
+
+**Data folders** (created automatically, git-ignored, back them up if you care about the data):
+
+| Folder | Content |
+|---|---|
+| `backend/test_repo/repo.json` | repo folders + test cases (with every version snapshot) |
+| `backend/test_repo/runs.json` | cycles, cycle items and every execution attempt |
+| `backend/attachments/` | execution attachments (images / videos / logs / PDF, max **50 MB** each), served only via `GET /api/attachments/<name>` (strict file-name check) |
+
+Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file lock.
+
+**Usage flow**
+1. **Review** page → next to the unchanged *Continue to qTest Upload* there are two new buttons:
+   - **🗂 Save to Test Case Repo** – choose the folder (default *Project › Story* from the Jira key, or ＋ New folder), status
+     *Draft / Ready*, tags and linked story. Every case is checked against the repo cases of the same story:
+     *Update → vN+1* (creates a new version), *Save as new* or *Skip* (default *Skip* when identical).
+   - **▶ Execute now** – new quick-run cycle (`Quick run – <story> – DD-Mon-YYYY`, build / environment / assignee as free text)
+     or add to an existing cycle. Cases are saved to the repo automatically (new ones as *Draft*) and the cycle opens.
+2. **Test Case Repo** (sidebar): folder tree with counts, search (title, step text, TC-ID), filters (priority, status, source,
+   last result), bulk *Add to cycle / Move / Mark Ready / Delete* (with confirm), **Import** (.xlsx or .csv using the app's
+   upload-template columns, or JSON), and a side drawer with steps, versions and executions. IDs are `TC-0001…`.
+   **＋ New test case** / ✎ Edit: all fields are text, step editor (step / expected / test data – add, duplicate, delete,
+   drag or ▲▼ to reorder), *Save draft*, *Save as Ready*, **🤖 Review with AI** – per-field / per-step suggestions plus an AC
+   coverage score; Accept / Reject each or all, nothing changes until you *Apply* (token usage recorded as
+   *AI review (repo)* with the model name).
+3. **Test Runs** (sidebar): cycles list with ＋ New / ✎ Edit (all free-text fields) / ⧉ Clone / 🗄 Archive / 🗑 Delete (type the
+   name to confirm). Inside a cycle: ＋ Add cases (folder tree + checkbox list, *Ready only* on by default, priority and
+   *last result failed* filters), status filter chips, assignee filter, reassign, remove, ▲ reorder, ▶ Run selected,
+   ▶ Continue execution.
+4. **Execution screen**: case list with status dots, step cards (Actual result, *= Same as expected*, Pass / Fail / Blocked / N/A),
+   attachments per step (Upload image/video, 📋 Paste or Ctrl+V a screenshot, thumbnails, centred preview, delete),
+   *Pass all remaining*, timer, overall status derived automatically (any Fail → Fail, else any Blocked → Blocked,
+   all Pass/N/A → Pass) with an override that requires a reason, defect keys, comments, Save / Save & exit / Save & next.
+   Shortcuts: `P` `F` `B` `N` set the current step, `J`/`K` move, `Ctrl+Enter` save & next. Every attempt is stored separately
+   with the case version it ran against; history is shown per case. *Log defect to Jira* and *Sync to qTest* are shown
+   disabled (“coming soon”).
+
+Mock for tests: with `ATG_MOCK_GEMINI=1` the AI review returns deterministic suggestions (no Gemini call).
+E2E: `/workspace/e2e/test_testrun.py` (`ATG_BASE=http://127.0.0.1:8001`).
 
 ## Original CLI pipeline
 `python -m ai_test_generator.test_runner.main_pipeline` still works as before (run from the repo root).
