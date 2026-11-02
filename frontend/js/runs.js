@@ -19,7 +19,14 @@ async function viewRuns(v) {
   $("#trArch").onchange = (e) => { RS.archived = e.target.checked; render(); };
   $("#trNewCy").onclick = () => trCycleModal();
   let j; try { j = await api("/api/runs" + (RS.archived ? "?archived=1" : "")); } catch (e) { $("#trCyBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
-  const allc = j.cycles; const act = cs.filter((c) => c.status === "Active");
+  try { trRenderCycles(j); } catch (e) {   // never leave the page on "Loading…"
+    console.error(e); const b = $("#trCyBody");
+    if (b) b.outerHTML = `<div id="trCyBody"><div class="error">Could not show the cycles: ${esc(e.message)}</div><div class="card"><div class="tr-empty">No cycles to show. Create one with <b>＋ New cycle</b>, or use <b>▶ Execute now</b> on the Review page.</div></div></div>`;
+  }
+}
+function trRenderCycles(j) {
+  const allc = Array.isArray(j.cycles) ? j.cycles : []; allc.forEach((c) => { c.counts = c.counts || {}; c.status = c.status || "Active"; });
+  const act = allc.filter((c) => c.status === "Active");
   const stOf = (c) => c.status === "Archived" ? "Archived" : (c.counts["Not run"] === Object.values(c.counts).reduce((a, b) => a + b, 0) ? "Not started" : "In progress");
   const filt = allc.filter((c) => (!RS.cq || [c.name, c.id, c.build, c.env, c.release, c.sprint].join(" ").toLowerCase().includes(RS.cq.toLowerCase())) && (!RS.cst || stOf(c) === RS.cst));
   const cs = trPage(filt, RS.cpg);
@@ -141,7 +148,7 @@ async function trSelectCases(c) {
     const p = pool(); const fset = M.folder ? desc(M.folder) : null;
     const cnt = (fid) => { const s = desc(fid); const a = p.filter((x) => s.has(x.folder_id)); return [a.filter((x) => M.sel.has(x.id)).length, a.length]; };
     $("#trScTree").innerHTML = `<a data-f="" class="${M.folder ? "" : "a"}"><input type="checkbox" data-all="" ${p.length && p.every((x) => M.sel.has(x.id)) ? "checked" : ""}> 🗂 All ${M.ready ? "Ready " : ""}cases <span class="c">${p.length}</span></a>` +
-      trTreeRows(d.folders).map(({ f, lvl }) => { const [s, t] = cnt(f.id); return `<a data-f="${f.id}" class="l${Math.min(lvl, 4)} ${M.folder === f.id ? "a" : ""}"><input type="checkbox" data-all="${f.id}" ${t && s === t ? "checked" : ""}> ${esc(f.name)} <span class="c">${s}/${t}</span></a>`; }).join("");
+      (() => { const tv = trTreeView(d.folders, "pick", M.folder); return (tv.any ? `<a class="tr-xrow">${trTreeAllBtns()}</a>` : "") + tv.rows.map(({ f, lvl }) => { const [s, t] = cnt(f.id); return `<a data-f="${f.id}" class="l${Math.min(lvl, 4)} ${M.folder === f.id ? "a" : ""}">${tv.caret(f)}<input type="checkbox" data-all="${f.id}" ${t && s === t ? "checked" : ""}> ${esc(f.name)} <span class="c">${s}/${t}</span></a>`; }).join(""); })();
     const q = M.q.toLowerCase(); const list = p.filter((x) => (!fset || fset.has(x.folder_id)) && (!q || (x.id + " " + x.title).toLowerCase().includes(q)));
     $("#trScList").innerHTML = list.length ? `<table><tr><th><input type="checkbox" id="trScAll" ${list.every((x) => M.sel.has(x.id)) ? "checked" : ""}></th><th>TC-ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Last run</th></tr>${list.map((x) => `<tr><td><input type="checkbox" class="trSc" data-id="${x.id}" ${M.sel.has(x.id) ? "checked" : ""}></td><td><b>${esc(x.id)}</b></td><td>${esc(x.title)}</td><td><span class="pill ${TR_PRIO(x.priority)}">${esc(x.priority)}</span></td><td><span class="pill ${TR_ST[x.status] ?? "gr"}">${esc(x.status)}</span></td><td><span class="pill ${TR_RES[x.last_result || ""]}">${esc(x.last_result || "—")}</span></td></tr>`).join("")}</table>
       <div class="muted" style="margin-top:8px;font-size:12px">${inCy.size ? inCy.size + " case(s) already in cycle hidden" : ""}</div>` : `<div class="tr-empty">No ${M.ready ? "Ready " : ""}cases here${M.ready ? " – turn off “Ready only” to include Drafts" : ""}.</div>`;
@@ -149,6 +156,9 @@ async function trSelectCases(c) {
     $("#trScN").textContent = `${M.sel.size} selected`; $("#trScBy").textContent = Object.entries(by).map(([k, n]) => `${k} ×${n}`).join(" · ");
     $("#trScGo").disabled = !M.sel.size; $("#trScGo").textContent = `＋ Add ${M.sel.size} to ${c.name.length > 24 ? c.name.slice(0, 24) + "…" : c.name}`;
     $$("#trScTree a").forEach((a) => (a.onclick = (e) => {
+      const car = e.target.closest("[data-car]"); if (car) { trTreeToggle("pick", car.dataset.car); return paint(); }
+      const xa = e.target.closest("[data-xa]"); if (xa) { trTreeAll("pick", d.folders, xa.dataset.xa === "1"); return paint(); }
+      if (a.classList.contains("tr-xrow")) return;
       if (e.target.tagName === "INPUT") { const s = e.target.dataset.all ? desc(e.target.dataset.all) : null; p.filter((x) => !s || s.has(x.folder_id)).forEach((x) => (e.target.checked ? M.sel.add(x.id) : M.sel.delete(x.id))); }
       else M.folder = a.dataset.f;
       paint();
