@@ -16,6 +16,8 @@ FIELDS: List[tuple] = [
     ("OPENAI_API_KEY", "OpenAI API Key (Codex option)", "Codex / OpenAI", True),
     ("OLLAMA_MODEL", "Ollama model (default gemma3:4b)", "Ollama", False),
     ("OLLAMA_HOST", "Ollama host (default http://localhost:11434)", "Ollama", False),
+    ("OLLAMA_TIMEOUT", "Ollama timeout in seconds (default 300)", "Ollama", False),
+    ("OLLAMA_NUM_CTX", "Ollama context window (default 8192)", "Ollama", False),
     ("JIRA_URL", "Base URL", "Jira", False),
     ("JIRA_EMAIL", "Email", "Jira", False),
     ("JIRA_API_TOKEN", "API Token", "Jira", True),
