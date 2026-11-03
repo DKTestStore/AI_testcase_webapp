@@ -61,7 +61,7 @@ function go(view) {
 function renderNav() {
   $$("#nav a").forEach((a) => {
     const v = a.dataset.view;
-    a.classList.toggle("a", v === S.view);
+    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")));
     a.classList.toggle("done", STEPS.includes(v) && stepDone(v));
     a.classList.toggle("locked", STEPS.includes(v) && !stepUnlocked(v));
   });
@@ -91,7 +91,8 @@ function render() {
   if (S.mode === "batch") return renderBatch();
   renderNav();
   const v = $("#view");
-  ({ history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  if (String(S.view).startsWith("dashboard")) return window.viewDashboard ? viewDashboard(v) : viewInput(v);
+  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
 }
 
 
@@ -567,7 +568,7 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
   const h = location.hash.slice(1);
   if (st.mode === "batch") { await resumeBatch(h); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
   if (h.startsWith("repo/case/") && window.cpRoute) { window.cpRoute(h.slice(10)); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
-  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history" || h === "tokens" || h === "prompts" || (h === "acs" && stepUnlocked("review")))) ? h : "input";
+  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "dashboard" || h.startsWith("dashboard/") || h === "settings" || h === "setup" || h === "history" || h === "tokens" || h === "prompts" || (h === "acs" && stepUnlocked("review")))) ? h : "input";
   render();
   if (window.refreshHistoryCount) refreshHistoryCount();
 })();

@@ -337,3 +337,16 @@ and the Batch layout work exactly as before.
   **Improve with AI** makes one regenerate call for that test case (mocked with `ATG_MOCK_GEMINI=1`).
 - Tests: `/workspace/e2e/rt.py` (mock server on 8001; `ATG_BASE` overrides). Mock generate emits
   `Test Case Type:` lines when the feature text contains `[mock-types]`.
+
+## Dashboard
+Sidebar → **Dashboard** (route `#dashboard`, detail views `#dashboard/<section>`). Read-only; data from
+`GET /api/dashboard?cycle=&story=&folder=&from=&to=` (`backend/dashboard.py`), computed from the Test Case Repo,
+Test Runs (active cycles, executions, defect keys) and Token Usage.
+
+- Tiles: total cases, active cycles, pass rate across active cycles, failed cases without a defect.
+- Sections: cases by story/folder × status, cycle progress, pass/fail/blocked/not run per cycle, failed cases + linked
+  Jira defect keys (links use the Jira URL from Settings), executions per tester, AI vs manual cases + token usage per story
+  (cost uses the Token Usage $/1M rates).
+- Every section has a **Table | Donut | Bar** switch (pure SVG, no libraries); the choice is remembered per section in localStorage.
+- **Customize**: show/hide, drag to reorder, default chart per section, default cycle and date range (localStorage; Reset).
+- Not backed by data yet: Jira defect *status* (not fetched – shown as "not synced"); "+ Log defect" is disabled (coming soon).
