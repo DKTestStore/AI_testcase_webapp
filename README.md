@@ -228,6 +228,16 @@ Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file 
    drag or ▲▼ to reorder), *Save draft*, *Save as Ready*, **🤖 Review with AI** – per-field / per-step suggestions plus an AC
    coverage score; Accept / Reject each or all, nothing changes until you *Apply* (token usage recorded as
    *AI review (repo)* with the model name).
+   - **Pagination**: the case table always shows a pager above and below it (Showing a–b of N, rows per page
+     10 / **25** (default) / 50 / 100, ‹ Prev, page numbers, Next ›). It resets to page 1 when the search, filters,
+     *Show archived* or the selected folder change.
+   - **⬇ Export ▾** (next to Import): Excel (.xlsx) or CSV. Exports the ticked cases, or every case matching the current
+     folder / search / filters if none are ticked (archived ones only when *Show archived* or *Status: Archived* is on).
+     One row per test step; the case fields (Test Case ID, Test Case Name, Folder Path, Priority, Case Status, Version,
+     Source, Story, Description, Precondition, Last Result, Updated) are on the first row of each case, followed by
+     Step No, Step Description, Expected Result, Test Data. Endpoint: `POST /api/repo/export`
+     `{ids, format: "xlsx"|"csv", include_archived}`. The file can be re-imported via **Import** (title, description,
+     precondition, priority and steps/expected are read back; test data, folder and status are not).
 3. **Test Runs** (sidebar): cycles list with ＋ New / ✎ Edit (all free-text fields) / ⧉ Clone / 🗄 Archive / 🗑 Delete (type the
    name to confirm). Inside a cycle: ＋ Add cases (folder tree + checkbox list, *Ready only* on by default, priority and
    *last result failed* filters), status filter chips, assignee filter, reassign, remove, ▲ reorder, ▶ Run selected,

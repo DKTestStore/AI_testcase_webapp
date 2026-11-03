@@ -487,6 +487,63 @@ def repo_import(data: Dict[str, Any] = Body(...)):
     return {"ok": True, "warnings": warnings[:50], **res}
 
 
+# ------------------------------------------------------------------ export
+EXPORT_HEADERS = ["Test Case ID", "Test Case Name", "Folder Path", "Priority", "Case Status", "Version", "Source", "Story",
+                  "Test Case Description", "Precondition", "Last Result", "Updated", "Step No", "Step Description",
+                  "Expected Result", "Test Data"]
+
+
+def _export_rows(d, cases) -> List[List[Any]]:
+    """One row per step; case fields only on the first row (re-importable through /api/repo/import)."""
+    rows = []
+    for c in cases:
+        head = [c.get("id", ""), c.get("title", ""), _folder_path(d, c.get("folder_id", "")), c.get("priority", ""),
+                c.get("status", ""), c.get("version", ""), c.get("source", ""), c.get("story", ""),
+                c.get("description", ""), c.get("precondition", ""), c.get("last_result", "") or "", c.get("updated", "")]
+        steps = c.get("steps") or [{}]
+        for i, st in enumerate(steps, 1):
+            rows.append((head if i == 1 else [""] * len(head)) +
+                        [i if st else "", st.get("step", ""), st.get("expected", ""), st.get("data", "")])
+    return rows
+
+
+@router.post("/api/repo/export")
+def repo_export(data: Dict[str, Any] = Body(...)):
+    from fastapi.responses import Response
+    fmt = "csv" if str(data.get("format", "xlsx")).lower() == "csv" else "xlsx"
+    ids = [str(i) for i in (data.get("ids") or [])]
+    arch = bool(data.get("include_archived"))
+    d = _load()
+    by_id = {c["id"]: c for c in d["cases"]}
+    cases = [by_id[i] for i in ids if i in by_id] if ids else list(d["cases"])
+    if not arch:
+        cases = [c for c in cases if c.get("status") != "Archived"]
+    if not cases:
+        raise ServiceError("No test cases to export.")
+    rows = _export_rows(d, cases)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    if fmt == "csv":
+        buf = io.StringIO(); w = csv.writer(buf)
+        w.writerow(EXPORT_HEADERS); w.writerows(rows)
+        body, mt = ("\ufeff" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8"
+    else:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Test Cases"
+        ws.append(EXPORT_HEADERS)
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="4361EE")
+        for r in rows:
+            ws.append([("'" + v) if isinstance(v, str) and v[:1] in "=+-@" else v for v in r])
+        for col, wd in zip("ABCDEFGHIJKLMNOP", (12, 40, 30, 10, 12, 8, 10, 14, 40, 30, 12, 18, 8, 50, 50, 25)):
+            ws.column_dimensions[col].width = wd
+        ws.freeze_panes = "A2"
+        b = io.BytesIO(); wb.save(b)
+        body, mt = b.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(body, media_type=mt, headers={
+        "Content-Disposition": f'attachment; filename="test_cases_{stamp}.{fmt}"', "X-Case-Count": str(len(cases))})
+
+
 # ------------------------------------------------------------------ AI review
 AI_SYSTEM = """You are a senior QA reviewer. Review ONE manual test case against the acceptance criteria.
 Return ONLY JSON: {"coverage": 0-100, "ac": [{"id": "AC-1", "title": "...", "covered": true}],

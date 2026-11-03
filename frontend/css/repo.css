@@ -73,3 +73,7 @@ tr.tr-jsv td{background:#f0fdf4!important}.tr-jb{background:#12a150;color:#fff;f
 .trv .tree .tr-xa{margin-left:4px;color:#6b7385;font-size:12px;cursor:pointer;padding:0 4px;border-radius:4px}.trv .tree .tr-xa:hover{background:#e3e7f0;color:#4361ee}
 .trv .tree a.tr-xrow{justify-content:flex-end;padding:2px 8px;cursor:default}.trv .tree a.tr-xrow:hover{background:none}
 .trv .tree a .c+.tr-xa{margin-left:6px}
+
+/* repo pagination (top + bottom) and export menu */
+#trRepoPgTop.tr-pg{margin:0 0 8px}#trRepoPg.tr-pg{flex-wrap:wrap}
+.trv .tr-expm{position:absolute;top:100%;right:0;z-index:50;background:#fff;border:1px solid #e3e7f0;border-radius:8px;box-shadow:0 8px 24px rgba(20,30,60,.15);min-width:200px;padding:4px 0;margin-top:4px}.trv .tr-expm a{display:block;padding:7px 12px;font-size:13px;color:#1e2433;cursor:pointer}.trv .tr-expm a:hover{background:#f5f7ff}

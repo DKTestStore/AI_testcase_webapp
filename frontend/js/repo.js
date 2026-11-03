@@ -157,8 +157,9 @@ async function trExecModal() {
 async function viewRepo(v) {
   if (RP.edit) return trEditor(v);
   v.innerHTML = `<div class="trv" id="trRepo"><div class="hd"><div><h1>Test Case Repository</h1><div class="sub">Single source of truth for test cases · versioned · reusable across cycles</div></div>
-    <div class="fl"><button class="btn g" id="trImp">⬆ Import (Excel / CSV / JSON)</button><button class="btn" id="trNew">＋ New test case</button></div></div><div id="trRepoBody" class="sub">Loading…</div></div>`;
+    <div class="fl"><button class="btn g" id="trImp">⬆ Import (Excel / CSV / JSON)</button><span style="position:relative;display:inline-flex"><button class="btn g" id="trExp">⬇ Export ▾</button></span><button class="btn" id="trNew">＋ New test case</button></div></div><div id="trRepoBody" class="sub">Loading…</div></div>`;
   $("#trImp").onclick = trImportModal;
+  $("#trExp").onclick = (e) => { e.stopPropagation(); trExportMenu(e.currentTarget); };
   $("#trNew").onclick = () => { RP.edit = { title: "", description: "", precondition: "", priority: "Medium", story: "", tags: [], type: "", steps: [{ step: "", expected: "", data: "" }], folder_path: trFolderPath(RP.folder) }; render(); };
   try { RP.data = await api("/api/repo"); } catch (e) { $("#trRepoBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
   trRepoRender();
@@ -210,11 +211,11 @@ function trRepoRender() {
       ${opt("trFP", "Priority", pairs(["High", "Medium", "Low"]), RP.prio)}${opt("trFS", "Status", pairs(["Draft", "Ready", "Obsolete", "Archived"]), RP.status)}${opt("trFSrc", "Source", pairs(["AI", "Manual", "Record"]), RP.source)}${opt("trFR", "Last result", [["Pass", "Pass"], ["Fail", "Fail"], ["Blocked", "Blocked"], ["none", "Never run"]], RP.result)}
       <label class="sw" style="margin:0;text-transform:none;font-size:12px;color:#1e2433"><input type="checkbox" id="trShowArch" ${RP.showArch ? "checked" : ""}><span class="t"></span>Show archived</label></div>
       <div class="tr-bulk" id="trBulk" style="${RP.sel.size ? "" : "display:none"}"><b id="trSelN">${RP.sel.size} selected</b><span style="margin-left:auto" class="fl"><button class="btn g sm" id="trBReview">🔍 Review</button><button class="btn sm" id="trBAdd">＋ Add to cycle</button><button class="btn g sm" id="trBMove">Move</button><button class="btn s sm" id="trBReady">✓ Mark Ready</button><button class="btn g sm" id="trBArch">🗄 Archive</button><button class="btn g sm" id="trBDel" style="color:#d33">🗑 Delete</button></span></div>
-      ${d.total ? `<table id="trRepoT" class="rt"><tr><th><input type="checkbox" id="trAll" ${shown.length && shown.every((c) => RP.sel.has(c.id)) ? "checked" : ""}></th><th>TC-ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Ver</th><th>Source</th><th>Last run</th><th>Story</th><th>Updated</th>${RP.showArch || RP.status === "Archived" ? "<th></th>" : ""}</tr>
+      ${d.total ? `${trPager("trRepoPgTop", list.length, RP.pg)}<table id="trRepoT" class="rt"><tr><th><input type="checkbox" id="trAll" ${shown.length && shown.every((c) => RP.sel.has(c.id)) ? "checked" : ""}></th><th>TC-ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Ver</th><th>Source</th><th>Last run</th><th>Story</th><th>Updated</th>${RP.showArch || RP.status === "Archived" ? "<th></th>" : ""}</tr>
       ${shown.map((c) => `<tr class="clk ${RP.sel.has(c.id) ? "sel" : ""} ${c.status === "Archived" ? "arc" : ""}" data-id="${c.id}"><td><input type="checkbox" class="trCk" ${RP.sel.has(c.id) ? "checked" : ""}></td><td><b style="color:#4361ee">${esc(c.id)}</b></td><td>${esc(c.title)}</td><td><span class="pill ${TR_PRIO(c.priority)}">${esc(c.priority)}</span></td><td><span class="pill ${TR_ST[c.status] ?? "gr"}">${esc(c.status)}</span></td><td>v${c.version}</td><td><span class="pill ${TR_SRC[c.source] || "b"}">${esc(c.source)}</span></td><td><span class="pill ${TR_RES[c.last_result || ""]}">${esc(c.last_result || "—")}</span></td><td>${esc(c.story || "—")}</td><td>${trDate(c.updated)}</td>${RP.showArch || RP.status === "Archived" ? `<td>${c.status === "Archived" ? `<button class="btn g sm" data-restore="${c.id}">↺ Restore</button>` : ""}</td>` : ""}</tr>`).join("")}</table>
-      ${list.length > 25 ? trPager("trRepoPg", list.length, RP.pg) : `<div class="muted" style="margin-top:8px">${RP.folder ? "📂 " + esc(trFolderPath(RP.folder)) + " · " : ""}${list.length} of ${RP.showArch ? d.total : live} shown</div>`}`
+      ${trPager("trRepoPg", list.length, RP.pg)}<div class="muted" style="margin-top:8px">${RP.folder ? "📂 " + esc(trFolderPath(RP.folder)) + " · " : ""}${list.length} of ${RP.showArch ? d.total : live} match the filters</div>`
       : `<div class="tr-empty">No test cases yet. Use <b>Save to Test Case Repo</b> on the Review page, <b>＋ New test case</b>, or <b>Import</b>.</div>`}</div></div>`;
-  trBindPager("trRepoPg", RP.pg, trRepoRender);
+  trBindPager("trRepoPg", RP.pg, trRepoRender); trBindPager("trRepoPgTop", RP.pg, trRepoRender);
   trBindTree();
   $("#trFq").oninput = (e) => { RP.ftree = e.target.value; clearTimeout(trRepoRender._f); trRepoRender._f = setTimeout(() => { trRepoRender(); const i = $("#trFq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 250); };
   $("#trNewFolder").onclick = () => trFolderModal(RP.folder);
@@ -241,6 +242,30 @@ function trRepoRender() {
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn" id="trMvGo" ${d.folders.length ? "" : "disabled"}>Move</button></div>`, 460);
     $("#trMvGo", ov).onclick = () => { trClose(); trBulk({ op: "move", folder_id: $("#trMvF", ov).value }, "Moved"); };
   };
+}
+// export (selected cases, else everything matching the current filters) as .xlsx / .csv, one row per step
+function trExportMenu(anchor) {
+  const old = $("#trExpM"); if (old) return old.remove();
+  const m = document.createElement("div"); m.id = "trExpM"; m.className = "tr-expm";
+  const n = RP.sel && RP.sel.size; const scope = n ? `${n} selected` : "filtered";
+  m.innerHTML = `<div class="muted" style="padding:4px 10px;font-size:11px">Export ${scope} case(s) · all steps</div><a data-fmt="xlsx">📗 Excel (.xlsx)</a><a data-fmt="csv">📄 CSV (.csv)</a>`;
+  anchor.parentElement.appendChild(m);
+  $$("a[data-fmt]", m).forEach((a) => (a.onclick = () => { m.remove(); trExport(a.dataset.fmt); }));
+  setTimeout(() => document.addEventListener("click", function h(e) { if (!m.contains(e.target)) { m.remove(); document.removeEventListener("click", h); } }), 0);
+}
+async function trExport(fmt) {
+  if (!RP.data) return;
+  const arch = RP.showArch || RP.status === "Archived";
+  const ids = RP.sel && RP.sel.size ? [...RP.sel] : trRepoFiltered().map((c) => c.id);
+  if (!ids.length) return toast("No test cases to export.", true);
+  try {
+    const r = await fetch("/api/repo/export", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids, format: fmt, include_archived: arch }) });
+    if (r.status === 401) { window.location.href = "/welcome"; return; }
+    if (!r.ok) { let j = {}; try { j = await r.json(); } catch (e) { /* not json */ } throw new Error(j.error || `HTTP ${r.status}`); }
+    const blob = await r.blob(); const cd = r.headers.get("Content-Disposition") || ""; const m = cd.match(/filename="([^"]+)"/);
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = m ? m[1] : `test_cases.${fmt}`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast(`Exported ${r.headers.get("X-Case-Count") || ids.length} test case(s) as ${fmt.toUpperCase()}`);
+  } catch (e) { toast("Export failed: " + e.message, true); }
 }
 async function trRepoReload() { RP.data = await api("/api/repo"); if (RP.folder && !RP.data.folders.some((f) => f.id === RP.folder)) RP.folder = ""; trRepoRender(); }
 async function trBulk(body, msg, clear) {
@@ -330,7 +355,7 @@ function trFolderModal(parent) {
   paint(); check(); $("#trFnName", ov).oninput = check; $("#trFnName", ov).focus();
   $("#trFnGo", ov).onclick = () => guarded($("#trFnGo"), async () => {
     const r = await api("/api/repo/folders", { method: "POST", body: { name: $("#trFnName").value.trim(), parent: par, description: $("#trFnDesc").value } });
-    trClose(); toast("Folder created"); RP.folder = r.id; await trRepoReload();
+    trClose(); toast("Folder created"); RP.folder = r.id; if (RP.pg) RP.pg.page = 1; await trRepoReload();
   });
 }
 function trDeleteFolder(fid) {
