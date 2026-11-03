@@ -173,7 +173,7 @@ function pagerHtml(page, pages, n, ps, total, act) {
   if (!n) return "";
   const nums = []; for (let i = 0; i < pages; i++) { if (pages > 9 && i > 1 && i < pages - 2 && Math.abs(i - page) > 1) { if (nums[nums.length - 1] !== "…") nums.push("…"); continue; } nums.push(i); }
   return `<div class="rv-pager"><span class="pg-info">Showing <b>${page * ps + 1}–${Math.min(n, (page + 1) * ps)}</b> of <b>${n}</b>${n !== total ? ` (filtered from ${total})` : ""}</span><span style="flex:1"></span>
-    <label class="pg-size">Per page <select data-act="${act}size">${[25, 50, 100].map((x) => `<option ${x === ps ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+    <label class="pg-size">Per page <select data-act="${act}size">${[10, 25, 50, 100].map((x) => `<option ${x === ps ? "selected" : ""}>${x}</option>`).join("")}</select></label>
     <button class="btn g sm" data-act="${act}" data-p="${page - 1}" ${page ? "" : "disabled"} title="Previous page">‹ Prev</button>
     ${nums.map((i) => i === "…" ? '<span class="sub" style="margin:0 2px">…</span>' : `<button class="btn g sm ${i === page ? "pg-a" : ""}" data-act="${act}" data-p="${i}">${i + 1}</button>`).join("")}
     <button class="btn g sm" data-act="${act}" data-p="${page + 1}" ${page < pages - 1 ? "" : "disabled"} title="Next page">Next ›</button></div>`;

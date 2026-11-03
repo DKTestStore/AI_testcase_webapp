@@ -89,7 +89,7 @@ The sidebar footer shows `Run RUN-YYYYMMDD-NNN` and `Story <id>`.
 - **Priority** (High / Medium / Low) and **AC tags** per test case, with filters by status, priority and AC.
 - **Reorder** test cases and steps (drag or ▲▼). IDs and step numbers are re-sequenced automatically.
 - **Review status** pill (Not reviewed / Reviewed / Needs changes), a reviewed x/n progress bar, and bulk actions.
-- **Pagination** (25 / 50 / 100 per page), "Jump to TC…", search, expand/collapse all, and internal scrolling for long lists.
+- **Pagination** (10 / 25 / 50 / 100 per page), "Jump to TC…", search, expand/collapse all, and internal scrolling for long lists.
 - Unsaved-edit indicator with a leave/navigation guard. **Run AI Reviewer** lets you apply or dismiss the reviewed version.
 
 ### Excel download and upload
@@ -253,7 +253,7 @@ Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file 
   a cycle archives it instead. In a cycle such cases show muted as *Case archived* / *Case removed* with *Remove from cycle*.
   Cycles can always be deleted or archived, even when their cases are gone. The name confirmation ignores dash type, spacing and case.
 - **Expand / collapse folders**: every folder that has sub-folders gets a ▸/▾ caret, and *All test cases* has ⊞ Expand all / ⊟ Collapse all. The state is remembered per browser (localStorage), and the selected folder's parents open automatically. This works the same in the Repo tree, the Save-to-repo modal and the Add-cases picker.
-- **Pagination** (25 / 50 / 100 rows) on the Repo table, the cycles list (with search and status filter) and the cycle run list.
+- **Pagination** (10 / 25 / 50 / 100 rows) on the Repo table, the cycles list (with search and status filter) and the cycle run list.
 - **🔍 Review** (bulk bar, one or more cases): opens the cases as a new run (source *Repo*) in Review step 3. If a run is
   already open, a confirm dialog appears and that run is saved to Run history first. A toast links to it and Run history
   marks it *Just saved*. On a repo run the Review button becomes **Save back to repo (update N)**, which writes edits back as
