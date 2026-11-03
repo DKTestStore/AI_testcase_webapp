@@ -51,6 +51,7 @@ function stepUnlocked(s) {
   return STEPS.slice(0, i).every((p) => stepDone(p));
 }
 function go(view) {
+  if (typeof view === "string" && view.startsWith("repo/case/")) { if (window.cpRoute) return window.cpRoute(view.slice(10)); view = "repo"; }
   if (S.mode === "batch") return batchGo(view);
   if (STEPS.includes(view) && !stepUnlocked(view)) { toast("Complete the previous step first.", true); return; }
   if (S.view === "review" && view !== "review" && S.localDirty && !confirm("You have unsaved edits in the Review table. Leave without saving?")) return;
