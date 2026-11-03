@@ -10,6 +10,24 @@ exports them to **Excel**, and uploads them to **qTest Manager** with requiremen
 
 ---
 
+## Tech Stack
+
+| Layer | Technology | Used for |
+|---|---|---|
+| Backend | Python, FastAPI, Uvicorn | REST API (`/api/...`) and serving the frontend |
+| Config | python-dotenv (`ai_test_generator/.env`) | API keys and settings |
+| AI / LLM | Google Gemini (`google-genai`), OpenAI, Ollama | Test case generation (Gemini token usage shown on the Dashboard) |
+| Integrations | Jira (`jira`), qTest (REST via `requests`), FastMCP | Story input, test case push, MCP tooling |
+| Record | Playwright (Chromium) | Capturing browser actions as test steps |
+| Data | JSON files on disk | Runs, repository, test runs (no database yet) |
+| Import / Export | pandas, openpyxl | Excel (.xlsx) and CSV import/export, one row per step |
+| Frontend | Plain HTML, CSS, JavaScript (no framework) | Single page `frontend/app.html`, hash routing in `app.js`, feature modules (`review.js`, `repo.js`, `casepreview.js`, `dashboard.js`) |
+| Charts | Custom donut and bar charts | Dashboard sections; choices saved in localStorage |
+| Caching | `?v=N` query on static files | Forces browsers to load new frontend builds |
+| Source control | Git + GitHub | Feature branches merged via pull requests |
+
+**Planned (not built yet):** SQLAlchemy + Alembic (SQLite locally, Postgres on Supabase/Neon in production), Supabase Storage or Cloudflare R2 for attachments, hosting on Render free tier (or Oracle Always Free for Record with Playwright).
+
 ## 1. Setup
 
 **Requirements:** Python **3.10+** (the existing `jira_worker.py` uses `str | None` syntax), pip. Dependencies are in `requirements.txt`
