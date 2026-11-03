@@ -42,7 +42,15 @@
 .dbv .db-grid{stroke:#e2e8f0}.dbv .db-axl{stroke:#94a3b8}
 .dbv .db-ax{font-size:11px;fill:#475569}.dbv .db-vl{font-size:11.5px;font-weight:800;fill:#0f172a}
 .dbv .db-empty{color:#94a3b8;padding:14px;text-align:center}
-.db-cust{width:min(620px,92vw)}
+.modal:has(.db-cust){width:min(640px,94vw);max-width:none;max-height:88vh;overflow:auto;padding:22px 24px}
+.db-cust{width:100%;box-sizing:border-box}
+.db-cust h3{margin:0 0 4px}
+.db-cust .db-crow{box-sizing:border-box;width:100%}
+.db-cust .db-crow b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-cust .db-tg{flex-shrink:0;white-space:nowrap;text-transform:none}
+.db-cust .db-flt{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center}
+.db-cust .db-flt label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#334155;text-transform:none;letter-spacing:0}
+.db-cust .fl{border-top:1px solid #e3e7f0;padding-top:14px}
 .db-cust .db-crow{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid #e3e7f0;border-radius:10px;margin-bottom:8px;background:#fff}
 .db-cust .db-crow b{flex:1}.db-cust .db-crow.drag{opacity:.5}
 .db-cust .db-dh{color:#94a3b8;cursor:grab;letter-spacing:-2px}
