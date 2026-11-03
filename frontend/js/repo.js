@@ -183,7 +183,7 @@ function trPager(id, total, st) {
   const pages = Math.max(1, Math.ceil(total / st.size)), a = (st.page - 1) * st.size + 1, b = Math.min(total, st.page * st.size);
   const nums = [...new Set([1, st.page - 1, st.page, st.page + 1, pages])].filter((n) => n >= 1 && n <= pages).sort((x, y) => x - y);
   let last = 0; const btns = nums.map((n) => { const gap = n - last > 1 ? "<span>…</span>" : ""; last = n; return `${gap}<button class="btn ${n === st.page ? "on" : "g"} sm" data-p="${n}">${n}</button>`; }).join("");
-  return `<div class="tr-pg" id="${id}"><span>Showing <b>${a}–${b}</b> of <b>${total}</b></span><span style="margin-left:14px">Rows per page</span><select data-size="1" style="padding:3px 6px">${[25, 50, 100].map((n) => `<option ${n === st.size ? "selected" : ""}>${n}</option>`).join("")}</select>
+  return `<div class="tr-pg" id="${id}"><span>Showing <b>${a}–${b}</b> of <b>${total}</b></span><span style="margin-left:14px">Rows per page</span><select data-size="1" style="padding:3px 6px">${[10, 25, 50, 100].map((n) => `<option ${n === st.size ? "selected" : ""}>${n}</option>`).join("")}</select>
     <span style="margin-left:auto" class="fl"><button class="btn g sm" data-p="${st.page - 1}" ${st.page > 1 ? "" : "disabled"}>‹ Prev</button>${btns}<button class="btn g sm" data-p="${st.page + 1}" ${st.page < pages ? "" : "disabled"}>Next ›</button></span></div>`;
 }
 function trBindPager(id, st, rerender) {
