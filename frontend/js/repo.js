@@ -452,30 +452,7 @@ function trImportModal() {
 }
 
 // ------------------------------------------------------------------ drawer
-async function trDrawer(id, tab = "steps") {
-  let j; try { j = await api(`/api/repo/cases/${encodeURIComponent(id)}`); } catch (e) { return toast(e.message, true); }
-  const c = j.case, ex = j.executions;
-  trDrawerClose();
-  document.body.insertAdjacentHTML("beforeend", `<div class="tr-dbg" id="trDbg"></div><div class="tr-drw trv" id="trDrw"></div>`);
-  $("#trDbg").onclick = trDrawerClose;
-  const vers = [...(c.versions || [])].reverse();
-  const paint = () => {
-    $("#trDrw").innerHTML = `<div class="hd"><div><small class="muted">${esc(c.id)} · v${c.version} · ${esc(c.source)} · ${esc(c.story || "—")}</small><h3 style="font-size:16px;margin:2px 0 0">${esc(c.title)}</h3><small class="muted">📁 ${esc(c.folder_path || "")}</small></div><span class="tr-x" id="trDx">✕</span></div>
-      <div class="fl"><span class="pill ${TR_PRIO(c.priority)}">${esc(c.priority)}</span><span class="pill ${TR_ST[c.status] ?? "gr"}">${esc(c.status)}</span>${c.last_result ? `<span class="pill ${TR_RES[c.last_result]}">Last: ${esc(c.last_result)}</span>` : ""}${(c.tags || []).map((t) => `<span class="pill gr">#${esc(t)}</span>`).join("")}
-        <span style="margin-left:auto" class="fl"><button class="btn g sm" id="trDEdit">✎ Edit</button><button class="btn sm" id="trDAdd">＋ Add to cycle</button></span></div>
-      <div class="tabs" style="margin-top:12px"><button data-t="steps" class="${tab === "steps" ? "a" : ""}">Steps</button><button data-t="versions" class="${tab === "versions" ? "a" : ""}">Versions (${vers.length})</button><button data-t="exec" class="${tab === "exec" ? "a" : ""}">Executions (${ex.length})</button></div>
-      ${tab === "steps" ? `${c.description ? `<div style="font-size:12.5px;margin-bottom:6px">${esc(c.description)}</div>` : ""}<div class="muted" style="font-size:12px"><b>Precondition:</b> ${esc(c.precondition || "—")}</div>
-        <table style="margin-top:8px"><tr><th>#</th><th>Step</th><th>Expected</th><th>Data</th></tr>${(c.steps || []).map((s, i) => `<tr><td>${i + 1}</td><td>${esc(s.step)}</td><td>${esc(s.expected)}</td><td>${esc(s.data || "")}</td></tr>`).join("")}</table>
-        <h3 style="margin:16px 0 8px;font-size:13px">Recent executions</h3>${ex.slice(0, 3).map(trExRow).join("") || '<div class="muted">Not executed yet.</div>'}` : ""}
-      ${tab === "versions" ? vers.map((v) => `<div class="rc"><b>v${v.version}</b><div class="t">${esc(v.note || "")}<br><small class="muted">${esc(v.snapshot.title)} · ${(v.snapshot.steps || []).length} steps</small></div><small class="muted">${trTime(v.ts)}</small></div>`).join("") : ""}
-      ${tab === "exec" ? (ex.map(trExRow).join("") || '<div class="muted">Not executed yet.</div>') : ""}`;
-    $("#trDx").onclick = trDrawerClose;
-    $$("#trDrw .tabs button").forEach((b) => (b.onclick = () => { tab = b.dataset.t; paint(); }));
-    $("#trDEdit").onclick = () => { trDrawerClose(); RP.edit = { ...JSON.parse(JSON.stringify(c)), folder_path: c.folder_path }; if (S.view !== "repo") go("repo"); else render(); };
-    $("#trDAdd").onclick = () => trAddToCycleModal([c.id]);
-  };
-  paint();
-}
+// The case preview drawer / full page lives in casepreview.js (trDrawer(id, tab) is defined there).
 function trExRow(e) { return `<div class="rc"><span class="pill ${TR_RES[e.status]}">${esc(e.status)}</span><div class="t">${esc(e.cycle_name || e.cycle_id)}${e.build ? " · " + esc(e.build) : ""} · ran v${e.case_version}${e.override_reason ? ` · <i>override: ${esc(e.override_reason)}</i>` : ""}</div><small class="muted">${trTime(e.ts)}</small></div>`; }
 
 // ------------------------------------------------------------------ editor (create / edit) + AI review

@@ -177,7 +177,7 @@ Runtime data is git-ignored: `ai_test_generator/.env`, `ai_test_generator/report
 │   └── config.py               # paths, .env loading, data folders
 ├── frontend/
 │   ├── welcome.html  app.html  css/app.css
-│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js  repo.js  runs.js  (css/repo.css)
+│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js  repo.js  runs.js  casepreview.js  (css/repo.css, css/casepreview.css)
 ├── requirements.txt
 ├── README.md
 └── NOTES.md                    # assumptions and known gaps
@@ -223,7 +223,7 @@ Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file 
      or add to an existing cycle. Cases are saved to the repo automatically (new ones as *Draft*) and the cycle opens.
 2. **Test Case Repo** (sidebar): folder tree with counts, search (title, step text, TC-ID), filters (priority, status, source,
    last result), bulk *Add to cycle / Move / Mark Ready / Delete* (with confirm), **Import** (.xlsx or .csv using the app's
-   upload-template columns, or JSON), and a side drawer with steps, versions and executions. IDs are `TC-0001…`.
+   upload-template columns, or JSON), and a case preview drawer / full page (see *Case detail* below). IDs are `TC-0001…`.
    **＋ New test case** / ✎ Edit: all fields are text, step editor (step / expected / test data – add, duplicate, delete,
    drag or ▲▼ to reorder), *Save draft*, *Save as Ready*, **🤖 Review with AI** – per-field / per-step suggestions plus an AC
    coverage score; Accept / Reject each or all, nothing changes until you *Apply* (token usage recorded as
@@ -263,6 +263,33 @@ Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file 
   a cycle archives it instead. In a cycle such cases show muted as *Case archived* / *Case removed* with *Remove from cycle*.
   Cycles can always be deleted or archived, even when their cases are gone. The name confirmation ignores dash type, spacing and case.
 - **Expand / collapse folders**: every folder that has sub-folders gets a ▸/▾ caret, and *All test cases* has ⊞ Expand all / ⊟ Collapse all. The state is remembered per browser (localStorage), and the selected folder's parents open automatically. This works the same in the Repo tree, the Save-to-repo modal and the Add-cases picker.
+**Case detail (preview v2)** — `frontend/js/casepreview.js`, `frontend/css/casepreview.css`
+- Click a row in the Repo table to open the **drawer** (default 60 % wide; drag its left edge to resize, the width is remembered
+  per browser). **⤢** opens the **full page** at `#repo/case/TC-0050` (shareable / bookmarkable; the sidebar collapses to icons,
+  ☰ toggles it; ⤡ goes back to the drawer).
+- Sticky header: TC-ID, title, folder path, **‹ N of M ›** over the current filtered/searched list (also `J` / `K`; `Esc` closes
+  the drawer), ✎ Edit (existing editor), ＋ Add to cycle, **▶ Run now** (pick a cycle that already contains the case, add it to
+  another cycle, or create a quick-run cycle → opens the execution screen for that case), ⋯ Duplicate / Move to folder /
+  Export this case (.xlsx/.csv via `POST /api/repo/export` with one id) / Archive or Restore.
+  **Status dropdown** (Draft / Ready / Deprecated — stored as `Obsolete` for compatibility) saves immediately. The story chip
+  links to `<JIRA_URL>/browse/<KEY>` when the Jira base URL is configured in Settings, otherwise it is a plain chip.
+- **Steps**: stats strip (step count, story, last run + date, pass rate, last-5 result dots), collapsible Description &
+  Precondition, step cards (Action | Expected, test-data chip), Detailed / Compact, click a step to edit inline, drag ⋮⋮ to
+  reorder, *＋ insert step* between cards, ⎘ Copy steps (plain text), ✨ Regenerate with AI (same service as Review's
+  Regenerate; shows a diff and saves only after confirm). Every save creates a new version.
+- **Versions**: version list, word-level diff (inline or side-by-side; removed = red strikethrough, added = green) per field
+  and per step against any other version, **↺ Restore vN** (creates a new version with the old content).
+- **Executions**: timeline of every attempt (cycle, date, tester, env/build, version, defects, result); expand for per-step
+  actual result, status and attachment thumbnails.
+- **Attachments**: all run screenshots / videos grouped by run (type filter, click to preview) plus **case-level attachments**
+  (⬆ Upload, same `/api/attachments` endpoint and 50 MB limit).
+- **Activity**: audit log (created, edited, regenerated, restored, status changed, moved, archived / restored, ran, commented,
+  attached) and comments. New events are stored on the case (`activity`, `comments`, `attachments` fields — added lazily, old
+  data stays valid); history from before this release is derived from versions and executions.
+- Endpoints (all under the session): `GET /api/repo/cases/{id}` (now also returns `activity`, `cycles`, `jira_base`),
+  `POST /api/repo/cases/{id}/status|comments|duplicate|restore_version|regenerate|attachments`,
+  `DELETE /api/repo/cases/{id}/attachments/{name}`.
+
 - **Pagination** (10 / 25 / 50 / 100 rows) on the Repo table, the cycles list (with search and status filter) and the cycle run list.
 - **🔍 Review** (bulk bar, one or more cases): opens the cases as a new run (source *Repo*) in Review step 3. If a run is
   already open, a confirm dialog appears and that run is saved to Run history first. A toast links to it and Run history

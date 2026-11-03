@@ -122,6 +122,20 @@ def executions_for(case_id: str) -> List[Dict[str, Any]]:
     return sorted(ex, key=lambda e: e["ts"], reverse=True)
 
 
+def items_for(case_id: str) -> List[Dict[str, Any]]:
+    """Active cycles that contain this case (used by the case preview 'Run now')."""
+    d = _load()
+    out = []
+    for c in d["cycles"]:
+        if c.get("status") == "Archived":
+            continue
+        for it in c.get("items", []):
+            if it["case_id"] == case_id:
+                out.append({"cycle_id": c["id"], "cycle_name": c.get("name", ""), "key": it["key"], "status": it.get("status", ""),
+                            "created": c.get("created", "")})
+    return sorted(out, key=lambda x: x["created"], reverse=True)
+
+
 # ------------------------------------------------------------------ cycles
 @router.get("/api/runs")
 def runs_list(archived: int = 0):
@@ -283,6 +297,7 @@ def runs_execute(cid: str, key: str, data: Dict[str, Any] = Body(...)):
         write_json(RUNS_FILE, d)
     if final != "Not run":
         test_repo.set_last_result(it["case_id"], final)
+    test_repo.log_event(it["case_id"], "ran", c.get("name", ""), ex.get("tester", ""), result=final, exec_id=ex["id"], cycle_id=cid)
     return {"ok": True, "execution": ex}
 
 

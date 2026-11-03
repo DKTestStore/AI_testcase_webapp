@@ -121,6 +121,19 @@ def _content(c) -> Dict[str, Any]:
     return {k: c.get(k) for k in CONTENT_KEYS}
 
 
+ACT_MAX = 500
+
+
+def _event(c, typ: str, text: str = "", by: str = "", **meta) -> None:
+    """Append an audit event to the case record (new field, lazily created on old cases)."""
+    ev = {"ts": now(), "type": typ, "text": _s(text, 500), "by": _s(by, 100)}
+    ev.update({k: v for k, v in meta.items() if v not in (None, "")})
+    act = c.setdefault("activity", [])
+    act.append(ev)
+    if len(act) > ACT_MAX:
+        del act[:len(act) - ACT_MAX]
+
+
 def _clean_case(data: Dict[str, Any]) -> Dict[str, Any]:
     tags = data.get("tags")
     if isinstance(tags, str):
@@ -195,6 +208,8 @@ def _new_case(d, data, source="Manual", status="Draft", folder_id="", note="Crea
               "source": source if source in SOURCES else "Manual", "folder_id": folder_id or default_folder(d, c["story"]),
               "version": 1, "created": ts, "updated": ts, "last_result": "", "last_run": ""})
     c["versions"] = [{"version": 1, "ts": ts, "note": note, "snapshot": _content(c)}]
+    c["activity"], c["comments"], c["attachments"] = [], [], []
+    _event(c, "created", note, _s(data.get("by"), 100), version=1, source=c["source"])
     d["cases"].append(c)
     return c
 
@@ -203,6 +218,8 @@ def _update_case(c, data, note="Edited") -> bool:
     """Apply edits; bump version when test content changed. Returns True if a new version was created."""
     n = _clean_case({**c, **data})
     changed = _content(n) != _content(c)
+    by = _s(data.get("by"), 100)
+    old_status, old_folder = c.get("status"), c.get("folder_id")
     for k in ("title", "description", "precondition", "priority", "type", "story", "tags", "steps", "acs"):
         c[k] = n[k]
     if data.get("status") in STATUSES:
@@ -213,11 +230,16 @@ def _update_case(c, data, note="Edited") -> bool:
     if changed:
         c["version"] = int(c.get("version", 1)) + 1
         c.setdefault("versions", []).append({"version": c["version"], "ts": c["updated"], "note": note, "snapshot": _content(c)})
+        _event(c, _s(data.get("event_type"), 20) or "edited", note, by, version=c["version"])
+    if c.get("status") != old_status:
+        _event(c, "status", f"{old_status} → {c['status']}", by, old=old_status, new=c["status"])
+    if c.get("folder_id") != old_folder:
+        _event(c, "moved", "Moved to another folder", by, folder_id=c.get("folder_id"))
     return changed
 
 
 def _summary(c) -> Dict[str, Any]:
-    r = {k: v for k, v in c.items() if k != "versions"}
+    r = {k: v for k, v in c.items() if k not in ("versions", "activity", "comments")}
     r["versions_count"] = len(c.get("versions") or [])
     return r
 
@@ -319,7 +341,11 @@ def repo_case(cid: str):
     if not c:
         raise ServiceError("Test case not found.", 404)
     from . import test_runs
-    return {"ok": True, "case": {**c, "folder_path": _folder_path(d, c.get("folder_id"))}, "executions": test_runs.executions_for(cid)}
+    ex = test_runs.executions_for(cid)
+    return {"ok": True, "case": {**c, "folder_path": _folder_path(d, c.get("folder_id")), "comments": c.get("comments") or [],
+                                 "attachments": c.get("attachments") or []},
+            "executions": ex, "activity": _activity(c, ex), "cycles": test_runs.items_for(cid),
+            "jira_base": _jira_base()}
 
 
 @router.post("/api/repo/cases")
@@ -370,6 +396,7 @@ def repo_bulk(data: Dict[str, Any] = Body(...)):
             for c in d["cases"]:
                 if c["id"] in ids and used.get(c["id"], {}).get("in_use"):
                     c["status"], c["updated"] = "Archived", now(); archived.append(c["id"]); keep.append(c)
+                    _event(c, "archived", "Archived (delete requested; case has execution history)", _s(data.get("by"), 100))
                 elif c["id"] in ids:
                     n += 1
                 else:
@@ -379,6 +406,7 @@ def repo_bulk(data: Dict[str, Any] = Body(...)):
             for c in d["cases"]:
                 if c["id"] in ids and (op == "archive" or c.get("status") == "Archived"):
                     c["status"] = "Archived" if op == "archive" else "Draft"; c["updated"] = now(); n += 1
+                    _event(c, "archived" if op == "archive" else "restored", "Archived" if op == "archive" else "Restored (as Draft)", _s(data.get("by"), 100))
         elif op in ("status", "move"):
             if op == "status" and data.get("status") not in STATUSES:
                 raise ServiceError("Unknown status.")
@@ -386,6 +414,10 @@ def repo_bulk(data: Dict[str, Any] = Body(...)):
                 raise ServiceError("Choose a folder.")
             for c in d["cases"]:
                 if c["id"] in ids:
+                    if op == "status" and c.get("status") != data["status"]:
+                        _event(c, "status", f"{c.get('status')} → {data['status']}", _s(data.get("by"), 100), old=c.get("status"), new=data["status"])
+                    if op == "move" and c.get("folder_id") != data["folder_id"]:
+                        _event(c, "moved", "Moved to " + _folder_path(d, data["folder_id"]), _s(data.get("by"), 100), folder_id=data["folder_id"])
                     c["status" if op == "status" else "folder_id"] = data["status" if op == "status" else "folder_id"]
                     c["updated"] = now(); n += 1
         else:
@@ -730,11 +762,13 @@ def repo_folder_delete(fid: str, mode: str = "move", target: str = "", confirm: 
                 raise ServiceError("Choose a folder to move the cases to.")
             for c in cases:
                 c["folder_id"], c["updated"] = target, now()
+                _event(c, "moved", f"Moved to {_folder_path(d, target)} (folder “{f['name']}” deleted)", folder_id=target)
         elif cases:
             # archive: cases keep a home so they can be restored -> park them in an 'Archived cases' folder
             home = _ensure_folder(d, "Archived cases")
             for c in cases:
                 c["folder_id"], c["status"], c["updated"] = home, "Archived", now()
+                _event(c, "archived", f"Archived (folder “{f['name']}” deleted)")
         d["folders"] = [x for x in d["folders"] if x["id"] not in gone]
         write_json(REPO_FILE, d)
     return {"ok": True, "moved": len(cases) if mode == "move" else 0, "archived": len(cases) if mode != "move" else 0, "folders": _tree(d)}
@@ -762,3 +796,169 @@ def repo_save_back(data: Dict[str, Any] = Body(...)):
                 res["created"].append(_new_case(d, rc, "AI", "Draft", "", "Created from Review (repo run)")["id"])
         write_json(REPO_FILE, d)
     return {"ok": True, **res}
+
+
+# ------------------------------------------------------------------ case detail v2 (preview drawer / full page)
+def _jira_base() -> str:
+    """Non-secret Jira base URL from Settings (for story / defect links); '' when not configured."""
+    try:
+        from . import settings_store
+        for f in settings_store.get_settings():
+            if f.get("key") == "JIRA_URL" and not f.get("secret"):
+                v = str(f.get("value") or "").strip().rstrip("/")
+                return v if v.startswith("http") else ""
+    except Exception:
+        log.debug("jira base lookup failed", exc_info=True)
+    return ""
+
+
+def _activity(c, executions) -> List[Dict[str, Any]]:
+    """Stored audit events + events derived from versions / executions / comments for older data."""
+    stored = [dict(e) for e in c.get("activity") or []]
+    vers = {e.get("version") for e in stored if e.get("version")}
+    ran = {e.get("exec_id") for e in stored if e.get("type") == "ran"}
+    out = list(stored)
+    for v in c.get("versions") or []:
+        if v.get("version") not in vers:
+            out.append({"ts": v.get("ts", ""), "type": "created" if v.get("version") == 1 else "edited",
+                        "text": v.get("note", ""), "by": "", "version": v.get("version"), "derived": True})
+    for e in executions or []:
+        if e.get("id") not in ran:
+            out.append({"ts": e.get("ts", ""), "type": "ran", "text": e.get("cycle_name", ""), "by": e.get("tester", ""),
+                        "result": e.get("status", ""), "exec_id": e.get("id"), "cycle_id": e.get("cycle_id"), "derived": True})
+    for m in c.get("comments") or []:
+        out.append({"ts": m.get("ts", ""), "type": "commented", "text": m.get("text", "")[:120], "by": m.get("by", "")})
+    return sorted(out, key=lambda e: e.get("ts", ""), reverse=True)
+
+
+def log_event(cid: str, typ: str, text: str = "", by: str = "", **meta) -> None:
+    """Used by test_runs (execution recorded) — best effort, never breaks the caller."""
+    try:
+        with locked(REPO_FILE):
+            d = _load()
+            c = next((x for x in d["cases"] if x["id"] == cid), None)
+            if c:
+                _event(c, typ, text, by, **meta)
+                write_json(REPO_FILE, d)
+    except Exception:
+        log.exception("log_event failed")
+
+
+def _get(d, cid):
+    c = next((x for x in d["cases"] if x["id"] == cid), None)
+    if not c:
+        raise ServiceError("Test case not found.", 404)
+    return c
+
+
+@router.post("/api/repo/cases/{cid}/status")
+def repo_case_status(cid: str, data: Dict[str, Any] = Body(...)):
+    st = data.get("status")
+    if st not in ("Draft", "Ready", "Obsolete"):
+        raise ServiceError("Unknown status.")
+    with locked(REPO_FILE):
+        d = _load()
+        c = _get(d, cid)
+        if c.get("status") == "Archived":
+            raise ServiceError("Restore the case before changing its status.", 409)
+        if c.get("status") != st:
+            _event(c, "status", f"{c.get('status')} → {st}", _s(data.get("by"), 100), old=c.get("status"), new=st)
+            c["status"], c["updated"] = st, now()
+            write_json(REPO_FILE, d)
+    return {"ok": True, "case": _summary(c)}
+
+
+@router.post("/api/repo/cases/{cid}/comments")
+def repo_case_comment(cid: str, data: Dict[str, Any] = Body(...)):
+    text = _s(data.get("text"), 4000)
+    if not text:
+        raise ServiceError("Write a comment first.")
+    with locked(REPO_FILE):
+        d = _load()
+        c = _get(d, cid)
+        m = {"id": f"CM{len(c.get('comments') or []) + 1}", "ts": now(), "by": _s(data.get("by"), 100) or "User", "text": text}
+        c.setdefault("comments", []).append(m)
+        write_json(REPO_FILE, d)
+    return {"ok": True, "comment": m, "comments": c["comments"]}
+
+
+@router.post("/api/repo/cases/{cid}/duplicate")
+def repo_case_duplicate(cid: str, data: Dict[str, Any] = Body(default={})):
+    with locked(REPO_FILE):
+        d = _load()
+        c = _get(d, cid)
+        n = _new_case(d, {**_content(c), "title": (c["title"] + " (copy)")[:300], "story": c.get("story", ""),
+                          "tags": c.get("tags") or [], "acs": c.get("acs") or [], "by": data.get("by")},
+                      c.get("source") or "Manual", "Draft", c.get("folder_id", ""), f"Duplicated from {cid}")
+        _event(c, "duplicated", f"Duplicated as {n['id']}", _s(data.get("by"), 100), copy=n["id"])
+        write_json(REPO_FILE, d)
+    return {"ok": True, "case": n}
+
+
+@router.post("/api/repo/cases/{cid}/restore_version")
+def repo_case_restore_version(cid: str, data: Dict[str, Any] = Body(...)):
+    """Restore = a NEW version whose content copies the chosen old version (history is never rewritten)."""
+    try:
+        ver = int(data.get("version"))
+    except Exception:
+        raise ServiceError("Choose a version to restore.")
+    with locked(REPO_FILE):
+        d = _load()
+        c = _get(d, cid)
+        v = next((x for x in c.get("versions") or [] if x.get("version") == ver), None)
+        if not v:
+            raise ServiceError("Version not found.", 404)
+        newv = _update_case(c, {**(v.get("snapshot") or {}), "by": data.get("by"), "event_type": "restored"}, f"Restored v{ver}")
+        write_json(REPO_FILE, d)
+    return {"ok": True, "case": c, "new_version": newv}
+
+
+@router.post("/api/repo/cases/{cid}/regenerate")
+def repo_case_regenerate(cid: str, data: Dict[str, Any] = Body(default={})):
+    """Proposal only (same service as Review's Regenerate); the browser saves it as a new version after confirm."""
+    from . import services
+    c = _get(_load(), cid)
+    tc = {"id": c["id"], "name": c.get("title", ""), "description": c.get("description", ""),
+          "precondition": c.get("precondition", ""), "priority": c.get("priority", ""),
+          "steps": [{"description": s.get("step", ""), "expected": s.get("expected", "")} for s in c.get("steps") or []]}
+    res = services.regenerate_one(c.get("story", ""), _s(data.get("feature_text"), 12000),
+                                  [{"id": a, "title": ""} for a in c.get("acs") or []], tc, _s(data.get("instruction"), 1000))
+    p = res["test_case"]
+    old = c.get("steps") or []
+    prop = {"title": p.get("name") or c["title"], "description": p.get("description", ""), "precondition": p.get("precondition", ""),
+            "priority": p.get("priority") or c.get("priority", "Medium"),
+            "steps": [{"step": s["description"], "expected": s["expected"], "data": old[i].get("data", "") if i < len(old) else ""}
+                      for i, s in enumerate(p.get("steps") or [])]}
+    try:
+        token_usage.record(action="Regenerate (repo)", usage=res["usage"], run={"story_id": c.get("story") or "", "jira": {"summary": c.get("title")}, "source": "repo"}, mode="repo")
+    except Exception:
+        log.debug("token usage record failed", exc_info=True)
+    return {"ok": True, "proposal": prop, "usage": res["usage"]}
+
+
+@router.post("/api/repo/cases/{cid}/attachments")
+def repo_case_attach(cid: str, data: Dict[str, Any] = Body(...)):
+    """Link an already-uploaded file (POST /api/attachments, 50 MB limit) to the case itself."""
+    from .test_runs import ATT_RE
+    a = data.get("attachment") or {}
+    if not ATT_RE.match(str(a.get("name", ""))):
+        raise ServiceError("Invalid attachment.")
+    with locked(REPO_FILE):
+        d = _load()
+        c = _get(d, cid)
+        item = {"name": a["name"], "orig": _s(a.get("orig"), 200), "mime": _s(a.get("mime"), 80), "size": int(a.get("size") or 0),
+                "ts": now(), "by": _s(data.get("by"), 100)}
+        c.setdefault("attachments", []).append(item)
+        _event(c, "attached", "Attached " + item["orig"], item["by"])
+        write_json(REPO_FILE, d)
+    return {"ok": True, "attachments": c["attachments"]}
+
+
+@router.delete("/api/repo/cases/{cid}/attachments/{name}")
+def repo_case_detach(cid: str, name: str):
+    with locked(REPO_FILE):
+        d = _load()
+        c = _get(d, cid)
+        c["attachments"] = [a for a in c.get("attachments") or [] if a.get("name") != name]
+        write_json(REPO_FILE, d)
+    return {"ok": True, "attachments": c["attachments"]}

@@ -560,11 +560,12 @@ $("#newRunBtn").onclick = newRunDialog;
 $$("#userMenu [data-go]").forEach((d) => (d.onclick = () => { $("#userMenu").classList.remove("open"); go(d.dataset.go); }));
 $$("#nav a").forEach((a) => (a.onclick = () => go(a.dataset.view)));
 $("#modalBg").onclick = (e) => { if (e.target.id === "modalBg") closeModal(); };
-window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h !== S.view) go(h); });
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h.startsWith("repo/case/")) { if (window.cpRoute) window.cpRoute(h.slice(10)); return; } if (h && h !== S.view) go(h); });
 (async function boot() {
   let st; try { st = await api("/api/state"); } catch (e) { return; }
   const h = location.hash.slice(1);
   if (st.mode === "batch") { await resumeBatch(h); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
+  if (h.startsWith("repo/case/") && window.cpRoute) { window.cpRoute(h.slice(10)); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
   S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "settings" || h === "setup" || h === "history" || h === "tokens" || h === "prompts" || (h === "acs" && stepUnlocked("review")))) ? h : "input";
   render();
   if (window.refreshHistoryCount) refreshHistoryCount();
