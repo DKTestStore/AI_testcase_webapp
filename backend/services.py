@@ -189,15 +189,33 @@ def _ollama_chat(system_prompt: str, user_content: str) -> str:
     except Exception as ex:
         raise ServiceError(f"ollama package not installed: {ex}", 500)
     model = env("OLLAMA_MODEL", "gemma3:4b")
-    host = env("OLLAMA_HOST")
+    host = env("OLLAMA_HOST") or None
     try:
-        client = ollama.Client(host=host) if host else ollama
+        timeout = float(env("OLLAMA_TIMEOUT") or 300)
+    except ValueError:
+        timeout = 300.0
+    try:
+        num_ctx = int(env("OLLAMA_NUM_CTX") or 8192)
+    except ValueError:
+        num_ctx = 8192
+    print(f"Generating test cases with Ollama (model={model}, host={host or 'http://localhost:11434'}, "
+          f"timeout={int(timeout)}s, num_ctx={num_ctx})... please wait.", flush=True)
+    import time as _t
+    t0 = _t.time()
+    try:
+        client = ollama.Client(host=host, timeout=timeout)
         resp = client.chat(model=model, messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
-        ])
+        ], options={"num_ctx": num_ctx})
     except Exception as ex:
+        el = int(_t.time() - t0)
+        print(f"Ollama call failed after {el}s: {type(ex).__name__}: {ex}", flush=True)
+        if "timeout" in type(ex).__name__.lower() or "timed out" in str(ex).lower():
+            raise ServiceError(f"Ollama did not respond within {int(timeout)}s (model '{model}'). "
+                               "Increase OLLAMA_TIMEOUT in Settings or use a smaller prompt/model.", 504)
         raise ServiceError(f"Ollama call failed (is `ollama serve` running and model '{model}' pulled?): {ex}", 502)
+    print(f"Ollama responded in {int(_t.time() - t0)}s.", flush=True)
     try:
         return resp["message"]["content"]
     except Exception:

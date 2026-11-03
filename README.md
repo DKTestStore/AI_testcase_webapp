@@ -72,7 +72,7 @@ python -m playwright install chromium  # downloads the recorder browser + ffmpeg
 |---|---|
 | Generate with Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` (e.g. `gemini-3.5-flash`) |
 | Generate with Codex (optional) | `OPENAI_API_KEY` |
-| Generate with Ollama (optional) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (default `http://localhost:11434`) |
+| Generate with Ollama (optional) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_TIMEOUT` (seconds, default 300; shows a clear error instead of loading forever), `OLLAMA_NUM_CTX` (context window, default 8192). Both are editable on the Settings page. The console prints when an Ollama call starts and how long it took. |
 | Jira story input | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
 | qTest upload | `QTEST_BASE_URL` (`https://<site>.qtestnet.com/api/v3/projects`), `QTEST_TOKEN` (`Bearer …`), `QTEST_PROJECT_ID`; optional `QTEST_REQUIREMENT_ID`, `QTEST_PARENT_MODULE_ID` |
 | Original CLI only | `ENABLE_JIRA_REQURIMENT`, `STORY_ID` |

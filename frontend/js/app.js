@@ -280,7 +280,7 @@ async function viewGenerate(v) {
     saveCustomDraft();
     const st = $("#genStatus"); const t0 = Date.now();
     st.innerHTML = `<div style="margin-top:12px"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0" id="elapsed">Generating… 0s</div></div>`;
-    const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
+    const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${$("#model") && $("#model").value === "ollama" ? " with Ollama (local), this can take a few minutes" : ""}${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
     try {
       const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
       S.localDirty = false; S.cases = []; if (typeof RV !== "undefined") { RV.open.clear(); RV.sel.clear(); RV.page = 0; }
