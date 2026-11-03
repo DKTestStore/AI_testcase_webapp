@@ -158,6 +158,8 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 from . import test_repo, test_runs  # noqa: E402
 app.include_router(test_repo.router, dependencies=[Depends(current)])
 app.include_router(test_runs.router, dependencies=[Depends(current)])
+from . import dashboard  # noqa: E402
+app.include_router(dashboard.router, dependencies=[Depends(current)])
 
 
 @app.post("/api/repo/review")
