@@ -53,15 +53,20 @@ def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", 
 
     cases = [c for c in all_cases if case_ok(c)]
     byid = {c["id"]: c for c in all_cases}
+    # Deleted cases with execution history are soft-deleted as Archived; match the Repo
+    # default and leave them out of inventory tiles / Section 1. Cycle history still
+    # sees them via byid + case_ok (story/folder only).
+    live = [c for c in cases if c.get("status") != "Archived"]
+    live_statuses = [s for s in test_repo.STATUSES if s != "Archived"]
 
-    # (1) cases per story / per folder by status
+    # (1) cases per story / per folder by status (active cases only)
     def group(keyf):
         g: Dict[str, Dict[str, Any]] = {}
-        for c in cases:
+        for c in live:
             k, label = keyf(c)
-            r = g.setdefault(k, {"key": k, "label": label, "total": 0, **{s: 0 for s in test_repo.STATUSES}})
+            r = g.setdefault(k, {"key": k, "label": label, "total": 0, **{s: 0 for s in live_statuses}})
             r["total"] += 1
-            st = c.get("status") if c.get("status") in test_repo.STATUSES else "Draft"
+            st = c.get("status") if c.get("status") in live_statuses else "Draft"
             r[st] += 1
         return sorted(g.values(), key=lambda r: (r["key"] == "", r["label"]))
     by_story = group(lambda c: (c.get("story") or "", c.get("story") or "Not linked to a story"))
@@ -112,7 +117,7 @@ def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", 
 
     # (6) AI vs manual + token usage per run / story
     src = {s: 0 for s in test_repo.SOURCES}
-    for c in cases:
+    for c in live:
         src[c.get("source") if c.get("source") in src else "Manual"] += 1
     try:
         tu = token_usage._load()
@@ -121,7 +126,7 @@ def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", 
         log.exception("dashboard token usage load failed")
         tu, st = [], {"token_rate_input": 0, "token_rate_output": 0}
     ai_by_story: Dict[str, int] = {}
-    for c in cases:
+    for c in live:
         if c.get("source") == "AI":
             ai_by_story[c.get("story") or ""] = ai_by_story.get(c.get("story") or "", 0) + 1
     tok: Dict[str, Dict[str, Any]] = {}
@@ -155,11 +160,11 @@ def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", 
             "options": {"cycles": [{"id": c["id"], "name": c.get("name", "")} for c in cyc_all],
                         "stories": sorted({c.get("story") for c in all_cases if c.get("story")}),
                         "folders": [{"id": f["id"], "name": test_repo._folder_path(repo, f["id"])} for f in folders.values()]},
-            "tiles": {"total_cases": len(cases), "stories": len({c.get("story") for c in cases if c.get("story")}),
+            "tiles": {"total_cases": len(live), "stories": len({c.get("story") for c in live if c.get("story")}),
                       "active_cycles": len(act), "active_cycle_names": [p["name"] for p in act][:4],
                       "pass_rate": round(pas * 100 / ex_all, 1) if ex_all else None, "passed": pas, "executed": ex_all,
                       "failed_no_defect": sum(1 for f in failed if not f["defects"]), "failed": len(failed)},
-            "cases": {"by_story": by_story, "by_folder": by_folder, "statuses": test_repo.STATUSES},
+            "cases": {"by_story": by_story, "by_folder": by_folder, "statuses": live_statuses},
             "progress": progress, "results": results,
             "failed": failed, "jira_base": jira,
             "testers": sorted(testers.values(), key=lambda t: -t["executed"]),

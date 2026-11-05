@@ -361,8 +361,8 @@ Sidebar → **Dashboard** (route `#dashboard`, detail views `#dashboard/<section
 `GET /api/dashboard?cycle=&story=&folder=&from=&to=` (`backend/dashboard.py`), computed from the Test Case Repo,
 Test Runs (active cycles, executions, defect keys) and Token Usage.
 
-- Tiles: total cases, active cycles, pass rate across active cycles, failed cases without a defect.
-- Sections: cases by story/folder × status, cycle progress, pass/fail/blocked/not run per cycle, failed cases + linked
+- Tiles: total cases (Archived excluded, same as the Repo default), active cycles, pass rate across active cycles, failed cases without a defect.
+- Sections: cases by story/folder × status (Draft / Ready / Obsolete; Archived excluded), cycle progress, pass/fail/blocked/not run per cycle, failed cases + linked
   Jira defect keys (links use the Jira URL from Settings), executions per tester, AI vs manual cases + token usage per story
   (cost uses the Token Usage $/1M rates).
 - Every section has a **Table | Donut | Bar** switch (pure SVG, no libraries); the choice is remembered per section in localStorage.
