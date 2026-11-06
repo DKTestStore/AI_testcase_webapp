@@ -31,8 +31,10 @@ def record(*, action: str, usage: Optional[Dict[str, Any]], run: Optional[Dict[s
            mode: str = "", batch: Optional[Dict[str, Any]] = None, item: Optional[Dict[str, Any]] = None) -> None:
     try:
         u = usage or {}
-        if u.get("model") not in (None, "gemini"):
-            return  # only Gemini calls are tracked
+        # Record every provider. `model` field stores the concrete model_name (legacy shape).
+        # Skip empty usage with no tokens and no model_name (nothing to attribute).
+        if not (u.get("model_name") or u.get("model") or u.get("total_tokens") or u.get("input_tokens") or u.get("output_tokens") or u.get("mock")):
+            return
         inp = int(u.get("input_tokens") or 0)
         out = int(u.get("output_tokens") or 0)
         tot = int(u.get("total_tokens") or 0) or inp + out
@@ -50,8 +52,8 @@ def record(*, action: str, usage: Optional[Dict[str, Any]], run: Optional[Dict[s
                "rid": run.get("rid") or "", "run_id": run.get("run_id") or "",
                "batch_rid": (batch or {}).get("rid") or "", "batch_id": (batch or {}).get("batch_id") or "",
                "story_id": story, "title": title, "source": src,
-               "model": u.get("model_name") or "gemini", "mock": bool(u.get("mock")) or u.get("model_name") == "mock",
-               "input": inp, "output": out, "total": tot}
+               "model": u.get("model_name") or u.get("model") or "gemini", "mock": bool(u.get("mock")) or u.get("model_name") == "mock",
+               "input": inp, "output": out, "total": tot, "provider": u.get("provider") or u.get("model") or ""}
         if u.get("template"):   # prompt templates: one row per template call
             ent["template"] = str(u["template"])[:80]
         with _LOCK:

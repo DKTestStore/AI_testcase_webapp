@@ -1,7 +1,7 @@
 # AI TestCase Generator — Web App
 
 An AI-assisted manual test case generator. It turns a **Jira story** (or pasted / uploaded requirements) into
-structured test cases with **Google Gemini** (default model `gemini-3.5-flash`), lets you review and edit them,
+structured test cases with a configurable AI provider (**Gemini** default; also **Grok**, **Claude**, **OpenAI**, **Codex (OpenAI)**, **Ollama**), lets you review and edit them,
 exports them to **Excel**, and uploads them to **qTest Manager** with requirement traceability (RTM).
 
 - **Backend:** FastAPI (`backend/`), wrapping the existing `ai_test_generator` package (Jira, Gemini/Codex/Ollama, qTest helpers).
@@ -16,7 +16,7 @@ exports them to **Excel**, and uploads them to **qTest Manager** with requiremen
 |---|---|---|
 | Backend | Python, FastAPI, Uvicorn | REST API (`/api/...`) and serving the frontend |
 | Config | python-dotenv (`ai_test_generator/.env`) | API keys and settings |
-| AI / LLM | Google Gemini (`google-genai`), OpenAI, Ollama | Test case generation (Gemini token usage shown on the Dashboard) |
+| AI / LLM | Google Gemini (`google-genai`), Grok/xAI, Claude (Anthropic Messages API via `requests`), OpenAI / Codex (`openai`), Ollama | Test case generation; provider chosen on Generate; API key + model ID on Settings |
 | Integrations | Jira (`jira`), qTest (REST via `requests`), FastMCP | Story input, test case push, MCP tooling |
 | Record | Playwright (Chromium) | Capturing browser actions as test steps |
 | Data | JSON files on disk | Runs, repository, test runs (no database yet) |
@@ -70,9 +70,12 @@ python -m playwright install chromium  # downloads the recorder browser + ffmpeg
 
 | Feature | Keys |
 |---|---|
-| Generate with Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` (e.g. `gemini-3.5-flash`) |
-| Generate with Codex (optional) | `OPENAI_API_KEY` |
-| Generate with Ollama (optional) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_TIMEOUT` (seconds, default 300; shows a clear error instead of loading forever), `OLLAMA_NUM_CTX` (context window, default 8192). Both are editable on the Settings page. The console prints when an Ollama call starts and how long it took. |
+| Generate with Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` (enter the ID from Google AI Studio) |
+| Generate with Grok (xAI) | `GROK_API_KEY`, `GROK_MODEL`, optional `GROK_TIMEOUT` (default 120) |
+| Generate with Claude (Anthropic) | `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, optional `CLAUDE_TIMEOUT` (default 120), `CLAUDE_MAX_TOKENS` (default 8192) |
+| Generate with OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_TIMEOUT` (default 120) |
+| Generate with Codex (OpenAI family) | Uses `OPENAI_API_KEY`. Optional `CODEX_MODEL` (falls back to `OPENAI_MODEL`, then legacy `gpt-5-mini`). Not ChatGPT Plus / CLI subscription. |
+| Generate with Ollama (optional) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (default `http://localhost:11434`), `OLLAMA_TIMEOUT` (seconds, default 300; shows a clear error instead of loading forever), `OLLAMA_NUM_CTX` (context window, default 8192). Editable on the Settings page. |
 | Jira story input | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
 | qTest upload | `QTEST_BASE_URL` (`https://<site>.qtestnet.com/api/v3/projects`), `QTEST_TOKEN` (`Bearer …`), `QTEST_PROJECT_ID`; optional `QTEST_REQUIREMENT_ID`, `QTEST_PARENT_MODULE_ID` |
 | Original CLI only | `ENABLE_JIRA_REQURIMENT`, `STORY_ID` |
@@ -92,7 +95,7 @@ The sidebar footer shows `Run RUN-YYYYMMDD-NNN` and `Story <id>`.
    - *Local text*: paste text or drop a `.txt` file.
    - *⬆ Upload test cases (Excel)*: import existing test cases and go straight to Review. **Generate is skipped**
      (the sidebar marks it "skipped"), and you can continue to qTest without generating anything.
-2. **Generate:** choose a model (Gemini / Codex / Ollama), then the **Default prompt** (`test_cases_generator_prompt.md`) or a **Custom prompt**.
+2. **Generate:** choose a **Provider** (Gemini / Grok / Claude / OpenAI / Codex (OpenAI) / Ollama), then the **Default prompt** (`test_cases_generator_prompt.md`) or a **Custom prompt**.
    You can also run the **AI Reviewer**. A token usage card is shown.
 3. **Review:** edit and curate the test cases (see below), then **Save & Download Excel**.
 4. **qTest Upload:**

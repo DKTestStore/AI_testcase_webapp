@@ -386,13 +386,13 @@ def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     instruction = str(data.get("instruction") or "").strip()[:1000]
     ac_list = run.get("ac_list") or _ac_list(run)
     linked = [a for a in ac_list if a["id"] in tc["acs"]]
-    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction)
+    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction, model=run.get("model", "gemini"))
     prop = res["test_case"]
     if data.get("keep_title_priority"):
         prop["name"], prop["priority"] = tc["name"], tc["priority"]
     prop["priority"] = prop["priority"] or tc["priority"]
     prop.update({"acs": tc["acs"], "status": "not", "regenerated": True})
-    log.info("regenerate %s (%s)", tc.get("id"), "mock" if res["usage"].get("mock") else "gemini")
+    log.info("regenerate %s (%s)", tc.get("id"), "mock" if res["usage"].get("mock") else (res["usage"].get("provider") or res["usage"].get("model") or "gemini"))
     _tok(sess, "Regenerate", res["usage"], run)
     return {"ok": True, "proposal": prop, "usage": res["usage"]}
 
