@@ -166,7 +166,7 @@ toward the history limit and, when it is the oldest, it is removed as a whole.
 - **Setup checklist** (first screen after Welcome) has a progress ring (x/5) and five cards: Gemini API key, Gemini model (required),
   Jira, qTest (optional), and **Default prompt** (required). The Default prompt card is set when `test_cases_generator_prompt.md` exists and is not empty.
   Its **View / Edit in Settings →** link opens the **Default prompt editor** on the Settings page, which saves to `ai_test_generator/prompt/test_cases_generator_prompt.md` and rejects empty text.
-- **Settings:** `.env` keys (secrets masked), the Default prompt editor, and the **Run history limit**.
+- **Settings:** tabbed UI — **AI Providers** (one provider at a time; API key + model ID), **Integrations** (Jira / qTest), **Preferences** (run history limit + duplicate threshold). Secrets stay masked; blank secret fields keep the saved key.
 - **App settings file:** non-secret app settings (such as `history_limit`) are stored in `backend/app_settings.json`, not in `.env`.
 - **Logs:** `backend/logs/app.log`, a rotating log (**5 MB × 3** backups) covering session start/logout, history open/delete,
   limit changes, prompt updates and unexpected errors.
