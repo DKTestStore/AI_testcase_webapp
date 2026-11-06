@@ -240,8 +240,11 @@ async function viewGenerate(v) {
   <div class="row"><div style="flex:1.5"><div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
       <div><label style="margin-top:0">Prompt source</label><div class="seg" id="promptSeg"><button data-p="default" class="${src === "default" ? "a" : ""}">Default prompt</button><button data-p="templates" class="${src === "templates" ? "a" : ""}">Templates</button><button data-p="custom" class="${custom ? "a" : ""}">Custom prompt</button></div></div>
-      <div><label style="margin-top:0">Model</label><select id="model">
+      <div><label style="margin-top:0">Provider</label><select id="model">
         <option value="gemini" ${r.model === "gemini" ? "selected" : ""}>Gemini</option>
+        <option value="grok" ${r.model === "grok" ? "selected" : ""}>Grok</option>
+        <option value="claude" ${r.model === "claude" ? "selected" : ""}>Claude</option>
+        <option value="openai" ${r.model === "openai" ? "selected" : ""}>OpenAI</option>
         <option value="codex" ${r.model === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
         <option value="ollama" ${r.model === "ollama" ? "selected" : ""}>Ollama (local)</option></select></div></div>
     <div id="promptArea"></div>
@@ -350,7 +353,7 @@ async function loadTokens() {
       <div class="sub" style="margin:0 0 4px">Last run${last.model ? " · " + esc(last.model_name || last.model) : ""}</div>
       <div class="row"><div><div class="sub" style="margin:0">Total tokens</div><div class="big">${fmt(last.total_tokens)}</div></div>
       <div><div class="sub" style="margin:0">Input / Output</div><div class="big" style="font-size:18px">${fmt(last.input_tokens)} / ${fmt(last.output_tokens)}</div></div></div>
-      <div style="border-top:1px solid #edf0f5;margin-top:12px;padding-top:10px"><div class="sub" style="margin:0 0 4px">Gemini today (reports/gemini_usage.json)</div>
+      <div style="border-top:1px solid #edf0f5;margin-top:12px;padding-top:10px"><div class="sub" style="margin:0 0 4px">Gemini local quota today (app tracker — not other providers)</div>
       ${t ? `<div class="row"><div><div class="sub" style="margin:0">Requests</div><div class="big" style="font-size:18px">${fmt(t.requests_used)} <span class="sub">/ ${fmt(j.usage.daily_request_limit)}</span></div></div>
         <div><div class="sub" style="margin:0">Tokens</div><div class="big" style="font-size:18px">${fmt(t.tokens_used)}</div></div></div>
         <div class="bar" style="margin-top:8px"><div style="width:${Math.min(100, (t.tokens_used / j.usage.daily_token_limit) * 100).toFixed(1)}%"></div></div>

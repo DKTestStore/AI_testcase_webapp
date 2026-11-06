@@ -611,7 +611,7 @@ def _mock_review(case: Dict[str, Any], acs_text: str) -> Dict[str, Any]:
     return {"coverage": cov, "ac": ac, "summary": f"{len(sug)} suggestions (mock reviewer)", "suggestions": sug}
 
 
-def ai_review(case: Dict[str, Any], acs_text: str) -> Dict[str, Any]:
+def ai_review(case: Dict[str, Any], acs_text: str, model: str = "gemini") -> Dict[str, Any]:
     from . import services
     case = _clean_case(case)
     content = (f"Acceptance criteria / story notes:\n{acs_text or '(none given – infer from the test case)'}\n\n"
@@ -623,27 +623,34 @@ def ai_review(case: Dict[str, Any], acs_text: str) -> Dict[str, Any]:
         usage.update({"mock": True, "model_name": "mock", "input_tokens": len(content) // 4 + 300,
                       "output_tokens": len(txt) // 4, "total_tokens": len(content) // 4 + 300 + len(txt) // 4})
     else:
-        g = services._gemini_module()
-        usage["model_name"] = g.gemini_model
-        try:
-            resp = g.client.models.generate_content(
-                model=g.gemini_model, contents=content,
-                config=g.types.GenerateContentConfig(system_instruction=AI_SYSTEM, temperature=0.3,
-                                                     response_mime_type="application/json"))
-        except Exception as ex:
-            raise ServiceError(f"Gemini review error: {ex}", 502)
-        um = getattr(resp, "usage_metadata", None)
-        usage.update({"input_tokens": getattr(um, "prompt_token_count", 0) or 0,
-                      "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
-                      "total_tokens": getattr(um, "total_token_count", 0) or 0})
-        try:
-            data, today = g.get_today_quota()
-            today["requests_used"] = today.get("requests_used", 0) + 1
-            today["tokens_used"] = today.get("tokens_used", 0) + usage["total_tokens"]
-            g.save_quota(data)
-        except Exception:
-            pass
-        txt = getattr(resp, "text", "") or ""
+        provider = services._norm_provider(model)
+        usage["model"] = provider
+        usage["provider"] = provider
+        if provider == "gemini":
+            g = services._gemini_module()
+            usage["model_name"] = g.gemini_model
+            try:
+                resp = g.client.models.generate_content(
+                    model=g.gemini_model, contents=content,
+                    config=g.types.GenerateContentConfig(system_instruction=AI_SYSTEM, temperature=0.3,
+                                                         response_mime_type="application/json"))
+            except Exception as ex:
+                raise ServiceError(f"Gemini review error: {ex}", 502)
+            um = getattr(resp, "usage_metadata", None)
+            usage.update({"input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                          "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                          "total_tokens": getattr(um, "total_token_count", 0) or 0})
+            try:
+                data, today = g.get_today_quota()
+                today["requests_used"] = today.get("requests_used", 0) + 1
+                today["tokens_used"] = today.get("tokens_used", 0) + usage["total_tokens"]
+                g.save_quota(data)
+            except Exception:
+                pass
+            txt = getattr(resp, "text", "") or ""
+        else:
+            out_c = services._complete(provider, AI_SYSTEM, content, temperature=0.3)
+            txt, usage = out_c["text"], out_c["usage"]
         try:
             out = json.loads(re.sub(r"^```(json)?|```$", "", txt.strip()).strip())
         except Exception:
@@ -666,7 +673,7 @@ def repo_ai_review(data: Dict[str, Any] = Body(...)):
     case = data.get("case") or {}
     if not _s(case.get("title")) and not case.get("steps"):
         raise ServiceError("Add a title or steps before asking the AI to review.")
-    return {"ok": True, "review": ai_review(case, _s(data.get("acs"), 8000))}
+    return {"ok": True, "review": ai_review(case, _s(data.get("acs"), 8000), model=_s(data.get("model"), 32) or "gemini")}
 
 
 # ------------------------------------------------------------------ v4: usage check, folder management
@@ -922,7 +929,8 @@ def repo_case_regenerate(cid: str, data: Dict[str, Any] = Body(default={})):
           "precondition": c.get("precondition", ""), "priority": c.get("priority", ""),
           "steps": [{"description": s.get("step", ""), "expected": s.get("expected", "")} for s in c.get("steps") or []]}
     res = services.regenerate_one(c.get("story", ""), _s(data.get("feature_text"), 12000),
-                                  [{"id": a, "title": ""} for a in c.get("acs") or []], tc, _s(data.get("instruction"), 1000))
+                                  [{"id": a, "title": ""} for a in c.get("acs") or []], tc, _s(data.get("instruction"), 1000),
+                                  model=_s(data.get("model"), 32) or "gemini")
     p = res["test_case"]
     old = c.get("steps") or []
     prop = {"title": p.get("name") or c["title"], "description": p.get("description", ""), "precondition": p.get("precondition", ""),
