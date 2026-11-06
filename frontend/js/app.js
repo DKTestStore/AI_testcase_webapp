@@ -488,44 +488,245 @@ async function qRtm(el) {
 }
 
 // ------------------------------------------------------------------ SETTINGS
+/* Tabbed Settings UI. All inputs stay in the DOM (hidden panes) so tab/provider
+   switches never discard edits or wipe secret fields. Blank secrets are omitted
+   on save (server keeps the existing key). Explicit Clear still DELETEs a key. */
+const SET_AI = [
+  { group: "Gemini", sub: "Cloud", note: null },
+  { group: "Grok (xAI)", sub: "Cloud", note: null },
+  { group: "Claude (Anthropic)", sub: "Cloud", note: null },
+  { group: "OpenAI", sub: "Cloud · key shared", note: "openai" },
+  { group: "Codex (OpenAI)", sub: "Uses OpenAI key", note: "codex" },
+  { group: "Ollama", sub: "Local", note: null },
+];
+const SET_INT = ["Jira", "qTest"];
+const SET_ST = { tab: "providers", provider: "Gemini", baseline: {}, prefs: { hist: "", dup: "" } };
+
+function setFieldHtml(f) {
+  const id = `sf_${f.key}`;
+  const pill = f.secret ? (f.is_set ? ' <span class="pill">set</span>' : ' <span class="pill r">not set</span>') : "";
+  const ph = f.secret ? esc(f.value || "not set") : "";
+  const val = f.secret ? "" : esc(f.value);
+  const clear = f.secret && f.is_set
+    ? `<div class="clear-row"><button type="button" class="btn g sm" data-clear="${esc(f.key)}">Clear</button></div>` : "";
+  const hint = f.secret
+    ? `<div class="hint">Leave blank to keep the current value.</div>`
+    : (f.key === "CODEX_MODEL"
+      ? `<div class="hint">Optional. Falls back to OPENAI_MODEL, then the app’s legacy default.</div>` : "");
+  return `<div class="set-field"><label for="${id}">${esc(f.label)}${pill}</label>
+    <input id="${id}" data-key="${esc(f.key)}" data-secret="${f.secret ? "1" : "0"}" data-initial="${val}"
+      ${f.secret ? 'type="password" autocomplete="new-password"' : 'type="text"'}
+      placeholder="${ph}" value="${val}" style="width:100%">
+    ${hint}${clear}</div>`;
+}
+
+function setGroupConfigured(fs) {
+  return fs.some((f) => f.secret ? f.is_set : !!(f.value || "").trim());
+}
+
+function setCollectEnvValues() {
+  const values = {};
+  $$("#sbody [data-key]").forEach((i) => {
+    if (i.type === "password") {
+      if (i.value.trim()) values[i.dataset.key] = i.value;
+    } else {
+      values[i.dataset.key] = i.value;
+    }
+  });
+  return values;
+}
+
+function setIsDirty() {
+  let dirty = false;
+  $$("#sbody [data-key]").forEach((i) => {
+    if (i.dataset.secret === "1") {
+      if (i.value.trim()) dirty = true;
+    } else if ((i.value || "") !== (i.dataset.initial || "")) {
+      dirty = true;
+    }
+  });
+  const hl = $("#histLimit"), dt = $("#dupThr");
+  if (hl && SET_ST.prefs.hist !== "" && hl.value !== SET_ST.prefs.hist) dirty = true;
+  if (dt && SET_ST.prefs.dup !== "" && dt.value !== SET_ST.prefs.dup) dirty = true;
+  return dirty;
+}
+
+function setUpdateDirty() {
+  const el = $("#setDirty"); if (!el) return;
+  if (setIsDirty()) { el.className = "dirty"; el.textContent = "● Unsaved changes"; }
+  else { el.className = "clean"; el.textContent = "All changes saved"; }
+}
+
+function setShowTab(tab) {
+  SET_ST.tab = tab;
+  $$(".set-tabs button").forEach((b) => b.classList.toggle("a", b.dataset.tab === tab));
+  $$(".set-pane").forEach((p) => p.classList.toggle("a", p.dataset.pane === tab));
+}
+
+function setShowProvider(name) {
+  SET_ST.provider = name;
+  $$(".set-pbtn").forEach((b) => {
+    const on = b.dataset.provider === name;
+    b.classList.toggle("a", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  $$(".set-prov").forEach((p) => p.classList.toggle("a", p.dataset.provider === name));
+}
+
 async function viewSettings(v) {
-  v.innerHTML = `<h1>Settings</h1><div class="sub">Stored server-side in <span class="mono">ai_test_generator/.env</span>. Secrets are never sent back to the browser in full — leave a secret blank to keep the current value.</div><div id="sbody">Loading…</div>`;
+  v.innerHTML = `<h1>Settings</h1><div class="sub">API keys stay on the server (masked). Leave a secret blank to keep the current value. Stored in <span class="mono">ai_test_generator/.env</span>.</div><div id="sbody">Loading…</div>`;
   let j; try { j = await api("/api/settings"); } catch (e) { $("#sbody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
   const groups = {}; j.fields.forEach((f) => (groups[f.group] = groups[f.group] || []).push(f));
-  $("#sbody").innerHTML = Object.entries(groups).map(([g, fs]) => `<div class="card"><h3>${esc(g)}</h3><div class="row" style="flex-wrap:wrap">${fs.map((f) => `<div style="min-width:280px">
-      <label>${esc(f.label)} ${f.secret ? (f.is_set ? '<span class="pill">set</span>' : '<span class="pill r">not set</span>') : ""}</label>
-      <input data-key="${f.key}" ${f.secret ? 'type="password" autocomplete="new-password"' : ""} placeholder="${f.secret ? esc(f.value || "not set") : ""}" value="${f.secret ? "" : esc(f.value)}" style="width:100%">
-      ${f.secret && f.is_set ? `<button class="btn g sm" data-clear="${f.key}" style="margin-top:6px">Clear</button>` : ""}</div>`).join("")}</div></div>`).join("") +
-    `<button class="btn" id="saveSettings">Save Settings</button>
-    <div class="card" id="histCard" style="margin-top:18px"><h3>🕘 Run history</h3>
-      <label for="histLimit">Run history limit</label>
-      <div class="row" style="align-items:center;gap:10px"><input id="histLimit" type="number" min="1" max="100" step="1" style="width:120px;flex:none"><button class="btn" id="saveHist" style="flex:none">Save limit</button><span class="sub" id="histHint" style="margin:0;flex:none"></span></div>
-      <div class="sub" style="margin:8px 0 0">How many recent runs to keep on this browser (1–100, default 5). Lowering it removes only the oldest runs beyond the new limit; raising it keeps everything.</div></div>
-    <div class="card" id="dupCard" style="margin-top:18px"><h3>≋ Duplicate detection</h3>
-      <label for="dupThr">Similarity threshold (%)</label>
-      <div class="row" style="align-items:center;gap:10px"><input id="dupThr" type="number" min="50" max="99" step="1" style="width:120px;flex:none"><button class="btn" id="saveDup" style="flex:none">Save threshold</button><span class="sub" id="dupHint" style="margin:0;flex:none"></span></div>
-      <div class="sub" style="margin:8px 0 0">Test cases at or above this similarity are flagged as possible duplicates (50–99, default 80; 90%+ shown in red). Checked locally — no AI call.</div></div>
-`;
-  api("/api/settings/history_limit").then((h) => { $("#histLimit").value = h.value; $("#histHint").textContent = `Current: ${h.value}`; });
+  const aiNames = SET_AI.map((x) => x.group);
+  if (!aiNames.includes(SET_ST.provider)) SET_ST.provider = aiNames[0];
+
+  const plist = SET_AI.map((p) => {
+    const fs = groups[p.group] || [];
+    const ok = setGroupConfigured(fs);
+    const pill = ok ? '<span class="pill">set</span>' : '<span class="pill r">not set</span>';
+    const a = p.group === SET_ST.provider ? " a" : "";
+    return `<button type="button" class="set-pbtn${a}" role="option" data-provider="${esc(p.group)}" aria-selected="${a ? "true" : "false"}">
+      <span class="row1"><span class="nm">${esc(p.group)}</span>${pill}</span>
+      <span class="sub">${esc(p.sub)}</span></button>`;
+  }).join("");
+
+  const details = SET_AI.map((p) => {
+    const fs = groups[p.group] || [];
+    const a = p.group === SET_ST.provider ? " a" : "";
+    let lede = p.sub === "Local" ? "Runs on this machine via Ollama." : "Cloud provider.";
+    let note = "";
+    if (p.note === "openai") {
+      lede = "Cloud provider · API key is also used by Codex (OpenAI).";
+      note = `<div class="set-note"><b>Codex (OpenAI) note</b><br>Codex uses this same OpenAI API key. Set an optional Codex model ID under the <b>Codex (OpenAI)</b> provider in the list (falls back to OPENAI_MODEL, then the app’s legacy default).</div>`;
+    } else if (p.note === "codex") {
+      lede = "OpenAI family profile — uses the OpenAI API key (not a separate vendor). Not ChatGPT Plus / CLI subscription.";
+      note = `<div class="set-note"><b>Shared key</b><br>API key is configured under <b>OpenAI</b>. Only the Codex model ID is set here.</div>`;
+    }
+    return `<div class="set-prov${a}" data-provider="${esc(p.group)}" ${a ? "" : 'hidden'}>
+      <h2>${esc(p.group)}</h2><p class="lede">${lede}</p>
+      ${fs.map(setFieldHtml).join("") || '<div class="sub">No fields for this provider.</div>'}
+      ${note}</div>`;
+  }).join("");
+
+  const intCards = SET_INT.map((g) => {
+    const fs = groups[g] || [];
+    const ok = setGroupConfigured(fs);
+    const badge = ok ? '<span class="pill">configured</span>' : '<span class="pill r">not set</span>';
+    const lede = g === "Jira" ? "Story fetch for the Input step" : "Upload + RTM on the qTest step";
+    return `<div class="card"><h2>${esc(g)} ${badge}</h2><div class="sub" style="margin:0 0 12px">${lede}</div>
+      ${fs.map(setFieldHtml).join("")}</div>`;
+  }).join("");
+
+  // Any leftover groups (should be none) still rendered so fields are never dropped
+  const known = new Set([...aiNames, ...SET_INT]);
+  const extra = Object.keys(groups).filter((g) => !known.has(g));
+  const extraHtml = extra.length
+    ? `<div class="card" style="margin-top:14px"><h3>Other</h3>${extra.map((g) => `<h4>${esc(g)}</h4>${(groups[g] || []).map(setFieldHtml).join("")}`).join("")}</div>` : "";
+
+  $("#sbody").innerHTML = `
+    <div id="setErr" class="set-err" hidden></div>
+    <div class="set-tabs" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" data-tab="providers" class="a" aria-selected="true">AI Providers</button>
+      <button type="button" role="tab" data-tab="integrations" aria-selected="false">Integrations</button>
+      <button type="button" role="tab" data-tab="preferences" aria-selected="false">Preferences</button>
+    </div>
+    <div class="set-pane a" data-pane="providers" role="tabpanel">
+      <div class="set-ai">
+        <div class="set-plist" role="listbox" aria-label="AI providers">${plist}</div>
+        <div class="set-detail">${details}</div>
+      </div>
+    </div>
+    <div class="set-pane" data-pane="integrations" role="tabpanel" hidden>
+      <div class="set-int">${intCards}</div>${extraHtml}
+    </div>
+    <div class="set-pane" data-pane="preferences" role="tabpanel" hidden>
+      <div class="card" id="histCard"><h3>🕘 Run history</h3>
+        <label for="histLimit">Run history limit</label>
+        <div class="row" style="align-items:center;gap:10px"><input id="histLimit" type="number" min="1" max="100" step="1" style="width:120px;flex:none"><button type="button" class="btn" id="saveHist" style="flex:none">Save limit</button><span class="sub" id="histHint" style="margin:0;flex:none"></span></div>
+        <div class="sub" style="margin:8px 0 0">How many recent runs to keep on this browser (1–100, default 5). Lowering it removes only the oldest runs beyond the new limit; raising it keeps everything.</div></div>
+      <div class="card" id="dupCard" style="margin-top:14px"><h3>≋ Duplicate detection</h3>
+        <label for="dupThr">Similarity threshold (%)</label>
+        <div class="row" style="align-items:center;gap:10px"><input id="dupThr" type="number" min="50" max="99" step="1" style="width:120px;flex:none"><button type="button" class="btn" id="saveDup" style="flex:none">Save threshold</button><span class="sub" id="dupHint" style="margin:0;flex:none"></span></div>
+        <div class="sub" style="margin:8px 0 0">Test cases at or above this similarity are flagged as possible duplicates (50–99, default 80; 90%+ shown in red). Checked locally — no AI call.</div></div>
+    </div>
+    <div class="set-foot">
+      <span id="setDirty" class="clean">All changes saved</span>
+      <button type="button" class="btn" id="saveSettings">Save changes</button>
+    </div>`;
+
+  // Sync hidden attr with .a for a11y (provider panes)
+  $$(".set-prov").forEach((p) => { if (!p.classList.contains("a")) p.hidden = true; else p.hidden = false; });
+  $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+
+  $$(".set-tabs button").forEach((b) => (b.onclick = () => {
+    setShowTab(b.dataset.tab);
+    $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x === b ? "true" : "false"));
+    $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+    setUpdateDirty();
+  }));
+  $$(".set-pbtn").forEach((b) => (b.onclick = () => {
+    setShowProvider(b.dataset.provider);
+    $$(".set-prov").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+    setUpdateDirty();
+  }));
+
+  $("#sbody").addEventListener("input", (e) => { if (e.target && e.target.matches("[data-key], #histLimit, #dupThr")) setUpdateDirty(); });
+
+  api("/api/settings/history_limit").then((h) => {
+    const el = $("#histLimit"); if (!el) return;
+    el.value = h.value; SET_ST.prefs.hist = String(h.value);
+    $("#histHint").textContent = `Current: ${h.value}`;
+    setUpdateDirty();
+  }).catch((e) => { const box = $("#setErr"); if (box) { box.hidden = false; box.className = "error set-err"; box.textContent = e.message; } });
   $("#saveHist").onclick = () => guarded($("#saveHist"), async () => {
     const raw = $("#histLimit").value.trim();
     if (!/^\d+$/.test(raw) || +raw < 1 || +raw > 100) throw new Error("Run history limit must be a whole number between 1 and 100.");
     const r = await api("/api/settings/history_limit", { method: "PUT", body: { value: +raw } });
-    $("#histHint").textContent = `Current: ${r.value}`; toast(`Run history limit set to ${r.value}${r.pruned ? ` · removed ${r.pruned} oldest run${r.pruned > 1 ? "s" : ""}` : ""}`);
+    SET_ST.prefs.hist = String(r.value);
+    $("#histHint").textContent = `Current: ${r.value}`;
+    toast(`Run history limit set to ${r.value}${r.pruned ? ` · removed ${r.pruned} oldest run${r.pruned > 1 ? "s" : ""}` : ""}`);
     if (window.refreshHistoryCount) refreshHistoryCount();
+    setUpdateDirty();
   });
-  api("/api/settings/dup_threshold").then((d) => { $("#dupThr").value = d.value; $("#dupHint").textContent = `Current: ${d.value}%`; });
+  api("/api/settings/dup_threshold").then((d) => {
+    const el = $("#dupThr"); if (!el) return;
+    el.value = d.value; SET_ST.prefs.dup = String(d.value);
+    $("#dupHint").textContent = `Current: ${d.value}%`;
+    setUpdateDirty();
+  }).catch((e) => { const box = $("#setErr"); if (box) { box.hidden = false; box.className = "error set-err"; box.textContent = e.message; } });
   $("#saveDup").onclick = () => guarded($("#saveDup"), async () => {
     const raw = $("#dupThr").value.trim();
     if (!/^\d+$/.test(raw) || +raw < 50 || +raw > 99) throw new Error("Duplicate threshold must be a whole number between 50 and 99.");
     const r = await api("/api/settings/dup_threshold", { method: "PUT", body: { value: +raw } });
-    DUP.threshold = r.value; DUP.res = null; $("#dupHint").textContent = `Current: ${r.value}%`; toast(`Duplicate threshold set to ${r.value}%`);
+    DUP.threshold = r.value; DUP.res = null; SET_ST.prefs.dup = String(r.value);
+    $("#dupHint").textContent = `Current: ${r.value}%`; toast(`Duplicate threshold set to ${r.value}%`);
+    setUpdateDirty();
   });
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
-    const values = {}; $$("[data-key]").forEach((i) => { if (i.type !== "password" || i.value.trim()) values[i.dataset.key] = i.value; });
-    const r = await api("/api/settings", { method: "PUT", body: { values } }); toast(`Saved (${r.changed.length} changed)`); viewSettings(v);
+    const values = setCollectEnvValues();
+    const r = await api("/api/settings", { method: "PUT", body: { values } });
+    toast(`Saved (${r.changed.length} changed)`);
+    // Reload to refresh masks / set pills; preserve current tab + provider
+    const tab = SET_ST.tab, prov = SET_ST.provider;
+    await viewSettings(v);
+    setShowTab(tab);
+    $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === tab ? "true" : "false"));
+    $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+    setShowProvider(prov);
+    $$(".set-prov").forEach((p) => { p.hidden = !p.classList.contains("a"); });
   });
-  $$("[data-clear]").forEach((b) => (b.onclick = () => guarded(b, async () => { if (!confirm(`Clear ${b.dataset.clear}?`)) return; await api(`/api/settings/${b.dataset.clear}`, { method: "DELETE" }); viewSettings(v); })));
+  $$("[data-clear]").forEach((b) => (b.onclick = () => guarded(b, async () => {
+    if (!confirm(`Clear ${b.dataset.clear}?`)) return;
+    await api(`/api/settings/${b.dataset.clear}`, { method: "DELETE" });
+    const tab = SET_ST.tab, prov = SET_ST.provider;
+    await viewSettings(v);
+    setShowTab(tab);
+    $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === tab ? "true" : "false"));
+    $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+    setShowProvider(prov);
+    $$(".set-prov").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+  })));
+  setUpdateDirty();
 }
 
 // ------------------------------------------------------------------ modal / logout / new run
