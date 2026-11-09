@@ -176,6 +176,9 @@ Runtime data is git-ignored: `ai_test_generator/.env`, `ai_test_generator/report
 
 ---
 
+
+**Sidebar icons:** Lucide line icons (ISC license) via an inline SVG sprite in `frontend/app.html` (`stroke="currentColor"`); workflow steps 1–4 keep their numbered circles. No extra runtime dependency. See comment in `app.html` for attribution.
+
 ## 5. Project structure
 
 ```

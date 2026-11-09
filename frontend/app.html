@@ -4,21 +4,77 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI TestCase Generator</title>
-<link rel="stylesheet" href="/static/css/app.css?v=33">
-<link rel="stylesheet" href="/static/css/search.css?v=33">
-<link rel="stylesheet" href="/static/css/rt.css?v=33">
-<link rel="stylesheet" href="/static/css/rec.css?v=33">
-<link rel="stylesheet" href="/static/css/repo.css?v=33">
-<link rel="stylesheet" href="/static/css/casepreview.css?v=33">
-<link rel="stylesheet" href="/static/css/dashboard.css?v=33">
-<link rel="stylesheet" href="/static/css/requirements.css?v=33">
+<link rel="stylesheet" href="/static/css/app.css?v=34">
+<link rel="stylesheet" href="/static/css/search.css?v=34">
+<link rel="stylesheet" href="/static/css/rt.css?v=34">
+<link rel="stylesheet" href="/static/css/rec.css?v=34">
+<link rel="stylesheet" href="/static/css/repo.css?v=34">
+<link rel="stylesheet" href="/static/css/casepreview.css?v=34">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=34">
+<link rel="stylesheet" href="/static/css/requirements.css?v=34">
 </head>
 <body>
+<!-- Lucide Icons (ISC License) — https://lucide.dev/license
+     Inline SVG sprite for sidebar nav; stroke=currentColor, no runtime dependency. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="ico-dashboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect width="7" height="9" x="3" y="3" rx="1" />
+      <rect width="7" height="5" x="14" y="3" rx="1" />
+      <rect width="7" height="9" x="14" y="12" rx="1" />
+      <rect width="7" height="5" x="3" y="16" rx="1" />
+  </symbol>
+  <symbol id="ico-requirements" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <path d="M12 11h4" />
+      <path d="M12 16h4" />
+      <path d="M8 11h.01" />
+      <path d="M8 16h.01" />
+  </symbol>
+  <symbol id="ico-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l4 2" />
+  </symbol>
+  <symbol id="ico-repo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m16 6 4 14" />
+      <path d="M12 6v14" />
+      <path d="M8 8v12" />
+      <path d="M4 4v16" />
+  </symbol>
+  <symbol id="ico-runs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" />
+      <circle cx="12" cy="12" r="10" />
+  </symbol>
+  <symbol id="ico-prompts" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
+      <path d="M7 11h10" />
+      <path d="M7 15h6" />
+      <path d="M7 7h8" />
+  </symbol>
+  <symbol id="ico-tokens" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+      <path d="M18 17V9" />
+      <path d="M13 17V5" />
+      <path d="M8 17v-3" />
+  </symbol>
+  <symbol id="ico-setup" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 5h8" />
+      <path d="M13 12h8" />
+      <path d="M13 19h8" />
+      <path d="m3 17 2 2 4-4" />
+      <path d="m3 7 2 2 4-4" />
+  </symbol>
+  <symbol id="ico-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+      <circle cx="12" cy="12" r="3" />
+  </symbol>
+</svg>
 <aside class="sb">
   <div class="logo">⚡ AI <span>TestCase</span> Generator</div>
   <nav class="nav" id="nav">
-    <a data-view="dashboard"><span class="num">▦</span>Dashboard<span class="tr-nb">NEW</span></a>
-    <a data-view="requirements"><span class="num">📋</span>Requirements<span class="tr-nb">NEW</span></a>
+    <a data-view="dashboard"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-dashboard"></use></svg></span>Dashboard<span class="tr-nb">NEW</span></a>
+    <a data-view="requirements"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-requirements"></use></svg></span>Requirements<span class="tr-nb">NEW</span></a>
     <a data-view="projects" style="display:none">Projects</a>
     <a data-view="trace" style="display:none">Traceability</a>
     <div class="sep"></div>
@@ -27,13 +83,13 @@
     <a data-view="review"><span class="num">3</span>Review</a>
     <a data-view="qtest"><span class="num">4</span>qTest Upload</a>
     <div class="sep"></div>
-    <a data-view="history"><span class="num">🕘</span>Run history<span class="cnt" id="hCnt"></span></a>
-    <a data-view="repo"><span class="num">🗂</span>Test Case Repo<span class="tr-nb">NEW</span></a>
-    <a data-view="runs"><span class="num">▶</span>Test Runs<span class="tr-nb">NEW</span></a>
-    <a data-view="prompts"><span class="num">📝</span>Prompt templates<span class="pt-new" style="background:#f59e0b;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a>
-    <a data-view="tokens"><span class="num">📊</span>Token Usage<span class="tu-new" style="background:#12a150;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a>
-    <a data-view="setup"><span class="num">✓</span>Setup checklist</a>
-    <a data-view="settings"><span class="num">⚙</span>Settings</a>
+    <a data-view="history"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-history"></use></svg></span>Run history<span class="cnt" id="hCnt"></span></a>
+    <a data-view="repo"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-repo"></use></svg></span>Test Case Repo<span class="tr-nb">NEW</span></a>
+    <a data-view="runs"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-runs"></use></svg></span>Test Runs<span class="tr-nb">NEW</span></a>
+    <a data-view="prompts"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-prompts"></use></svg></span>Prompt templates<span class="pt-new" style="background:#f59e0b;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a>
+    <a data-view="tokens"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-tokens"></use></svg></span>Token Usage<span class="tu-new" style="background:#12a150;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a>
+    <a data-view="setup"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-setup"></use></svg></span>Setup checklist</a>
+    <a data-view="settings"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-settings"></use></svg></span>Settings</a>
   </nav>
   <div class="runinfo" id="runinfo"></div>
 </aside>
@@ -53,24 +109,24 @@
 
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
-<script src="/static/js/review.js?v=33"></script>
-<script src="/static/js/regen.js?v=33"></script>
-<script src="/static/js/dup.js?v=33"></script>
-<script src="/static/js/cov.js?v=33"></script>
-<script src="/static/js/excel_upload.js?v=33"></script>
-<script src="/static/js/app.js?v=33"></script>
-<script src="/static/js/history.js?v=33"></script>
-<script src="/static/js/batch.js?v=33"></script>
-<script src="/static/js/cmp.js?v=33"></script>
-<script src="/static/js/tokens.js?v=33"></script>
-<script src="/static/js/search.js?v=33"></script>
-<script src="/static/js/prompts.js?v=33"></script>
-<script src="/static/js/rt.js?v=33"></script>
-<script src="/static/js/rec.js?v=33"></script>
-<script src="/static/js/repo.js?v=33"></script>
-<script src="/static/js/runs.js?v=33"></script>
-<script src="/static/js/casepreview.js?v=33"></script>
-<script src="/static/js/dashboard.js?v=33"></script>
-<script src="/static/js/requirements.js?v=33"></script>
+<script src="/static/js/review.js?v=34"></script>
+<script src="/static/js/regen.js?v=34"></script>
+<script src="/static/js/dup.js?v=34"></script>
+<script src="/static/js/cov.js?v=34"></script>
+<script src="/static/js/excel_upload.js?v=34"></script>
+<script src="/static/js/app.js?v=34"></script>
+<script src="/static/js/history.js?v=34"></script>
+<script src="/static/js/batch.js?v=34"></script>
+<script src="/static/js/cmp.js?v=34"></script>
+<script src="/static/js/tokens.js?v=34"></script>
+<script src="/static/js/search.js?v=34"></script>
+<script src="/static/js/prompts.js?v=34"></script>
+<script src="/static/js/rt.js?v=34"></script>
+<script src="/static/js/rec.js?v=34"></script>
+<script src="/static/js/repo.js?v=34"></script>
+<script src="/static/js/runs.js?v=34"></script>
+<script src="/static/js/casepreview.js?v=34"></script>
+<script src="/static/js/dashboard.js?v=34"></script>
+<script src="/static/js/requirements.js?v=34"></script>
 </body>
 </html>
