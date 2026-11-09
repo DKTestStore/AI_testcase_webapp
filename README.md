@@ -193,12 +193,13 @@ Runtime data is git-ignored: `ai_test_generator/.env`, `ai_test_generator/report
 │   ├── history_store.py        # rolling run history (index + snapshots, FIFO)
 │   ├── test_repo.py            # Test Case Repo: folders, versions, duplicate check, import, AI review (/api/repo/*)
 │   ├── test_runs.py            # Test Runs: cycles, executions, attachments (/api/runs/*, /api/attachments/*)
+│   ├── requirements_repo.py    # Projects + Requirement Repo + links + traceability (/api/projects/*, /api/requirements/*)
 │   ├── session_store.py        # per-browser current run (memory + backend/sessions/*.json)
 │   ├── settings_store.py       # .env settings (masked) + app_settings.json (history limit)
 │   └── config.py               # paths, .env loading, data folders
 ├── frontend/
 │   ├── welcome.html  app.html  css/app.css
-│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js  repo.js  runs.js  casepreview.js  (css/repo.css, css/casepreview.css)
+│   └── js/ app.js  review.js  excel_upload.js  history.js  welcome.js  repo.js  runs.js  casepreview.js  requirements.js  (css/repo.css, css/casepreview.css, css/requirements.css)
 ├── requirements.txt
 ├── README.md
 └── NOTES.md                    # assumptions and known gaps
@@ -231,6 +232,7 @@ and no new `.env` key — AI review uses the existing Gemini settings.
 |---|---|
 | `backend/test_repo/repo.json` | repo folders + test cases (with every version snapshot) |
 | `backend/test_repo/runs.json` | cycles, cycle items and every execution attempt |
+| `backend/test_repo/requirements.json` | projects, requirement folders, requirements (REQ-####), requirement↔case links |
 | `backend/attachments/` | execution attachments (images / videos / logs / PDF, max **50 MB** each), served only via `GET /api/attachments/<name>` (strict file-name check) |
 
 Writes are atomic (temp file + replace) under a thread lock and an `fcntl` file lock.
@@ -358,6 +360,30 @@ and the Batch layout work exactly as before.
   **Improve with AI** makes one regenerate call for that test case (mocked with `ATG_MOCK_GEMINI=1`).
 - Tests: `/workspace/e2e/rt.py` (mock server on 8001; `ATG_BASE` overrides). Mock generate emits
   `Test Case Type:` lines when the feature text contains `[mock-types]`.
+
+
+
+## Projects & Requirement Repo
+
+Additive feature: organize work into **Projects**, capture **Requirements** (REQ-####), link them to existing
+Test Case Repo cases, and view **traceability** against Test Runs cycles. Existing Generate / Review / Publish /
+Repo / Runs / Dashboard / Settings flows are unchanged. Cases keep their free-text `story` field.
+
+**Sidebar:** project switcher under the logo + new **Requirements** nav item (Projects / Traceability are reachable from that page).
+
+**Projects** (`/api/projects`):
+- Fields: `key` (e.g. EXPO), `name`, `description`, optional `jira_project_key`, `qtest_project_id`, `zephyr_project_key`
+- A system **Local** project is created automatically for legacy / unscoped data
+
+**Requirements** (`/api/requirements`):
+- Fields: title, type (Story/Epic/Feature), source (Manual|Jira), single `jira_key` (1:1 per project), priority,
+  status (Draft/Ready/Approved/Archived), description, acceptance criteria, folder
+- Delete archives (status Archived); archived hidden by default
+- Link / unlink Test Case Repo cases; opt-in **auto-link** when `case.story == requirement.jira_key`
+- **Import from Jira**: paste keys (or `KEY | Title`); optional fetch via existing `services.fetch_jira` (Settings Jira)
+- **Generate with AI**: prefills the existing Generate flow with requirement text and sets `story_id` to the Jira key
+- Coverage uses linked cases + last cycle result from Test Runs data
+- **Traceability** matrix: `GET /api/requirements/traceability?project_id=&cycle_id=&gaps_only=`
 
 ## Dashboard
 Sidebar → **Dashboard** (route `#dashboard`, detail views `#dashboard/<section>`). Read-only; data from
