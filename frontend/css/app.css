@@ -8,6 +8,14 @@ body{min-height:100vh;display:flex;background:#f4f6fb;color:#1e2433;font-size:13
 .nav .num{width:20px;height:20px;border-radius:50%;border:1.5px solid #5b6690;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
 .nav a.done .num{background:#12a150;border-color:#12a150;color:#fff}
 .nav a.locked{opacity:.45;cursor:not-allowed}
+/* Lucide sidebar icons (inline SVG sprite in app.html; ISC license) */
+.nav .num-ico{border-color:#5b6690}
+.nav .nav-ico{width:14px;height:14px;display:block;color:#94a3b8;flex-shrink:0}
+.nav a.a .nav-ico,.nav a.done .num-ico .nav-ico{color:#fff}
+.nav a.done .num-ico{background:#12a150;border-color:#12a150}
+.nav a.skipped .num-ico{background:#94a3b8;border-color:#94a3b8}
+.nav a.skipped .num-ico .nav-ico{color:#fff}
+
 .nav .sep{border-top:1px solid #26304f;margin:12px 0}
 .sb .runinfo{margin-top:auto;font-size:11px;color:#7f8ab0;line-height:1.6}
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
