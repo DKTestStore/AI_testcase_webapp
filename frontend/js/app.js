@@ -61,7 +61,8 @@ function go(view) {
 function renderNav() {
   $$("#nav a").forEach((a) => {
     const v = a.dataset.view;
-    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")));
+    const reqViews = ["requirements", "projects", "trace"];
+    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")) || (v === "requirements" && reqViews.includes(S.view)));
     a.classList.toggle("done", STEPS.includes(v) && stepDone(v));
     a.classList.toggle("locked", STEPS.includes(v) && !stepUnlocked(v));
   });
@@ -92,7 +93,13 @@ function render() {
   renderNav();
   const v = $("#view");
   if (String(S.view).startsWith("dashboard")) return window.viewDashboard ? viewDashboard(v) : viewInput(v);
-  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  if (S.view === "requirements" || S.view === "projects" || S.view === "trace") {
+    if (S.view === "projects" && window.RQ) window.RQ.view = "projects";
+    if (S.view === "trace" && window.RQ) window.RQ.view = "trace";
+    if (S.view === "requirements" && window.RQ && window.RQ.view === "projects") window.RQ.view = "list";
+    return window.viewRequirements ? viewRequirements(v) : viewInput(v);
+  }
+  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), requirements: (v) => viewRequirements(v), projects: (v) => viewProjects(v), trace: (v) => viewTraceability(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
 }
 
 
