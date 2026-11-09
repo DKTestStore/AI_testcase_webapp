@@ -1,16 +1,27 @@
-# Web app
+# AI TestCase Generator — Python dependencies
+# Install:  pip install -r requirements.txt
+# Then for Record:  python -m playwright install chromium
+#
+# Statically scanned against imports under backend/ and ai_test_generator/ (docs refresh).
+# Claude uses Anthropic Messages over HTTP via `requests` (no `anthropic` package).
+# File uploads are base64 JSON (no `python-multipart` required).
+
+# --- Web app ---
 fastapi>=0.110
-uvicorn[standard]>=0.29
+uvicorn[standard]>=0.29          # run: python -m uvicorn backend.app:app --port 8000
 python-dotenv>=1.0
 requests>=2.31
-# Record feature (recorder browser). After installing run:  python -m playwright install chromium
+
+# --- Record feature (Chromium window on the host) ---
 playwright>=1.40
-# Existing ai_test_generator dependencies
-google-genai>=0.3
-openai>=1.40          # OpenAI, Codex (OpenAI), and Grok (xAI via base_url)
-# Claude uses Anthropic Messages HTTP API via requests (no anthropic package required)
-ollama>=0.2
+
+# --- AI providers ---
+google-genai>=0.3                # Gemini (from google.genai)
+openai>=1.40                     # OpenAI, Codex (OpenAI), and Grok (xAI via base_url)
+ollama>=0.2                      # local Ollama
+
+# --- Integrations / Excel ---
 jira>=3.8
-fastmcp>=2.0
+fastmcp>=2.0                     # Jira worker MCP tooling
 pandas>=2.0
-openpyxl>=3.1   # also used by Test Case Repo import (.xlsx / .csv); Test Runs need no extra dependency
+openpyxl>=3.1                    # Excel/CSV import-export (Review, Repo, RTM, qTest helpers)
