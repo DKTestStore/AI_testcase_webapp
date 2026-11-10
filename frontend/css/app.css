@@ -330,11 +330,14 @@ del{background:#fdeaea;color:#a12020;text-decoration:line-through}ins{background
 .set-field .hint{font-size:11px;color:#6b7385;margin-top:4px}
 .set-field .clear-row{margin-top:6px}
 .set-note{background:#eef2ff;border:1px solid #c9d3ff;color:#2b3a9b;border-radius:10px;padding:12px 14px;margin-top:8px;font-size:12.5px;line-height:1.5}
-.set-int{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.set-int{display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:16px}
 .set-int .card h2{font-size:18px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
 .set-foot{position:sticky;bottom:0;z-index:12;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:18px;padding:12px 16px;background:#fff;border:1px solid #e3e7f0;border-radius:12px;box-shadow:0 -4px 16px #1e24330a}
 .set-foot .dirty{color:#a36b00;font-weight:700;font-size:13px}.set-foot .clean{color:#6b7385;font-size:13px}
 .set-err{margin:0 0 12px}
+@media (max-width:1200px){
+  .set-int{grid-template-columns:repeat(2, minmax(0, 1fr))}
+}
 @media (max-width:960px){
   .set-ai{flex-direction:column}
   .set-plist{width:100%}

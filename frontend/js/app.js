@@ -506,13 +506,20 @@ const SET_AI = [
   { group: "Codex (OpenAI)", sub: "Uses OpenAI key", note: "codex" },
   { group: "Ollama", sub: "Local", note: null },
 ];
-const SET_INT = ["Jira", "qTest"];
+const SET_INT = [
+  { group: "Jira", lede: "Story fetch for the Input step" },
+  { group: "qTest", lede: "Upload + RTM on the qTest step" },
+  { group: "Zephyr Scale", lede: "Test case upload (coming soon)" },
+];
+const SET_PLACEHOLDERS = {
+  ZEPHYR_BASE_URL: "https://api.zephyrscale.smartbear.com/v2/",
+};
 const SET_ST = { tab: "providers", provider: "Gemini", baseline: {}, prefs: { hist: "", dup: "" } };
 
 function setFieldHtml(f) {
   const id = `sf_${f.key}`;
   const pill = f.secret ? (f.is_set ? ' <span class="pill">set</span>' : ' <span class="pill r">not set</span>') : "";
-  const ph = f.secret ? esc(f.value || "not set") : "";
+  const ph = f.secret ? esc(f.value || "not set") : esc(SET_PLACEHOLDERS[f.key] || "");
   const val = f.secret ? "" : esc(f.value);
   const clear = f.secret && f.is_set
     ? `<div class="clear-row"><button type="button" class="btn g sm" data-clear="${esc(f.key)}">Clear</button></div>` : "";
@@ -616,16 +623,15 @@ async function viewSettings(v) {
   }).join("");
 
   const intCards = SET_INT.map((g) => {
-    const fs = groups[g] || [];
+    const fs = groups[g.group] || [];
     const ok = setGroupConfigured(fs);
     const badge = ok ? '<span class="pill">configured</span>' : '<span class="pill r">not set</span>';
-    const lede = g === "Jira" ? "Story fetch for the Input step" : "Upload + RTM on the qTest step";
-    return `<div class="card"><h2>${esc(g)} ${badge}</h2><div class="sub" style="margin:0 0 12px">${lede}</div>
+    return `<div class="card"><h2>${esc(g.group)} ${badge}</h2><div class="sub" style="margin:0 0 12px">${esc(g.lede)}</div>
       ${fs.map(setFieldHtml).join("")}</div>`;
   }).join("");
 
   // Any leftover groups (should be none) still rendered so fields are never dropped
-  const known = new Set([...aiNames, ...SET_INT]);
+  const known = new Set([...aiNames, ...SET_INT.map((g) => g.group)]);
   const extra = Object.keys(groups).filter((g) => !known.has(g));
   const extraHtml = extra.length
     ? `<div class="card" style="margin-top:14px"><h3>Other</h3>${extra.map((g) => `<h4>${esc(g)}</h4>${(groups[g] || []).map(setFieldHtml).join("")}`).join("")}</div>` : "";
