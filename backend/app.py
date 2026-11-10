@@ -1299,14 +1299,24 @@ def compare_excel(data: Dict[str, Any] = Body(...), sess=Depends(current)):
 # --------------------------------------------------------------------------- #
 # Token Usage page (additive)
 # --------------------------------------------------------------------------- #
-def _tq(request: Request):
+def _tq(request: Request, paged: bool = False):
     q = request.query_params
-    return dict(d_from=q.get("from", "")[:10], d_to=q.get("to", "")[:10], mode=q.get("mode", ""), model=q.get("model", ""))
+    out = dict(d_from=q.get("from", "")[:10], d_to=q.get("to", "")[:10], mode=q.get("mode", ""), model=q.get("model", ""))
+    if paged:
+        try:
+            out["page"] = int(q.get("page") or 1)
+        except (TypeError, ValueError):
+            out["page"] = 1
+        try:
+            out["page_size"] = int(q.get("page_size") or 25)
+        except (TypeError, ValueError):
+            out["page_size"] = 25
+    return out
 
 
 @app.get("/api/tokens")
 def tokens(request: Request, sess=Depends(current)):
-    return {"ok": True, **token_usage.query(**_tq(request))}
+    return {"ok": True, **token_usage.query(**_tq(request, paged=True))}
 
 
 @app.get("/api/tokens/export.csv")
@@ -1314,6 +1324,21 @@ def tokens_csv(request: Request, sess=Depends(current)):
     body = token_usage.export_csv(**_tq(request))
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="token_usage.csv"'})
+
+
+@app.post("/api/tokens/delete")
+def tokens_delete(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    """Preview or delete ledger entries. Body: {ids:[...]} or {before:'YYYY-MM-DD'}, confirm: true to apply.
+    Does not modify reports/gemini_usage.json."""
+    ids = data.get("ids")
+    before = str(data.get("before") or "")[:10]
+    confirm = bool(data.get("confirm"))
+    if not ids and not before:
+        raise ServiceError("Provide ids or before (YYYY-MM-DD).")
+    try:
+        return {"ok": True, **token_usage.delete_entries(ids=ids, before=before, confirm=confirm)}
+    except ValueError as ex:
+        raise ServiceError(str(ex))
 
 
 @app.get("/api/settings/tokens")
