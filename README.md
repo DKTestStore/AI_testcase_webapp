@@ -4,7 +4,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 
 - **Backend:** FastAPI (`backend/`), wrapping the existing `ai_test_generator` package.
 - **Frontend:** static HTML/CSS/vanilla JS (`frontend/`) served by FastAPI — **no build step**.
-- **Sidebar icons:** [Lucide](https://lucide.dev) (ISC) inline SVG sprite in `frontend/app.html` (`stroke="currentColor"`). Workflow steps 1–4 keep numbered circles. See `THIRD_PARTY_NOTICES.md`.
+- **Sidebar icons:** [Lucide](https://lucide.dev) (ISC) inline SVG sprite in `frontend/app.html` (`stroke="currentColor"`). Workflow steps 1–4 use Lucide icons with a small numbered badge (1–4) at the icon’s top-right. See `THIRD_PARTY_NOTICES.md`.
 
 ---
 
@@ -44,8 +44,8 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | Import / Export | pandas, openpyxl | Excel (.xlsx) / CSV; one row per step |
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
-| Icons | Lucide (ISC), inline SVG | Sidebar nav (except step numbers 1–4) |
-| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=34`) |
+| Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
+| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=40`) |
 
 **Planned (not built yet):** SQLAlchemy + Alembic, object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
@@ -121,13 +121,13 @@ Non-secret app settings (e.g. history limit) live in `backend/app_settings.json`
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
-| Lucide sidebar icons | Professional line icons; grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
+| Lucide sidebar icons | Professional line icons on every visible item; workflow steps Input / Generate / Review / qTest Upload use an icon plus a mini numbered badge (1–4). Grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
 
 ---
 
 ## 2. Workflow
 
-The sidebar is grouped (no section captions): **Dashboard** and **Setup checklist**; workflow steps 1–4 (**Input**, **Generate**, **Review**, **qTest Upload**) plus **Run history**; **Requirements**, **Test Case Repo**, **Test Runs**; **Prompt templates**, **Token Usage**, **Settings**. A step unlocks once the previous one has data. Projects / Traceability stay hidden (reachable from the Requirements area). “NEW” badges are not shown; the Run history count badge remains. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count. The project switcher stays under the brand, with Lucide icons on non-step items.
+The sidebar is grouped (no section captions): **Dashboard** and **Setup checklist**; workflow steps 1–4 (**Input**, **Generate**, **Review**, **qTest Upload**) plus **Run history**; **Requirements**, **Test Case Repo**, **Test Runs**; **Prompt templates**, **Token Usage**, **Settings**. A step unlocks once the previous one has data. Projects / Traceability stay hidden (reachable from the Requirements area). “NEW” badges are not shown; the Run history count badge remains. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count. The project switcher stays under the brand, with Lucide icons on every visible item (workflow steps also show numbered badges 1–4).
 
 1. **Input:** *Jira Story* (fetch), *Local text*, or *Upload Excel* (skips Generate). Optional **Record**.
 2. **Generate:** pick **Provider** + Default / Custom prompt (or templates from Input). Optional AI Reviewer. Token usage card.
