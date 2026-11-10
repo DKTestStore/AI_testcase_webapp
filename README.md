@@ -117,7 +117,7 @@ Non-secret app settings (e.g. history limit) live in `backend/app_settings.json`
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
 | Dashboard | Totals **exclude Archived** cases; charts; cycle / story filters |
-| Token usage | Per-provider usage tracking (Gemini local quota card remains Gemini-specific) |
+| Token usage | Per-provider ledger; Token Usage page with filters, pagination (10/25/50/100), delete / delete-older; Dashboard AI token totals use the same ledger. Gemini daily quota file is separate and is not reset by deletes. |
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
@@ -215,7 +215,7 @@ All `/api/*` routes (except health/session start as applicable) require the sess
 | Input / generate / review | `POST /api/input/jira\|local`, `POST /api/generate`, `POST /api/review/*`, `PUT /api/review/test_cases` |
 | Excel / export | `POST /api/excel/import`, `GET /api/excel/template`, `GET /api/export`, `GET /api/review/excel` |
 | qTest | `POST /api/qtest/preview\|upload`, `GET /api/qtest/rtm`, `POST /api/qtest/retry_failed` |
-| Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/prompt/default`, `/api/templates*`, `/api/tokens*`, `/api/usage` |
+| Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/prompt/default`, `/api/templates*`, `GET /api/tokens` (paged), `GET /api/tokens/export.csv`, `POST /api/tokens/delete`, `/api/usage` |
 | History / batch | `/api/history*`, `/api/batch*` |
 | Test Case Repo | `/api/repo*` |
 | Test Runs | `/api/runs*`, `/api/attachments*` |
@@ -255,6 +255,14 @@ Additive: **Projects** scope Requirements ↔ linked Test Cases ↔ cycles. Case
 Sidebar: project switcher + **Requirements** (Projects / Traceability reachable from that area).
 
 ---
+
+## Token Usage
+
+`#tokens` — ledger in `backend/token_usage.json`. `GET /api/tokens` accepts the existing From/To/Mode/Model filters plus server-side pagination (`page`, `page_size` of 10/25/50/100, default 25). The Per-run table shows “Showing X–Y of N”; page size is remembered in `localStorage`. `GET /api/tokens/export.csv` still exports **all** filtered rows (not just the current page).
+
+Delete: row icon, checkboxes (select-all on the current page), **Delete selected**, and **Delete older than** a date. `POST /api/tokens/delete` with `{ids:[…]}` or `{before:"YYYY-MM-DD"}`; `confirm: false` previews count + token total, `confirm: true` applies. Each entry has a stable `id` (`TU-` + 12 hex); older rows are backfilled on read/write. Before each delete the ledger is copied to `ai_test_generator/reports/token_ledger.bak.json` plus a timestamped file (last 5 kept).
+
+Deletes refresh this page’s tiles, daily chart, breakdown and table, and the **Dashboard** AI token totals (same `token_usage._load()` data). They do **not** modify `ai_test_generator/reports/gemini_usage.json` (the provider’s real Gemini daily quota). The Daily quota tile on this page is ledger vs the Token settings daily limit, so it **does** change after a delete.
 
 ## Dashboard
 

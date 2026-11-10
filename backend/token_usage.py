@@ -1,30 +1,100 @@
 """Token usage ledger (additive feature). Stored in backend/token_usage.json (gitignored).
-Recording must never break generation: every public writer swallows its own errors."""
+Recording must never break generation: every public writer swallows its own errors.
+Entries carry a stable `id` (`TU-` + 12 hex). Older rows are backfilled on load.
+Deletes write a backup under ai_test_generator/reports/ (token_ledger.bak.json + last few stamped copies).
+They do not touch reports/gemini_usage.json (the provider quota tracker)."""
 import csv
 import io
 import json
 import logging
 import threading
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import settings_store
+from .config import REPORTS_DIR
 
 log = logging.getLogger("atg.tokens")
 PATH = Path(__file__).resolve().parent / "token_usage.json"
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 MAX_ENTRIES = 20000
+BACKUP_KEEP = 5
+PAGE_SIZES = (10, 25, 50, 100)
 ACTIONS = ["Generate", "Regenerate", "Coverage check", "AC generate", "AI review"]
 DEFAULTS = {"token_daily_limit": 1_000_000, "token_rate_input": 0.30, "token_rate_output": 2.50}
 
 
-def _load() -> List[Dict[str, Any]]:
+def _new_id() -> str:
+    return "TU-" + uuid.uuid4().hex[:12]
+
+
+def _read() -> List[Dict[str, Any]]:
     try:
         d = json.loads(PATH.read_text(encoding="utf-8"))
         return d if isinstance(d, list) else []
     except Exception:
         return []
+
+
+def _write(data: List[Dict[str, Any]]) -> None:
+    tmp = PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    tmp.replace(PATH)
+
+
+def _ensure_ids(data: List[Dict[str, Any]]) -> bool:
+    """Assign persistent ids to legacy rows. Returns True if the list was mutated."""
+    changed = False
+    seen = set()
+    for e in data:
+        if not isinstance(e, dict):
+            continue
+        i = str(e.get("id") or "").strip()
+        if not i or i in seen:
+            nid = _new_id()
+            while nid in seen:
+                nid = _new_id()
+            e["id"] = nid
+            changed = True
+            i = nid
+        seen.add(i)
+    return changed
+
+
+def _load() -> List[Dict[str, Any]]:
+    """Read the ledger, backfilling missing ids (and persisting them when possible)."""
+    with _LOCK:
+        data = _read()
+        if _ensure_ids(data):
+            try:
+                _write(data)
+            except Exception:
+                log.exception("token usage id backfill write failed")
+        return data
+
+
+def _backup() -> None:
+    """Copy the current ledger into reports/ before a delete. Keeps a rolling latest + last few stamps."""
+    if not PATH.exists():
+        return
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    raw = PATH.read_bytes()
+    (REPORTS_DIR / "token_ledger.bak.json").write_bytes(raw)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamped = REPORTS_DIR / f"token_ledger.bak-{ts}.json"
+    n = 1
+    while stamped.exists():
+        n += 1
+        stamped = REPORTS_DIR / f"token_ledger.bak-{ts}-{n}.json"
+    stamped.write_bytes(raw)
+    old = sorted(REPORTS_DIR.glob("token_ledger.bak-*.json"))
+    for p in old[:-BACKUP_KEEP]:
+        try:
+            p.unlink()
+        except Exception:
+            log.exception("token usage backup prune failed: %s", p)
 
 
 def record(*, action: str, usage: Optional[Dict[str, Any]], run: Optional[Dict[str, Any]] = None,
@@ -48,7 +118,7 @@ def record(*, action: str, usage: Optional[Dict[str, Any]], run: Optional[Dict[s
             story = story or item.get("item_id") or ""
             title = title or item.get("title") or ""
         src = run.get("source") or (item or {}).get("source") or ""
-        ent = {"ts": datetime.now().isoformat(timespec="seconds"), "action": action, "mode": mode,
+        ent = {"id": _new_id(), "ts": datetime.now().isoformat(timespec="seconds"), "action": action, "mode": mode,
                "rid": run.get("rid") or "", "run_id": run.get("run_id") or "",
                "batch_rid": (batch or {}).get("rid") or "", "batch_id": (batch or {}).get("batch_id") or "",
                "story_id": story, "title": title, "source": src,
@@ -60,9 +130,7 @@ def record(*, action: str, usage: Optional[Dict[str, Any]], run: Optional[Dict[s
             data = _load()
             data.append(ent)
             data = data[-MAX_ENTRIES:]
-            tmp = PATH.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-            tmp.replace(PATH)
+            _write(data)
     except Exception:
         log.exception("token usage record failed (ignored)")
 
@@ -120,7 +188,7 @@ def _sum(es):
     return {"input": i, "output": o, "total": sum(e["total"] for e in es)}
 
 
-def query(d_from="", d_to="", mode="", model="") -> Dict[str, Any]:
+def query(d_from="", d_to="", mode="", model="", page: int = 1, page_size: int = 0) -> Dict[str, Any]:
     data = _load()
     st = get_settings()
     now = datetime.now()
@@ -155,28 +223,48 @@ def query(d_from="", d_to="", mode="", model="") -> Dict[str, Any]:
                                    "mode": "batch", "action": "Batch generate", "models": set(), "items": [],
                                    "input": 0, "output": 0, "total": 0, "ts": e["ts"]}
                 rows.append(g)
-            g["items"].append({k: e.get(k) for k in ("rid", "story_id", "title", "source", "action", "model",
+            g["items"].append({k: e.get(k) for k in ("id", "rid", "story_id", "title", "source", "action", "model",
                                                       "input", "output", "total", "ts")})
             if e.get("template"):
                 g["items"][-1]["template"] = e["template"]
             g["models"].add(e["model"])
             for k in ("input", "output", "total"): g[k] += e[k]
         else:
-            rows.append({"kind": "run", **{k: e.get(k) for k in ("rid", "story_id", "title", "source", "mode", "action",
+            rows.append({"kind": "run", **{k: e.get(k) for k in ("id", "rid", "story_id", "title", "source", "mode", "action",
                                                                    "model", "input", "output", "total", "ts")}})
             if e.get("template"):
                 rows[-1]["template"] = e["template"]
     for g in groups.values():
         g["model"] = ", ".join(sorted(g.pop("models")))
         srcs = sorted({i["source"] for i in g["items"] if i["source"]})
-        ids = list(dict.fromkeys(i["story_id"] for i in g["items"] if i["story_id"]))
+        story_ids = list(dict.fromkeys(i["story_id"] for i in g["items"] if i["story_id"]))
         g["tickets"] = len({i["rid"] or i["story_id"] for i in g["items"]})
-        g["source_label"] = f"{g['tickets']} item(s) ({', '.join(ids[:4])}{'…' if len(ids) > 4 else ''})" + (f" · {' + '.join(srcs)}" if srcs else "")
+        g["ids"] = [i["id"] for i in g["items"] if i.get("id")]
+        g["source_label"] = f"{g['tickets']} item(s) ({', '.join(story_ids[:4])}{'…' if len(story_ids) > 4 else ''})" + (f" · {' + '.join(srcs)}" if srcs else "")
+    total_rows = len(rows)
+    try:
+        page = int(page or 1)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        ps = int(page_size or 0)
+    except (TypeError, ValueError):
+        ps = 0
+    if ps and ps not in PAGE_SIZES:
+        ps = 25
+    if ps:
+        pages = max(1, (total_rows + ps - 1) // ps) if total_rows else 1
+        page = min(max(1, page), pages)
+        start = (page - 1) * ps
+        rows = rows[start:start + ps]
+    else:
+        page, pages = 1, 1
     return {"settings": st,
             "today": {**t_sum, "pct": round(t_sum["total"] * 100 / lim, 1)},
             "month": {**m_sum, "runs": runs, "label": now.strftime("%b"), "cost": round(cost, 4)},
             "daily": days, "breakdown": breakdown, "rows": rows,
-            "models": sorted({e["model"] for e in data}), "count": len(sel)}
+            "models": sorted({e["model"] for e in data}), "count": len(sel),
+            "total_rows": total_rows, "page": page, "page_size": ps or total_rows, "pages": pages if ps else 1}
 
 
 def export_csv(d_from="", d_to="", mode="", model="") -> str:
@@ -188,3 +276,37 @@ def export_csv(d_from="", d_to="", mode="", model="") -> str:
                     e.get("source", ""), e.get("mode", ""), e["action"], e["model"], e["input"], e["output"], e["total"],
                     "yes" if e.get("mock") else ""])
     return buf.getvalue()
+
+
+def _victims(data: List[Dict[str, Any]], ids=None, before: str = "") -> List[Dict[str, Any]]:
+    if ids:
+        want = {str(x).strip() for x in ids if str(x).strip()}
+        return [e for e in data if isinstance(e, dict) and e.get("id") in want]
+    if before:
+        day = str(before).strip()[:10]
+        if len(day) != 10 or day[4] != "-" or day[7] != "-":
+            raise ValueError("before must be YYYY-MM-DD.")
+        return [e for e in data if isinstance(e, dict) and (e.get("ts") or "")[:10] < day]
+    return []
+
+
+def delete_entries(*, ids=None, before: str = "", confirm: bool = False) -> Dict[str, Any]:
+    """Preview (confirm=False) or apply a delete. Backs up the ledger before a real delete.
+    Does not modify reports/gemini_usage.json."""
+    with _LOCK:
+        data = _read()
+        if _ensure_ids(data):
+            try:
+                _write(data)
+            except Exception:
+                log.exception("token usage id backfill write failed")
+        vic = _victims(data, ids, before)
+        tokens = sum(int(e.get("total") or 0) for e in vic)
+        out = {"count": len(vic), "tokens": tokens, "ids": [e.get("id") for e in vic], "deleted": 0}
+        if not confirm or not vic:
+            return out
+        _backup()
+        gone = {e.get("id") for e in vic}
+        _write([e for e in data if not (isinstance(e, dict) and e.get("id") in gone)])
+        out["deleted"] = len(vic)
+        return out
