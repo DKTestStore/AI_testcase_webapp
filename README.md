@@ -121,13 +121,13 @@ Non-secret app settings (e.g. history limit) live in `backend/app_settings.json`
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
-| Lucide sidebar icons | Professional line icons; order unchanged |
+| Lucide sidebar icons | Professional line icons; grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
 
 ---
 
 ## 2. Workflow
 
-The sidebar shows the four steps with progress. A step unlocks once the previous one has data. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count.
+The sidebar is grouped (no section captions): **Dashboard** and **Setup checklist**; workflow steps 1–4 (**Input**, **Generate**, **Review**, **qTest Upload**) plus **Run history**; **Requirements**, **Test Case Repo**, **Test Runs**; **Prompt templates**, **Token Usage**, **Settings**. A step unlocks once the previous one has data. Projects / Traceability stay hidden (reachable from the Requirements area). “NEW” badges are not shown; the Run history count badge remains. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count. The project switcher stays under the brand, with Lucide icons on non-step items.
 
 1. **Input:** *Jira Story* (fetch), *Local text*, or *Upload Excel* (skips Generate). Optional **Record**.
 2. **Generate:** pick **Provider** + Default / Custom prompt (or templates from Input). Optional AI Reviewer. Token usage card.

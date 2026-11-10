@@ -25,9 +25,12 @@ function bShellOn() {
   $(".sb .logo").after(head);
   $("#nav").style.display = "none"; $("#runinfo").style.display = "none";
   const nav = document.createElement("nav"); nav.className = "nav"; nav.id = "bNav";
-  nav.innerHTML = [["b-items", "1", "Batch items"], ["b-gen", "2", "Generate queue"], ["b-review", "3", "Review items"], ["b-qtest", "4", "qTest batch upload"]]
+  nav.innerHTML = `<a data-view="dashboard"><span class="num">▦</span>Dashboard</a><a data-view="setup"><span class="num">✓</span>Setup checklist</a><div class="sep"></div>`
+    + [["b-items", "1", "Batch items"], ["b-gen", "2", "Generate queue"], ["b-review", "3", "Review items"], ["b-qtest", "4", "qTest batch upload"]]
     .map(([v, n, t]) => `<a data-view="${v}"><span class="num">${n}</span>${t}<span class="bcnt"></span></a>`).join("")
-    + `<div class="sep"></div><a data-view="history"><span class="num">🕘</span>Run history</a><a data-view="repo"><span class="num">🗂</span>Test Case Repo<span class="tr-nb">NEW</span></a><a data-view="runs"><span class="num">▶</span>Test Runs<span class="tr-nb">NEW</span></a><a data-view="prompts"><span class="num">📝</span>Prompt templates</a><a data-view="tokens"><span class="num">📊</span>Token Usage<span class="tu-new" style="background:#12a150;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a><a data-view="setup"><span class="num">✓</span>Setup checklist</a><a data-view="settings"><span class="num">⚙</span>Settings</a>`;
+    + `<a data-view="history"><span class="num">🕘</span>Run history</a>`
+    + `<div class="sep"></div><a data-view="requirements"><span class="num">📋</span>Requirements</a><a data-view="repo"><span class="num">🗂</span>Test Case Repo</a><a data-view="runs"><span class="num">▶</span>Test Runs</a>`
+    + `<div class="sep"></div><a data-view="prompts"><span class="num">📝</span>Prompt templates</a><a data-view="tokens"><span class="num">📊</span>Token Usage</a><a data-view="settings"><span class="num">⚙</span>Settings</a>`;
   $("#nav").after(nav);
   const ri = document.createElement("div"); ri.className = "runinfo"; ri.id = "bRunInfo"; $("#runinfo").after(ri);
   $$("#bNav a").forEach((a) => (a.onclick = () => go(a.dataset.view)));
