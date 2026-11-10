@@ -112,7 +112,7 @@ Non-secret app settings (e.g. history limit) live in `backend/app_settings.json`
 |---|---|
 | Multi-provider AI | Gemini, Grok, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
 | Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest) / **Preferences** (history limit, duplicate threshold) |
-| Projects + Requirement Repo | Project switcher; Requirements (REQ-####), folders, Jira import, link/unlink cases, auto-link by `case.story`, Generate-from-requirement, traceability matrix |
+| Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
 | Dashboard | Totals **exclude Archived** cases; charts; cycle / story filters |
@@ -218,7 +218,7 @@ All `/api/*` routes (except health/session start as applicable) require the sess
 | History / batch | `/api/history*`, `/api/batch*` |
 | Test Case Repo | `/api/repo*` |
 | Test Runs | `/api/runs*`, `/api/attachments*` |
-| Projects / Requirements | `/api/projects*`, `/api/requirements*` (incl. `traceability`, `import`, `auto-link`, `generate-context`) |
+| Projects / Requirements | `/api/projects*`, `/api/requirements*` (incl. `traceability`, `import`, `auto-link`, `generate-context`, `delete-check`, `duplicate`, `bulk`, folder `delete-check`) |
 | Dashboard | `GET /api/dashboard` |
 | Record | recorder routes under the Record UI (Playwright) |
 
@@ -241,7 +241,11 @@ IDs: cases `TC-####`, cycles `CY-####`.
 Additive: **Projects** scope Requirements ↔ linked Test Cases ↔ cycles. Cases keep free-text `story`.
 
 - **Projects** (`/api/projects`): `key`, `name`, `description`; optional `jira_project_key`, `qtest_project_id`, `zephyr_project_key` (mapping only — **no Zephyr API client**). System **Local** project for legacy data.
-- **Requirements** (`/api/requirements`): REQ-####; type Story/Epic/Feature; source Manual|Jira; single `jira_key`; statuses Draft/Ready/Approved/Archived (delete = archive).
+- **Requirements** (`/api/requirements`): REQ-####; type Story/Epic/Feature; source Manual|Jira; single `jira_key`; statuses Draft/Ready/Approved/Archived.
+- **Create / edit UI:** wide right-hand drawer (~70vw, min 760px, max 1100px, full height; 100vw on small screens) with Basics, Description, acceptance-criteria rows, and a Test Case Repo search picker. Detail page also has inline **Edit** with an unsaved-changes bar. `POST` accepts optional `case_ids`; `PUT` updates fields (links synced via the existing link/unlink APIs).
+- **Delete:** `GET /api/requirements/{id}/delete-check` returns linked-case and execution counts. `DELETE /api/requirements/{id}` archives by default. `DELETE /api/requirements/{id}?permanent=true` is allowed only when those counts are 0 (UI asks you to type the ID). Bulk archive / move / status: `POST /api/requirements/bulk`. Duplicate: `POST /api/requirements/{id}/duplicate` (copies fields, not the Jira key or links; new status Draft).
+- **Folders:** create / rename / new subfolder dialogs (no browser `prompt()`). `GET /api/requirements/folders/{id}/delete-check` returns counts. `DELETE` of an empty folder removes it; otherwise pass `move_to=<folder id>` (use `__root__` for unfiled) or `to_parent=true`. Subfolders are reparented — a delete never silently drops a subtree.
+- Activity events include `ts` and `by` (`local user`, or a display name from app settings if one was stored — no login/auth).
 - Link / unlink cases; opt-in **auto-link** when `case.story == jira_key`.
 - Import: paste keys or `KEY | Title`; optional fetch via existing `services.fetch_jira`.
 - **Generate with AI** prefills Generate and sets `story_id` to the Jira key.

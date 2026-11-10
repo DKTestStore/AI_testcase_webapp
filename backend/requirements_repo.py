@@ -11,7 +11,11 @@ Storage: backend/test_repo/requirements.json
 
 Existing test cases keep their free-text `story` field untouched.
 Default project key "Local" holds legacy/unscoped data.
-Delete = archive (status Archived); archived hidden by default.
+Delete = archive (status Archived) by default; archived hidden by default.
+Permanent delete is allowed only when the requirement has no linked test cases
+and no executions. Folder delete never drops a subtree: empty folders can be
+removed outright; otherwise contents must be moved (move_to or to_parent).
+Activity events record ts + by ('local user', or a settings display name if one exists).
 """
 from __future__ import annotations
 
@@ -107,13 +111,46 @@ def _acs(raw) -> List[str]:
     return [_s(a, 500) for a in (raw or []) if _s(a)][:50]
 
 
+def _actor() -> str:
+    """No auth in this app: use a settings display name if one was stored, else 'local user'."""
+    try:
+        from . import settings_store
+        data = settings_store._app() if hasattr(settings_store, "_app") else {}
+        for k in ("user_name", "display_name", "operator", "username"):
+            v = str((data or {}).get(k) or "").strip()
+            if v:
+                return _s(v, 100)
+    except Exception:
+        pass
+    return "local user"
+
+
 def _event(r: Dict[str, Any], typ: str, text: str = "", **meta) -> None:
-    ev = {"ts": now(), "type": typ, "text": _s(text, 500)}
+    ev = {"ts": now(), "type": typ, "text": _s(text, 500), "by": _s(meta.pop("by", None) or _actor(), 100)}
     ev.update({k: v for k, v in meta.items() if v not in (None, "")})
     act = r.setdefault("activity", [])
     act.append(ev)
     if len(act) > 100:
         del act[: len(act) - 100]
+
+
+def _touch(r: Dict[str, Any]) -> None:
+    r["updated"] = now()
+    r["updated_by"] = _actor()
+
+
+def _desc_folder_ids(d, fid: str) -> set:
+    """Descendant folder ids of fid (not including fid itself)."""
+    gone = {fid}
+    changed = True
+    while changed:
+        changed = False
+        for x in d["folders"]:
+            if x.get("parent") in gone and x["id"] not in gone:
+                gone.add(x["id"])
+                changed = True
+    gone.discard(fid)
+    return gone
 
 
 # ------------------------------------------------------------------ coverage helpers
@@ -355,35 +392,100 @@ def update_folder(fid: str, data: Dict[str, Any] = Body(...)):
                     raise ServiceError("Parent folder not found in this project.")
                 if parent == fid:
                     raise ServiceError("Folder cannot be its own parent.")
+                if parent in _desc_folder_ids(d, fid):
+                    raise ServiceError("Folder cannot be moved under its own subfolder.")
             f["parent"] = parent
         _save(d)
     return {"ok": True, "folder": f}
 
 
+def _folder_delete_stats(d, f: Dict[str, Any]) -> Dict[str, Any]:
+    fid = f["id"]
+    kids = [x for x in d["folders"] if x.get("parent") == fid]
+    desc = _desc_folder_ids(d, fid)
+    reqs_direct = [r for r in d["requirements"] if r.get("folder_id") == fid]
+    reqs_active = [r for r in reqs_direct if r.get("status") != "Archived"]
+    reqs_desc = [r for r in d["requirements"] if r.get("folder_id") in desc and r.get("status") != "Archived"]
+    parent = _folder(d, f.get("parent") or "")
+    empty = not reqs_direct and not kids
+    return {
+        "folder_id": fid,
+        "name": f.get("name", ""),
+        "parent_id": f.get("parent") or "",
+        "parent_name": parent["name"] if parent else "(root / unfiled)",
+        "requirement_count": len(reqs_active),
+        "requirement_total": len(reqs_direct),
+        "descendant_requirement_count": len(reqs_desc),
+        "subfolder_count": len(kids),
+        "descendant_folder_count": len(desc),
+        "empty": empty,
+        "can_delete_empty": empty,
+    }
+
+
+@router.get("/api/requirements/folders/{fid}/delete-check")
+def folder_delete_check(fid: str):
+    d = _load()
+    f = _folder(d, fid)
+    if not f:
+        raise ServiceError("Folder not found.", 404)
+    return {"ok": True, **_folder_delete_stats(d, f)}
+
+
 @router.delete("/api/requirements/folders/{fid}")
-def delete_folder(fid: str, move_to: str = Query("")):
+def delete_folder(fid: str, move_to: str = Query(""), to_parent: bool = Query(False)):
+    """Delete a folder. Empty folders (no direct requirements, no subfolders) can be
+    removed with no extra flags. Otherwise the client must pass move_to=<id> or
+    to_parent=true. Subfolders are reparented, never deleted with the parent.
+    """
     with locked(REQ_FILE):
         d = _load()
         f = _folder(d, fid)
         if not f:
             raise ServiceError("Folder not found.", 404)
         pid = f["project_id"]
-        # collect subtree
-        gone = {fid}
-        changed = True
-        while changed:
-            changed = False
-            for x in d["folders"]:
-                if x.get("parent") in gone and x["id"] not in gone:
-                    gone.add(x["id"]); changed = True
-        target = move_to if move_to and _folder(d, move_to) and _folder(d, move_to).get("project_id") == pid else ""
+        stats = _folder_delete_stats(d, f)
+        if stats["empty"]:
+            d["folders"] = [x for x in d["folders"] if x["id"] != fid]
+            _save(d)
+            return {"ok": True, "deleted": fid, "moved": 0, "reparented": 0, "folders": _folder_tree(d, pid)}
+
+        if to_parent:
+            target = f.get("parent") or ""
+        elif move_to:
+            if move_to in ("__root__", "__unfiled__"):
+                target = ""
+            elif move_to == fid:
+                raise ServiceError("Cannot move contents into the folder being deleted.")
+            else:
+                tf = _folder(d, move_to)
+                if not tf or tf.get("project_id") != pid:
+                    raise ServiceError("Destination folder not found in this project.")
+                if move_to in _desc_folder_ids(d, fid):
+                    raise ServiceError("Cannot move contents into a subfolder of the folder being deleted.")
+                target = move_to
+        else:
+            raise ServiceError(
+                f"Folder is not empty ({stats['requirement_count']} requirement(s), "
+                f"{stats['subfolder_count']} subfolder(s)). Pass move_to=<folder id> or "
+                "to_parent=true, or delete only when empty.",
+                409,
+            )
+
+        n_moved = 0
         for r in d["requirements"]:
-            if r.get("folder_id") in gone:
+            if r.get("folder_id") == fid:
                 r["folder_id"] = target
-                r["updated"] = now()
-        d["folders"] = [x for x in d["folders"] if x["id"] not in gone]
+                _touch(r)
+                n_moved += 1
+        n_reparent = 0
+        for x in d["folders"]:
+            if x.get("parent") == fid:
+                x["parent"] = target
+                n_reparent += 1
+        d["folders"] = [x for x in d["folders"] if x["id"] != fid]
         _save(d)
-    return {"ok": True, "folders": _folder_tree(d, pid)}
+    return {"ok": True, "deleted": fid, "moved": n_moved, "reparented": n_reparent, "folders": _folder_tree(d, pid)}
 
 
 # ================================================================== REQUIREMENTS
@@ -477,15 +579,78 @@ def create_requirement(data: Dict[str, Any] = Body(...)):
         d["rseq"] += 1
         rid = f"REQ-{d['rseq']:04d}"
         ts = now()
-        r.update({"id": rid, "project_id": pid, "created": ts, "updated": ts, "activity": []})
+        r.update({"id": rid, "project_id": pid, "created": ts, "updated": ts, "updated_by": _actor(), "activity": []})
         _event(r, "created", "Created")
         d["requirements"].append(r)
-        # optional auto-link
+        # optional auto-link + explicit case_ids
         linked = []
         if data.get("auto_link") and jk:
             linked = _do_auto_link(d, r)
+        extra = _add_links(d, r, data.get("case_ids") or [])
+        for cid in extra:
+            if cid not in linked:
+                linked.append(cid)
         _save(d)
     return {"ok": True, "requirement": _detail(d, r), "auto_linked": linked}
+
+
+@router.post("/api/requirements/bulk")
+def bulk_requirements(data: Dict[str, Any] = Body(...)):
+    """Bulk move, change status, or archive. Body: {ids, op: move|status|archive, folder_id?, status?}."""
+    ids = [_s(x, 40) for x in (data.get("ids") or []) if _s(x, 40)]
+    op = _s(data.get("op"), 30)
+    if not ids:
+        raise ServiceError("No requirement ids provided.")
+    if op not in ("move", "status", "archive"):
+        raise ServiceError("op must be move, status, or archive.")
+    with locked(REQ_FILE):
+        d = _load()
+        byid = {r["id"]: r for r in d["requirements"]}
+        updated = []
+        if op == "move":
+            fid = _s(data.get("folder_id"), 40)
+            dest = None
+            if fid:
+                dest = _folder(d, fid)
+                if not dest:
+                    raise ServiceError("Folder not found.", 404)
+            for rid in ids:
+                r = byid.get(rid)
+                if not r or r.get("status") == "Archived":
+                    continue
+                if dest and dest.get("project_id") != r.get("project_id"):
+                    raise ServiceError(f"{rid} is not in the destination folder’s project.")
+                r["folder_id"] = fid
+                _touch(r)
+                _event(r, "updated", f"Moved to folder {fid or '(unfiled)'}")
+                updated.append(rid)
+        elif op == "status":
+            st = _s(data.get("status"), 30)
+            if st not in REQ_STATUSES or st == "Archived":
+                raise ServiceError("status must be Draft, Ready, or Approved (use archive to archive).")
+            for rid in ids:
+                r = byid.get(rid)
+                if not r or r.get("status") == "Archived":
+                    continue
+                old_st = r.get("status")
+                if old_st == st:
+                    continue
+                r["status"] = st
+                _touch(r)
+                _event(r, "status", f"{old_st} → {st}")
+                updated.append(rid)
+        else:
+            for rid in ids:
+                r = byid.get(rid)
+                if not r or r.get("status") == "Archived":
+                    continue
+                r["status"] = "Archived"
+                _touch(r)
+                _event(r, "archived", "Archived")
+                updated.append(rid)
+        if updated:
+            _save(d)
+    return {"ok": True, "op": op, "updated": updated, "count": len(updated)}
 
 
 # ================================================================== IMPORT
@@ -686,6 +851,80 @@ def get_requirement(rid: str):
     return {"ok": True, "requirement": _detail(d, r)}
 
 
+def _delete_stats(d, r: Dict[str, Any]) -> Dict[str, Any]:
+    ids = _link_ids(d, r["id"])
+    exec_count = 0
+    exec_cycles = []
+    seen = set()
+    try:
+        rd = test_runs._load()
+        for e in rd.get("executions", []):
+            if e.get("case_id") in ids:
+                exec_count += 1
+                cid = e.get("cycle_id") or ""
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    name = next((c.get("name", "") for c in rd.get("cycles", []) if c["id"] == cid), "")
+                    exec_cycles.append({"id": cid, "name": name})
+        for c in rd.get("cycles", []):
+            if c.get("status") == "Archived" or c["id"] in seen:
+                continue
+            if any(it.get("case_id") in ids for it in c.get("items") or []):
+                seen.add(c["id"])
+                exec_cycles.append({"id": c["id"], "name": c.get("name", "")})
+    except Exception:
+        pass
+    return {
+        "requirement_id": r["id"],
+        "title": r.get("title", ""),
+        "status": r.get("status", ""),
+        "linked_cases": len(ids),
+        "case_ids": ids,
+        "executions": exec_count,
+        "cycles": exec_cycles,
+        "cycle_count": len(exec_cycles),
+        "can_permanent_delete": len(ids) == 0 and exec_count == 0,
+    }
+
+
+@router.get("/api/requirements/{rid}/delete-check")
+def requirement_delete_check(rid: str):
+    d = _load()
+    r = _req(d, rid)
+    return {"ok": True, **_delete_stats(d, r)}
+
+
+@router.post("/api/requirements/{rid}/duplicate")
+def duplicate_requirement(rid: str):
+    with locked(REQ_FILE):
+        d = _load()
+        src = _req(d, rid)
+        d["rseq"] += 1
+        nid = f"REQ-{d['rseq']:04d}"
+        ts = now()
+        r = {
+            "id": nid,
+            "project_id": src.get("project_id", ""),
+            "folder_id": src.get("folder_id", ""),
+            "title": _s((src.get("title") or "") + " (copy)", 300),
+            "description": src.get("description", ""),
+            "acs": list(src.get("acs") or []),
+            "type": src.get("type", "Story") if src.get("type") in REQ_TYPES else "Story",
+            "source": "Manual",
+            "jira_key": "",
+            "priority": src.get("priority") or "Medium",
+            "status": "Draft",
+            "created": ts,
+            "updated": ts,
+            "updated_by": _actor(),
+            "activity": [],
+        }
+        _event(r, "created", f"Duplicated from {rid}")
+        d["requirements"].append(r)
+        _save(d)
+    return {"ok": True, "requirement": _detail(d, r)}
+
+
 def _detail(d, r: Dict[str, Any]) -> Dict[str, Any]:
     cases = _case_by_id()
     cov = _coverage(d, r, cases)
@@ -758,7 +997,7 @@ def update_requirement(rid: str, data: Dict[str, Any] = Body(...)):
         if jk and any(x["id"] != rid and x.get("project_id") == r.get("project_id") and (x.get("jira_key") or "").upper() == jk and x.get("status") != "Archived" for x in d["requirements"]):
             raise ServiceError(f"Jira key {jk} is already linked to another requirement in this project.")
         r.update(r2)
-        r["updated"] = now()
+        _touch(r)
         if old_status != r.get("status"):
             _event(r, "status", f"{old_status} → {r.get('status')}")
         else:
@@ -768,18 +1007,55 @@ def update_requirement(rid: str, data: Dict[str, Any] = Body(...)):
 
 
 @router.delete("/api/requirements/{rid}")
-def archive_requirement(rid: str):
+def delete_requirement(rid: str, permanent: bool = Query(False)):
+    """Archive by default (keeps history and links). Permanent delete is allowed
+    only when delete-check reports zero linked cases and zero executions.
+    """
     with locked(REQ_FILE):
         d = _load()
         r = _req(d, rid)
+        stats = _delete_stats(d, r)
+        if permanent:
+            if not stats["can_permanent_delete"]:
+                raise ServiceError(
+                    f"Permanent delete is blocked: {stats['linked_cases']} linked test case(s), "
+                    f"{stats['executions']} execution(s). Archive instead.",
+                    409,
+                )
+            d["links"] = [l for l in d["links"] if l.get("requirement_id") != rid]
+            d["requirements"] = [x for x in d["requirements"] if x["id"] != rid]
+            _save(d)
+            return {"ok": True, "deleted": rid, "permanent": True, **stats}
         r["status"] = "Archived"
-        r["updated"] = now()
+        _touch(r)
         _event(r, "archived", "Archived")
         _save(d)
-    return {"ok": True, "requirement": _summary(d, r)}
+    return {"ok": True, "requirement": _summary(d, r), "permanent": False}
 
 
 # ================================================================== LINKS
+
+def _add_links(d, r: Dict[str, Any], case_ids) -> List[str]:
+    cases = _case_by_id()
+    have = {(l["requirement_id"], l["case_id"]) for l in d["links"]}
+    added = []
+    for cid in case_ids or []:
+        cid = _s(cid, 40)
+        if not cid or cid not in cases:
+            continue
+        if cases[cid].get("status") == "Archived":
+            continue
+        pair = (r["id"], cid)
+        if pair in have:
+            continue
+        d["links"].append({"requirement_id": r["id"], "case_id": cid, "created": now()})
+        have.add(pair)
+        added.append(cid)
+    if added:
+        _event(r, "link", f"Linked {len(added)} case(s)", cases=",".join(added[:20]))
+        _touch(r)
+    return added
+
 
 def _do_auto_link(d, r: Dict[str, Any]) -> List[str]:
     jk = (r.get("jira_key") or "").strip().upper()
@@ -800,7 +1076,7 @@ def _do_auto_link(d, r: Dict[str, Any]) -> List[str]:
         linked.append(c["id"])
     if linked:
         _event(r, "auto_link", f"Auto-linked {len(linked)} case(s) by story={jk}", cases=",".join(linked[:20]))
-        r["updated"] = now()
+        _touch(r)
     return linked
 
 
@@ -809,22 +1085,8 @@ def link_cases(rid: str, data: Dict[str, Any] = Body(...)):
     with locked(REQ_FILE):
         d = _load()
         r = _req(d, rid)
-        cases = _case_by_id()
-        have = {(l["requirement_id"], l["case_id"]) for l in d["links"]}
-        added = []
-        for cid in data.get("case_ids") or []:
-            cid = _s(cid, 40)
-            if not cid or cid not in cases:
-                continue
-            pair = (rid, cid)
-            if pair in have:
-                continue
-            d["links"].append({"requirement_id": rid, "case_id": cid, "created": now()})
-            have.add(pair)
-            added.append(cid)
+        added = _add_links(d, r, data.get("case_ids") or [])
         if added:
-            _event(r, "link", f"Linked {len(added)} case(s)", cases=",".join(added[:20]))
-            r["updated"] = now()
             _save(d)
     return {"ok": True, "added": added, "requirement": _detail(_load(), _req(_load(), rid))}
 
@@ -838,7 +1100,7 @@ def unlink_case(rid: str, case_id: str):
         d["links"] = [l for l in d["links"] if not (l.get("requirement_id") == rid and l.get("case_id") == case_id)]
         if len(d["links"]) != before:
             _event(r, "unlink", f"Unlinked {case_id}")
-            r["updated"] = now()
+            _touch(r)
             _save(d)
     return {"ok": True, "requirement": _detail(d, r)}
 
