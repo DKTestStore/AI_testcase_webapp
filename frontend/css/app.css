@@ -20,6 +20,12 @@ body{min-height:100vh;display:flex;background:#f4f6fb;color:#1e2433;font-size:13
 .nav a.done .num-ico{background:#12a150;border-color:#12a150}
 .nav a.skipped .num-ico{background:#94a3b8;border-color:#94a3b8}
 .nav a.skipped .num-ico .nav-ico{color:#fff}
+/* Workflow steps: Lucide icon + mini numbered badge at the icon's top-right */
+.nav .nav-step{position:relative;width:20px;height:20px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+.nav .nav-step .nav-ico{width:16px;height:16px}
+.nav .nav-step .num{position:absolute;top:-3px;right:-5px;width:12px;height:12px;font-size:8px;line-height:1;background:#141a2e;color:#c9d1e8;border:1px solid #5b6690;z-index:1}
+.nav a.a:not(.done):not(.skipped) .nav-step .num{background:#2b3a6b;border-color:#9aa8d4;color:#fff}
+.nav a.done:not(.a) .nav-step .nav-ico{color:#12a150}
 
 .nav .sep{border-top:1px solid #26304f;margin:12px 0}
 .sb .runinfo{margin-top:auto;flex-shrink:0;padding-top:10px;font-size:11px;color:#7f8ab0;line-height:1.6}

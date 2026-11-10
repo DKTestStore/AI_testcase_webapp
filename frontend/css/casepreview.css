@@ -74,6 +74,6 @@ a.cp-chip:hover{background:#e0e7ff}
 body.cp-sbmin .sb{width:58px;padding:20px 8px}
 body.cp-sbmin .sb .logo,body.cp-sbmin .sb .runinfo{font-size:0}
 body.cp-sbmin .sb .logo:first-letter{font-size:16px}
-body.cp-sbmin .sb .nav a{font-size:0;justify-content:center}body.cp-sbmin .sb .nav a .num{font-size:14px;margin:0}
+body.cp-sbmin .sb .nav a{font-size:0;justify-content:center}body.cp-sbmin .sb .nav a .num{font-size:14px;margin:0}body.cp-sbmin .sb .nav a .nav-step .num{font-size:8px}
 body.cp-sbmin .sb .nav a .cnt,body.cp-sbmin .sb .nav a .tr-nb,body.cp-sbmin .sb .nav a .pt-new,body.cp-sbmin .sb .nav a .tu-new{display:none}
 @media (max-width:900px){.cp-stats{grid-template-columns:repeat(2,1fr)}.cp-vg,.cp-ag2{grid-template-columns:1fr}.cp-st{grid-template-columns:18px 26px 1fr 40px}.cp-st>.cp-ce+.cp-ce{grid-column:3}}
