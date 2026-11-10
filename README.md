@@ -98,6 +98,7 @@ Copy from `.env.example`. **Never commit `.env`**. Secrets are masked in the Set
 | Ollama (local) | `OLLAMA_MODEL` (default `gemma3:4b`), `OLLAMA_HOST` (`http://localhost:11434`), `OLLAMA_TIMEOUT` (default **300**), `OLLAMA_NUM_CTX` (8192) |
 | Jira | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
 | qTest | `QTEST_BASE_URL`, `QTEST_TOKEN` (`Bearer …`), `QTEST_PROJECT_ID`; optional `QTEST_REQUIREMENT_ID`, `QTEST_PARENT_MODULE_ID` |
+| Zephyr Scale | `ZEPHYR_BASE_URL`, `ZEPHYR_API_KEY` (Settings only — **upload is not implemented yet**) |
 | Original CLI only | `ENABLE_JIRA_REQURIMENT`, `STORY_ID` |
 
 Model IDs are free-text — enter the exact ID from each provider console. Do not treat example names as guaranteed current IDs.
@@ -111,7 +112,7 @@ Non-secret app settings (e.g. history limit) live in `backend/app_settings.json`
 | Area | What you get |
 |---|---|
 | Multi-provider AI | Gemini, Grok, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
-| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest) / **Preferences** (history limit, duplicate threshold) |
+| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
@@ -161,7 +162,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 ## 4. Setup checklist, Settings, logs
 
 - **Setup checklist:** Gemini key + model (required), Jira, qTest (optional), default prompt file.
-- **Settings:** AI Providers (one at a time) · Integrations · Preferences. Blank secret fields keep the saved value.
+- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences. Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
 - **Logs:** `backend/logs/app.log` (rotating 5 MB × 3).
 
 Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.

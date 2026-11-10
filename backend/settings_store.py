@@ -36,6 +36,8 @@ FIELDS: List[tuple] = [
     ("QTEST_PROJECT_ID", "Project ID", "qTest", False),
     ("QTEST_REQUIREMENT_ID", "Default Requirement ID", "qTest", False),
     ("QTEST_PARENT_MODULE_ID", "Parent Module ID", "qTest", False),
+    ("ZEPHYR_BASE_URL", "Base URL", "Zephyr Scale", False),
+    ("ZEPHYR_API_KEY", "API Key", "Zephyr Scale", True),
 ]
 KEYS = {f[0] for f in FIELDS}
 SECRET_KEYS = {f[0] for f in FIELDS if f[3]}
