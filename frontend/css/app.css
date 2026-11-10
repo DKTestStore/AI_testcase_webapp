@@ -1,7 +1,12 @@
 /* Theme reused from /workspace/mockups (gen.py CSS), made responsive */
 *{box-sizing:border-box;margin:0;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif}
 body{min-height:100vh;display:flex;background:#f4f6fb;color:#1e2433;font-size:13px}
-.sb{width:230px;flex-shrink:0;background:#141a2e;color:#c9d1e8;padding:20px 14px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.sb{width:230px;flex-shrink:0;align-self:flex-start;background:#141a2e;color:#c9d1e8;padding:20px 14px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;max-height:100vh;overflow:hidden}
+.sb .logo,.sb .bm-head,.sb .rq-switcher{flex-shrink:0}
+.sb .nav{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#3a4568 #141a2e}
+.sb .nav::-webkit-scrollbar{width:8px}
+.sb .nav::-webkit-scrollbar-track{background:#141a2e}
+.sb .nav::-webkit-scrollbar-thumb{background:#3a4568;border-radius:8px}
 .logo{font-weight:700;color:#fff;font-size:14.5px;white-space:nowrap;margin-bottom:26px}.logo span{color:#7c9cff}
 .nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:4px;color:#c9d1e8;text-decoration:none;cursor:pointer}
 .nav a:hover{background:#1e2745}.nav a.a{background:#2b3a6b;color:#fff}
@@ -17,7 +22,7 @@ body{min-height:100vh;display:flex;background:#f4f6fb;color:#1e2433;font-size:13
 .nav a.skipped .num-ico .nav-ico{color:#fff}
 
 .nav .sep{border-top:1px solid #26304f;margin:12px 0}
-.sb .runinfo{margin-top:auto;font-size:11px;color:#7f8ab0;line-height:1.6}
+.sb .runinfo{margin-top:auto;flex-shrink:0;padding-top:10px;font-size:11px;color:#7f8ab0;line-height:1.6}
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
 .topbar{display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:12px 28px 0;position:relative}
 .user{background:#fff;border:1px solid #e3e7f0;border-radius:20px;padding:5px 12px 5px 5px;cursor:pointer;user-select:none}
