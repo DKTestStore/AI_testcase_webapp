@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI TestCase Generator</title>
-<link rel="stylesheet" href="/static/css/app.css?v=37">
-<link rel="stylesheet" href="/static/css/search.css?v=37">
-<link rel="stylesheet" href="/static/css/rt.css?v=37">
-<link rel="stylesheet" href="/static/css/rec.css?v=37">
-<link rel="stylesheet" href="/static/css/repo.css?v=37">
-<link rel="stylesheet" href="/static/css/casepreview.css?v=37">
-<link rel="stylesheet" href="/static/css/dashboard.css?v=37">
-<link rel="stylesheet" href="/static/css/requirements.css?v=37">
+<link rel="stylesheet" href="/static/css/app.css?v=38">
+<link rel="stylesheet" href="/static/css/search.css?v=38">
+<link rel="stylesheet" href="/static/css/rt.css?v=38">
+<link rel="stylesheet" href="/static/css/rec.css?v=38">
+<link rel="stylesheet" href="/static/css/repo.css?v=38">
+<link rel="stylesheet" href="/static/css/casepreview.css?v=38">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=38">
+<link rel="stylesheet" href="/static/css/requirements.css?v=38">
 </head>
 <body>
 <!-- Lucide Icons (ISC License) — https://lucide.dev/license
@@ -73,22 +73,23 @@
 <aside class="sb">
   <div class="logo">⚡ AI <span>TestCase</span> Generator</div>
   <nav class="nav" id="nav">
-    <a data-view="dashboard"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-dashboard"></use></svg></span>Dashboard<span class="tr-nb">NEW</span></a>
-    <a data-view="requirements"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-requirements"></use></svg></span>Requirements<span class="tr-nb">NEW</span></a>
-    <a data-view="projects" style="display:none">Projects</a>
-    <a data-view="trace" style="display:none">Traceability</a>
+    <a data-view="dashboard"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-dashboard"></use></svg></span>Dashboard</a>
+    <a data-view="setup"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-setup"></use></svg></span>Setup checklist</a>
     <div class="sep"></div>
     <a data-view="input"><span class="num">1</span>Input</a>
     <a data-view="generate"><span class="num">2</span>Generate</a>
     <a data-view="review"><span class="num">3</span>Review</a>
     <a data-view="qtest"><span class="num">4</span>qTest Upload</a>
-    <div class="sep"></div>
     <a data-view="history"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-history"></use></svg></span>Run history<span class="cnt" id="hCnt"></span></a>
-    <a data-view="repo"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-repo"></use></svg></span>Test Case Repo<span class="tr-nb">NEW</span></a>
-    <a data-view="runs"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-runs"></use></svg></span>Test Runs<span class="tr-nb">NEW</span></a>
-    <a data-view="prompts"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-prompts"></use></svg></span>Prompt templates<span class="pt-new" style="background:#f59e0b;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a>
-    <a data-view="tokens"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-tokens"></use></svg></span>Token Usage<span class="tu-new" style="background:#12a150;color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto">NEW</span></a>
-    <a data-view="setup"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-setup"></use></svg></span>Setup checklist</a>
+    <div class="sep"></div>
+    <a data-view="requirements"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-requirements"></use></svg></span>Requirements</a>
+    <a data-view="projects" style="display:none">Projects</a>
+    <a data-view="trace" style="display:none">Traceability</a>
+    <a data-view="repo"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-repo"></use></svg></span>Test Case Repo</a>
+    <a data-view="runs"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-runs"></use></svg></span>Test Runs</a>
+    <div class="sep"></div>
+    <a data-view="prompts"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-prompts"></use></svg></span>Prompt templates</a>
+    <a data-view="tokens"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-tokens"></use></svg></span>Token Usage</a>
     <a data-view="settings"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-settings"></use></svg></span>Settings</a>
   </nav>
   <div class="runinfo" id="runinfo"></div>
@@ -109,24 +110,24 @@
 
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
-<script src="/static/js/review.js?v=37"></script>
-<script src="/static/js/regen.js?v=37"></script>
-<script src="/static/js/dup.js?v=37"></script>
-<script src="/static/js/cov.js?v=37"></script>
-<script src="/static/js/excel_upload.js?v=37"></script>
-<script src="/static/js/app.js?v=37"></script>
-<script src="/static/js/history.js?v=37"></script>
-<script src="/static/js/batch.js?v=37"></script>
-<script src="/static/js/cmp.js?v=37"></script>
-<script src="/static/js/tokens.js?v=37"></script>
-<script src="/static/js/search.js?v=37"></script>
-<script src="/static/js/prompts.js?v=37"></script>
-<script src="/static/js/rt.js?v=37"></script>
-<script src="/static/js/rec.js?v=37"></script>
-<script src="/static/js/repo.js?v=37"></script>
-<script src="/static/js/runs.js?v=37"></script>
-<script src="/static/js/casepreview.js?v=37"></script>
-<script src="/static/js/dashboard.js?v=37"></script>
-<script src="/static/js/requirements.js?v=37"></script>
+<script src="/static/js/review.js?v=38"></script>
+<script src="/static/js/regen.js?v=38"></script>
+<script src="/static/js/dup.js?v=38"></script>
+<script src="/static/js/cov.js?v=38"></script>
+<script src="/static/js/excel_upload.js?v=38"></script>
+<script src="/static/js/app.js?v=38"></script>
+<script src="/static/js/history.js?v=38"></script>
+<script src="/static/js/batch.js?v=38"></script>
+<script src="/static/js/cmp.js?v=38"></script>
+<script src="/static/js/tokens.js?v=38"></script>
+<script src="/static/js/search.js?v=38"></script>
+<script src="/static/js/prompts.js?v=38"></script>
+<script src="/static/js/rt.js?v=38"></script>
+<script src="/static/js/rec.js?v=38"></script>
+<script src="/static/js/repo.js?v=38"></script>
+<script src="/static/js/runs.js?v=38"></script>
+<script src="/static/js/casepreview.js?v=38"></script>
+<script src="/static/js/dashboard.js?v=38"></script>
+<script src="/static/js/requirements.js?v=38"></script>
 </body>
 </html>
