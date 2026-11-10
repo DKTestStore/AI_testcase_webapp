@@ -8,12 +8,45 @@ const RQ = {
   data: null, projects: [], detail: null, tab: "cases",
   view: "list", // list | detail | trace | projects
   traceCycle: "", gapsOnly: false, matrix: null,
+  sel: new Set(),
+  editing: false,
+  editSnap: "",
+  repoCases: null,
 };
 
 const RQ_PRIO = (p) => (p === "High" ? "r" : p === "Medium" || p === "Med" ? "y" : "gr");
 const RQ_ST = { Draft: "y", Ready: "b", Approved: "", Archived: "gr" };
 const rqEsc = (s) => (typeof esc === "function" ? esc(s) : String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])));
 const rqDate = (ts) => { if (!ts) return "—"; const d = new Date(ts); return isNaN(d) ? ts : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "-"); };
+const rqDateTime = (ts) => {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
+  return d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).replace(/,/g, "");
+};
+function rqFolderPath(folders, fid) {
+  const by = Object.fromEntries((folders || []).map((f) => [f.id, f]));
+  const parts = [];
+  let id = fid, guard = 0;
+  while (id && by[id] && guard++ < 30) { parts.unshift(by[id].name); id = by[id].parent || ""; }
+  return parts.join(" / ");
+}
+function rqFolderOptions(folders, selected, { includeRoot = true, exclude = "" } = {}) {
+  const rows = (typeof trTreeRows === "function" ? trTreeRows(folders || []) : (folders || []).map((f) => ({ f, lvl: 1 })));
+  const opts = includeRoot ? `<option value="">(root / unfiled)</option>` : "";
+  return opts + rows.filter(({ f }) => f.id !== exclude && !(typeof rqIsDescendant === "function" && rqIsDescendant(folders, exclude, f.id)))
+    .map(({ f }) => `<option value="${rqEsc(f.id)}" ${selected === f.id ? "selected" : ""}>${rqEsc(rqFolderPath(folders, f.id) || f.name)}</option>`).join("");
+}
+function rqIsDescendant(folders, ancestor, fid) {
+  if (!ancestor || !fid || ancestor === fid) return false;
+  const by = Object.fromEntries((folders || []).map((f) => [f.id, f]));
+  let id = fid, guard = 0;
+  while (id && by[id] && guard++ < 30) {
+    if ((by[id].parent || "") === ancestor) return true;
+    id = by[id].parent || "";
+  }
+  return false;
+}
 
 function rqSetProject(id) {
   RQ.projectId = id || "";
@@ -201,47 +234,165 @@ async function rqReloadList() {
   }
 }
 
+function rqCloseMenu() { const m = $("#rqFm"); if (m) m.remove(); document.querySelectorAll(".rq-kebab.on").forEach((b) => b.classList.remove("on")); }
+document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest("#rqFm,.rq-kebab")) rqCloseMenu(); }, true);
+
 function rqRenderTree(folders) {
   const el = $("#rqTree"); if (!el) return;
   const allCount = (RQ.data && RQ.data.total) || 0;
   const rows = (typeof trTreeRows === "function" ? trTreeRows(folders) : folders.map((f) => ({ f, lvl: 1 })));
-  el.innerHTML = `<div class="rq-tree-h"><b>Folders</b><button class="btn g sm" id="rqAddFolder">＋ folder</button></div>
-    <div class="rq-titem ${!RQ.folder ? "on" : ""}" data-fid=""><span>All requirements</span><span class="muted">${allCount}</span></div>
+  el.innerHTML = `<div class="rq-tree-h"><b>Folders</b><button class="btn g sm" id="rqAddFolder">＋ New folder</button></div>
+    <div class="rq-titem ${!RQ.folder ? "on" : ""}" data-fid=""><span class="rq-tname">All requirements</span><span class="muted">${allCount}</span></div>
     ${rows.map(({ f, lvl }) => `<div class="rq-titem ${RQ.folder === f.id ? "on" : ""}" data-fid="${rqEsc(f.id)}" style="padding-left:${12 + (lvl - 1) * 14}px">
-      <span>${rqEsc(f.name)}</span><span class="muted">${f.count || 0}</span></div>`).join("")}
+      <span class="rq-tname">${rqEsc(f.name)}</span>
+      <span class="muted">${f.count || 0}</span>
+      <button type="button" class="rq-kebab" data-menu="${rqEsc(f.id)}" title="Folder actions" aria-label="Folder actions">⋯</button>
+    </div>`).join("")}
     <div class="rq-tree-note">Tree is project-scoped · separate from TC folders</div>`;
-  el.querySelectorAll(".rq-titem").forEach((n) => n.onclick = () => { RQ.folder = n.dataset.fid || ""; rqReloadList(); });
-  $("#rqAddFolder").onclick = () => {
-    const name = prompt("Folder name");
-    if (!name) return;
-    guarded($("#rqAddFolder"), async () => {
-      await api("/api/requirements/folders", { method: "POST", body: { project_id: RQ.projectId, name, parent: RQ.folder || "" } });
-      toast("Folder created"); rqReloadList();
-    })();
+  el.querySelectorAll(".rq-titem").forEach((n) => n.onclick = (e) => {
+    if (e.target.closest(".rq-kebab")) return;
+    RQ.folder = n.dataset.fid || ""; RQ.sel = new Set(); rqReloadList();
+  });
+  el.querySelectorAll(".rq-kebab").forEach((b) => b.onclick = (e) => { e.stopPropagation(); rqFolderMenu(b.dataset.menu, b); });
+  $("#rqAddFolder").onclick = () => rqFolderDialog({ mode: "new", parent: RQ.folder || "" });
+}
+
+function rqFolderMenu(fid, anchor) {
+  rqCloseMenu();
+  const tree = $("#rqTree"); if (!tree) return;
+  const r = anchor.getBoundingClientRect(), t = tree.getBoundingClientRect();
+  const left = Math.min(Math.max(8, r.right - t.left - 20), Math.max(8, t.width - 200));
+  tree.insertAdjacentHTML("beforeend", `<div class="rq-fm" id="rqFm" style="top:${r.bottom - t.top + 4}px;left:${left}px">
+    <button type="button" data-a="ren">Rename</button>
+    <button type="button" data-a="sub">New subfolder</button>
+    <hr>
+    <button type="button" data-a="del" class="dg">Delete…</button>
+  </div>`);
+  anchor.classList.add("on");
+  $("#rqFm [data-a=ren]").onclick = () => { rqCloseMenu(); rqFolderDialog({ mode: "rename", fid }); };
+  $("#rqFm [data-a=sub]").onclick = () => { rqCloseMenu(); rqFolderDialog({ mode: "sub", parent: fid }); };
+  $("#rqFm [data-a=del]").onclick = () => { rqCloseMenu(); rqDeleteFolderDialog(fid); };
+}
+
+async function rqFolderDialog({ mode, fid, parent }) {
+  const folders = (RQ.data && RQ.data.folders) || [];
+  const current = fid ? folders.find((f) => f.id === fid) : null;
+  const isRen = mode === "rename";
+  const title = isRen ? "Rename folder" : "New folder";
+  const p = rqProject();
+  const defParent = isRen ? (current && current.parent) || "" : (parent || "");
+  const html = `<div class="tr-mh"><b>${title}</b><button class="tr-x">✕</button></div>
+    <p class="muted" style="margin:0 0 12px">Project ${rqEsc(p ? p.key : "")} · requirement folders only</p>
+    <label>Name <span style="color:#d33333">*</span></label>
+    <input id="rqFnName" style="width:100%" value="${rqEsc(isRen ? (current && current.name) || "" : "")}" placeholder="e.g. Session policies">
+    <div class="rq-err" id="rqFnErr" hidden></div>
+    ${isRen ? `<label>Parent folder</label><select id="rqFnParent" style="width:100%">${rqFolderOptions(folders, defParent, { exclude: fid })}</select>`
+            : `<label>Parent folder</label><select id="rqFnParent" style="width:100%">${rqFolderOptions(folders, defParent)}</select>`}
+    ${isRen ? "" : `<label>Description (optional)</label><textarea id="rqFnDesc" rows="2" style="width:100%" placeholder="What belongs in this folder?"></textarea>`}
+    <div class="tr-mf"><button class="btn g" id="rqFnCancel">Cancel</button>
+      <button class="btn" id="rqFnSave">${isRen ? "Save" : "Create folder"}</button></div>`;
+  const ov = (typeof trModal === "function") ? trModal(html, 520) : rqModal(html, 520);
+  const close = () => (typeof trClose === "function" ? trClose() : ov.remove());
+  $("#rqFnCancel").onclick = close;
+  setTimeout(() => { const i = $("#rqFnName"); if (i) { i.focus(); i.select(); } }, 30);
+  $("#rqFnSave").onclick = () => guarded($("#rqFnSave"), async () => {
+    const name = ($("#rqFnName").value || "").trim();
+    const err = $("#rqFnErr");
+    if (!name) { if (err) { err.hidden = false; err.textContent = "Folder name is required."; } return; }
+    if (isRen) {
+      await api("/api/requirements/folders/" + encodeURIComponent(fid), { method: "PUT", body: { name, parent: $("#rqFnParent").value } });
+      toast("Folder renamed");
+    } else {
+      const body = { project_id: RQ.projectId, name, parent: $("#rqFnParent").value, description: ($("#rqFnDesc") && $("#rqFnDesc").value) || "" };
+      await api("/api/requirements/folders", { method: "POST", body });
+      toast("Folder created");
+    }
+    close();
+    rqReloadList();
+  });
+}
+
+async function rqDeleteFolderDialog(fid) {
+  let info;
+  try { info = await api("/api/requirements/folders/" + encodeURIComponent(fid) + "/delete-check"); }
+  catch (e) { toast(e.message, true); return; }
+  const folders = (RQ.data && RQ.data.folders) || [];
+  const empty = !!info.empty;
+  const parentLabel = info.parent_name || "(root / unfiled)";
+  const html = `<div class="tr-mh"><b>Delete folder “${rqEsc(info.name)}”?</b><button class="tr-x">✕</button></div>
+    <p class="muted" style="margin:0 0 10px">Contains ${info.requirement_count || 0} requirement(s) and ${info.subfolder_count || 0} subfolder(s)${info.descendant_requirement_count ? ` · ${info.descendant_requirement_count} in subfolders` : ""}.</p>
+    <div class="muted" style="font-size:11px;font-weight:600;margin-bottom:6px">WHAT SHOULD HAPPEN TO CONTENTS?</div>
+    <label class="rq-choice on" id="rqFdParent"><input type="radio" name="rqFdMode" value="parent" ${empty ? "" : "checked"}>
+      Move to parent “${rqEsc(parentLabel)}”
+      <div class="muted" style="font-size:11px;margin-top:2px">Recommended · requirements stay visible, subfolders are reparented (not deleted)</div></label>
+    <label class="rq-choice" id="rqFdOther"><input type="radio" name="rqFdMode" value="other">
+      Move to another folder…
+      <select id="rqFdDest" style="width:100%;margin-top:6px" disabled>${rqFolderOptions(folders, info.parent_id || "", { exclude: fid })}</select></label>
+    <label class="rq-choice ${empty ? "" : "muted"}" id="rqFdEmpty" style="${empty ? "" : "opacity:.65"}">
+      <input type="radio" name="rqFdMode" value="empty" ${empty ? "checked" : "disabled"}>
+      Delete only if empty ${empty ? "" : "— disabled because this folder is not empty"}</label>
+    <p class="muted" style="font-size:12px">Subfolders are never dropped with the parent. Empty folders can be removed outright.</p>
+    <div class="tr-mf"><button class="btn g" id="rqFdCancel">Cancel</button>
+      <button class="btn r" id="rqFdGo">Delete folder</button></div>`;
+  const ov = (typeof trModal === "function") ? trModal(html, 560) : rqModal(html, 560);
+  const close = () => (typeof trClose === "function" ? trClose() : ov.remove());
+  const mark = () => {
+    ov.querySelectorAll(".rq-choice").forEach((c) => c.classList.toggle("on", c.querySelector("input[type=radio]").checked));
+    const dest = $("#rqFdDest"); if (dest) dest.disabled = !ov.querySelector("input[name=rqFdMode][value=other]").checked;
   };
+  ov.querySelectorAll("input[name=rqFdMode]").forEach((r) => r.onchange = mark);
+  mark();
+  $("#rqFdCancel").onclick = close;
+  $("#rqFdGo").onclick = () => guarded($("#rqFdGo"), async () => {
+    const mode = (ov.querySelector("input[name=rqFdMode]:checked") || {}).value;
+    let url = "/api/requirements/folders/" + encodeURIComponent(fid);
+    if (mode === "empty") {
+      if (!empty) { toast("Folder is not empty.", true); return; }
+    } else if (mode === "parent") {
+      url += "?to_parent=true";
+    } else {
+      const dest = $("#rqFdDest").value;
+      url += "?move_to=" + encodeURIComponent(dest || "__root__");
+    }
+    await api(url, { method: "DELETE" });
+    toast("Folder deleted");
+    if (RQ.folder === fid) RQ.folder = info.parent_id || "";
+    close();
+    rqReloadList();
+  });
 }
 
 function rqRenderTable(rows) {
   const el = $("#rqMain"); if (!el) return;
+  const ids = new Set(rows.map((r) => r.id));
+  RQ.sel = new Set([...RQ.sel].filter((id) => ids.has(id)));
   const folderName = RQ.folder && (RQ.data.folders || []).find((f) => f.id === RQ.folder);
+  const allOn = rows.length && rows.every((r) => RQ.sel.has(r.id));
+  const some = rows.some((r) => RQ.sel.has(r.id));
   el.innerHTML = `<div class="rq-main-h">
       <div><b>${rqEsc(folderName ? folderName.name : "All requirements")}</b>
-        <span class="muted">${rows.length} shown</span></div>
+        <span class="muted">${rows.length} shown${RQ.data && RQ.data.total && RQ.folder ? " of " + RQ.data.total + " in project" : ""}</span></div>
       <input id="rqSearch" placeholder="Search requirements…" value="${rqEsc(RQ.q)}" style="width:220px">
     </div>
+    <div class="rq-bulk" id="rqBulk" ${RQ.sel.size ? "" : "hidden"}></div>
     <div class="rq-filters">
       <select id="rqFType"><option value="">All types</option>${["Story","Epic","Feature"].map((t)=>`<option ${RQ.type===t?"selected":""}>${t}</option>`).join("")}</select>
       <select id="rqFPrio"><option value="">Priority ▾</option>${["High","Medium","Low"].map((t)=>`<option ${RQ.priority===t?"selected":""}>${t}</option>`).join("")}</select>
       <select id="rqFSt"><option value="">Status ▾</option>${["Draft","Ready","Approved"].map((t)=>`<option ${RQ.status===t?"selected":""}>${t}</option>`).join("")}</select>
     </div>
     <div class="rq-table-wrap"><table class="rq-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Type</th><th>Source</th><th>Pri</th><th>Status</th><th>TCs</th><th>Coverage</th><th>Last cycle</th></tr></thead>
+      <thead><tr>
+        <th class="rq-cb"><input type="checkbox" id="rqSelAll" ${allOn ? "checked" : ""} ${some && !allOn ? "data-indeterminate=1" : ""} title="Select all"></th>
+        <th>ID</th><th>Title</th><th>Type</th><th>Source</th><th>Pri</th><th>Status</th><th>TCs</th><th>Coverage</th><th>Last cycle</th><th>Actions</th>
+      </tr></thead>
       <tbody>${rows.map((r) => {
         const pct = r.coverage_pct || 0;
         const col = pct >= 75 ? "#12a150" : pct >= 40 ? "#d97706" : "#d33333";
         const last = r.last_result || "—";
         const lcol = last === "Pass" ? "#12a150" : last === "Fail" || last === "Gap" ? "#d33333" : "#6b7385";
-        return `<tr data-rid="${rqEsc(r.id)}" class="rq-row">
+        const on = RQ.sel.has(r.id);
+        return `<tr data-rid="${rqEsc(r.id)}" class="rq-row${on ? " sel" : ""}">
+          <td class="rq-cb"><input type="checkbox" data-sel="${rqEsc(r.id)}" ${on ? "checked" : ""}></td>
           <td class="rq-id">${rqEsc(r.id)}</td>
           <td>${rqEsc(r.title)}${r.jira_key ? `<div class="muted" style="font-size:11px">${rqEsc(r.jira_key)}</div>` : ""}</td>
           <td>${rqEsc(r.type)}</td><td>${rqEsc(r.source)}</td>
@@ -251,16 +402,106 @@ function rqRenderTable(rows) {
           <td><div class="rq-cov"><span style="color:${col};font-weight:600">${pct}%</span>
             <div class="rq-bar"><i style="width:${pct}%;background:${col}"></i></div></div></td>
           <td style="color:${lcol};font-weight:600">${rqEsc(last)}</td>
+          <td class="rq-acts">
+            <button type="button" class="btn g sm" data-act="edit" data-rid="${rqEsc(r.id)}">Edit</button>
+            <button type="button" class="btn g sm" data-act="dup" data-rid="${rqEsc(r.id)}">Dup</button>
+            <button type="button" class="btn g sm dg" data-act="del" data-rid="${rqEsc(r.id)}">Del</button>
+          </td>
         </tr>`;
-      }).join("") || `<tr><td colspan="9" class="muted">No requirements yet. Create one or Import from Jira.</td></tr>`}
+      }).join("") || `<tr><td colspan="11" class="muted">No requirements yet. Create one or Import from Jira.</td></tr>`}
       </tbody></table></div>
-    <div class="rq-compat">Compatibility: cases keep their story key; use Auto-link / Import with auto-link to match <code>case.story</code> to a requirement Jira key.</div>`;
-  el.querySelectorAll(".rq-row").forEach((tr) => tr.onclick = () => rqOpenDetail(tr.dataset.rid));
+    <div class="rq-compat">Compatibility: cases keep their story key; use Auto-link / Import with auto-link to match <code>case.story</code> to a requirement Jira key. Row click opens detail · Edit / Duplicate / Delete stay available here.</div>`;
+  const selAll = $("#rqSelAll");
+  if (selAll && some && !allOn) selAll.indeterminate = true;
+  if (selAll) selAll.onchange = () => {
+    if (selAll.checked) rows.forEach((r) => RQ.sel.add(r.id));
+    else RQ.sel.clear();
+    rqRenderTable(rows);
+  };
+  el.querySelectorAll("input[data-sel]").forEach((cb) => cb.onchange = (e) => {
+    e.stopPropagation();
+    if (cb.checked) RQ.sel.add(cb.dataset.sel); else RQ.sel.delete(cb.dataset.sel);
+    rqRenderTable(rows);
+  });
+  el.querySelectorAll(".rq-row").forEach((tr) => tr.onclick = (e) => {
+    if (e.target.closest("input,button,a,.rq-acts,.rq-cb")) return;
+    rqOpenDetail(tr.dataset.rid);
+  });
+  el.querySelectorAll("button[data-act]").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const id = b.dataset.rid, act = b.dataset.act;
+    if (act === "edit") rqOpenReqDrawer({ mode: "edit", id });
+    else if (act === "dup") rqDuplicate(id);
+    else if (act === "del") rqDeleteReqDialog(id);
+  });
+  rqRenderBulkBar();
   const search = $("#rqSearch");
-  let t; search.oninput = () => { clearTimeout(t); t = setTimeout(() => { RQ.q = search.value; rqReloadList(); }, 250); };
+  let timer; search.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { RQ.q = search.value; rqReloadList(); }, 250); };
   $("#rqFType").onchange = (e) => { RQ.type = e.target.value; rqReloadList(); };
   $("#rqFPrio").onchange = (e) => { RQ.priority = e.target.value; rqReloadList(); };
   $("#rqFSt").onchange = (e) => { RQ.status = e.target.value; rqReloadList(); };
+}
+
+function rqRenderBulkBar() {
+  const bar = $("#rqBulk"); if (!bar) return;
+  const n = RQ.sel.size;
+  bar.hidden = n === 0;
+  if (!n) return;
+  bar.innerHTML = `<span class="rq-bulk-n">${n} selected</span>
+    <button type="button" class="btn g sm" id="rqBulkMove">Move to folder</button>
+    <button type="button" class="btn g sm" id="rqBulkStatus">Change status</button>
+    <button type="button" class="btn g sm dg" id="rqBulkArch">Archive…</button>
+    <button type="button" class="btn g sm" id="rqBulkClear">Clear</button>`;
+  $("#rqBulkMove").onclick = () => rqBulkMove();
+  $("#rqBulkStatus").onclick = () => rqBulkStatus();
+  $("#rqBulkArch").onclick = () => rqBulkArchive();
+  $("#rqBulkClear").onclick = () => { RQ.sel = new Set(); rqReloadList(); };
+}
+
+function rqBulkIds() { return [...RQ.sel]; }
+
+function rqBulkMove() {
+  const folders = (RQ.data && RQ.data.folders) || [];
+  const html = `<div class="tr-mh"><b>Move ${RQ.sel.size} requirement(s)</b><button class="tr-x">✕</button></div>
+    <label>Destination folder</label>
+    <select id="rqBmFolder" style="width:100%">${rqFolderOptions(folders, RQ.folder || "")}</select>
+    <div class="tr-mf"><button class="btn g" id="rqBmCancel">Cancel</button><button class="btn" id="rqBmGo">Move</button></div>`;
+  const ov = (typeof trModal === "function") ? trModal(html, 480) : rqModal(html, 480);
+  const close = () => (typeof trClose === "function" ? trClose() : ov.remove());
+  $("#rqBmCancel").onclick = close;
+  $("#rqBmGo").onclick = () => guarded($("#rqBmGo"), async () => {
+    const j = await api("/api/requirements/bulk", { method: "POST", body: { ids: rqBulkIds(), op: "move", folder_id: $("#rqBmFolder").value } });
+    toast(`Moved ${j.count}`); close(); RQ.sel = new Set(); rqReloadList();
+  });
+}
+
+function rqBulkStatus() {
+  const html = `<div class="tr-mh"><b>Change status · ${RQ.sel.size} selected</b><button class="tr-x">✕</button></div>
+    <label>New status</label>
+    <select id="rqBsSt" style="width:100%">${["Draft","Ready","Approved"].map((s) => `<option>${s}</option>`).join("")}</select>
+    <p class="muted" style="font-size:12px">Use Archive… to archive. This does not permanently delete.</p>
+    <div class="tr-mf"><button class="btn g" id="rqBsCancel">Cancel</button><button class="btn" id="rqBsGo">Update status</button></div>`;
+  const ov = (typeof trModal === "function") ? trModal(html, 440) : rqModal(html, 440);
+  const close = () => (typeof trClose === "function" ? trClose() : ov.remove());
+  $("#rqBsCancel").onclick = close;
+  $("#rqBsGo").onclick = () => guarded($("#rqBsGo"), async () => {
+    const j = await api("/api/requirements/bulk", { method: "POST", body: { ids: rqBulkIds(), op: "status", status: $("#rqBsSt").value } });
+    toast(`Updated ${j.count}`); close(); RQ.sel = new Set(); rqReloadList();
+  });
+}
+
+function rqBulkArchive() {
+  const n = RQ.sel.size;
+  const html = `<div class="tr-mh"><b>Archive ${n} requirement(s)?</b><button class="tr-x">✕</button></div>
+    <p>Archived requirements are hidden from the default list. Linked test cases and cycle results are kept.</p>
+    <div class="tr-mf"><button class="btn g" id="rqBaCancel">Cancel</button><button class="btn r" id="rqBaGo">Archive</button></div>`;
+  const ov = (typeof trModal === "function") ? trModal(html, 480) : rqModal(html, 480);
+  const close = () => (typeof trClose === "function" ? trClose() : ov.remove());
+  $("#rqBaCancel").onclick = close;
+  $("#rqBaGo").onclick = () => guarded($("#rqBaGo"), async () => {
+    const j = await api("/api/requirements/bulk", { method: "POST", body: { ids: rqBulkIds(), op: "archive" } });
+    toast(`Archived ${j.count}`); close(); RQ.sel = new Set(); rqReloadList();
+  });
 }
 
 async function rqOpenDetail(rid) {
@@ -274,28 +515,49 @@ async function rqOpenDetail(rid) {
 async function viewRequirementDetail(v, r) {
   await rqEnsureSwitcher();
   const p = rqProject();
-  v.innerHTML = `<div class="rq-back"><a href="#requirements" id="rqBack">← Requirements</a></div>
-    <h1>${rqEsc(r.id)} · ${rqEsc(r.title)}</h1>
-    <div class="rq-meta">
-      <span class="pill b">${rqEsc(r.type)}</span>
-      <span class="pill ${RQ_PRIO(r.priority)}">${rqEsc(r.priority)}</span>
-      <span class="pill ${RQ_ST[r.status] || ""}">${rqEsc(r.status)}</span>
-      ${r.jira_key ? `<span class="pill gr">Jira ${rqEsc(r.jira_key)}</span>` : ""}
-      <span class="muted">Project ${rqEsc(p ? p.key : "")}${r.folder_path ? " · " + rqEsc(r.folder_path) : ""}</span>
-    </div>
-    <div class="rq-toolbar" style="justify-content:flex-end">
-      <button class="btn g" id="rqLinkBtn">🔗 Link test cases</button>
-      <button class="btn" id="rqGenBtn">✨ Generate with AI</button>
-    </div>
-    <div class="rq-detail">
-      <div class="rq-left">
-        <div class="card">
+  const editing = !!RQ.editing;
+  const lastBy = r.updated_by || ((r.activity || []).find((a) => a.by) || {}).by || "";
+  if (editing && !(RQ.data && RQ.data.folders) && RQ.projectId) {
+    try { RQ.data = await api("/api/requirements?" + new URLSearchParams({ project_id: RQ.projectId }).toString()); }
+    catch (e) { /* folder picker can stay empty */ }
+  }
+  const folders = (RQ.data && RQ.data.folders) || [];
+  const leftView = `<div class="card">
           <h3>Description</h3>
           <p>${rqEsc(r.description || "(none)").replace(/\n/g, "<br>")}</p>
           <h3>Acceptance criteria</h3>
           <ul>${(r.acs || []).map((a) => `<li>${rqEsc(a)}</li>`).join("") || "<li class='muted'>(none)</li>"}</ul>
-          <div class="muted" style="font-size:11px;margin-top:12px">Source: ${rqEsc(r.source)}${r.jira_key ? " " + rqEsc(r.jira_key) : ""} · Updated ${rqEsc(rqDate(r.updated))}</div>
+          <div class="muted" style="font-size:11px;margin-top:12px">Source: ${rqEsc(r.source)}${r.jira_key ? " " + rqEsc(r.jira_key) : ""} · Updated ${rqEsc(rqDateTime(r.updated))}${lastBy ? " by " + rqEsc(lastBy) : ""}</div>
+        </div>`;
+  const leftEdit = `<div class="card" id="rqEditForm">
+          <h3>Edit requirement</h3>
+          <p class="muted" style="margin-top:0">Same fields as New · values prefilled from ${rqEsc(r.id)}</p>
+          ${rqFormHtml(r, folders)}
+        </div>`;
+  v.innerHTML = `<div class="rq-back"><a href="#requirements" id="rqBack">← Requirements</a></div>
+    <div class="rq-main-h" style="align-items:flex-start">
+      <div>
+        <h1 style="margin-bottom:6px">${rqEsc(r.id)} · ${rqEsc(r.title)}</h1>
+        <div class="rq-meta">
+          <span class="pill b">${rqEsc(r.type)}</span>
+          <span class="pill ${RQ_PRIO(r.priority)}">${rqEsc(r.priority)}</span>
+          <span class="pill ${RQ_ST[r.status] || ""}">${rqEsc(r.status)}</span>
+          ${editing ? `<span class="pill rq-edit-pill">Editing</span>` : ""}
+          ${r.jira_key ? `<span class="pill gr">Jira ${rqEsc(r.jira_key)}</span>` : ""}
+          <span class="muted">Project ${rqEsc(p ? p.key : "")}${r.folder_path ? " · " + rqEsc(r.folder_path) : ""}</span>
         </div>
+      </div>
+      <div class="rq-toolbar" style="margin:0">
+        <button class="btn g" id="rqEditBtn">${editing ? "Editing…" : "Edit"}</button>
+        <button class="btn g" id="rqDupBtn">Duplicate</button>
+        <button class="btn g dg" id="rqDelBtn">Delete…</button>
+        <button class="btn g" id="rqLinkBtn">🔗 Link test cases</button>
+        <button class="btn" id="rqGenBtn">✨ Generate with AI</button>
+      </div>
+    </div>
+    <div class="rq-detail">
+      <div class="rq-left">
+        ${editing ? leftEdit : leftView}
         <div class="card" style="margin-top:12px">
           <h3>Coverage snapshot</h3>
           <div class="rq-snap">
@@ -303,6 +565,7 @@ async function viewRequirementDetail(v, r) {
             <div><div class="muted">Coverage</div><b style="color:#12a150">${r.coverage_pct || 0}%</b></div>
             <div><div class="muted">Last result</div><b>${rqEsc(r.last_result || "—")}</b></div>
           </div>
+          ${editing ? `<p class="muted" style="font-size:11px;margin:10px 0 0">Unlink / Generate remain on the cases tab after Save.</p>` : ""}
         </div>
       </div>
       <div class="rq-right card">
@@ -313,10 +576,48 @@ async function viewRequirementDetail(v, r) {
         </div>
         <div id="rqTabBody"></div>
       </div>
-    </div>`;
-  $("#rqBack").onclick = (e) => { e.preventDefault(); RQ.view = "list"; RQ.detail = null; go("requirements"); };
+    </div>
+    ${editing ? `<div class="rq-unsaved" id="rqUnsaved">
+      <div><b>● Unsaved changes</b>
+        <div class="muted" style="font-size:12px">Last saved ${rqEsc(rqDateTime(r.updated))}${lastBy ? " by " + rqEsc(lastBy) : ""}</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn g" id="rqEditDiscard">Discard</button>
+        <button class="btn" id="rqEditSave">Save changes</button>
+      </div>
+    </div>` : ""}`;
+  $("#rqBack").onclick = (e) => {
+    e.preventDefault();
+    if (RQ.editing && rqFormDirty($("#rqEditForm"), RQ.editSnap) && !confirm("You have unsaved changes. Leave without saving?")) return;
+    RQ.view = "list"; RQ.detail = null; RQ.editing = false; RQ.editSnap = ""; go("requirements");
+  };
   $("#rqGenBtn").onclick = () => rqGenerateAI(r.id);
   $("#rqLinkBtn").onclick = () => rqLinkModal(r);
+  $("#rqDupBtn").onclick = () => rqDuplicate(r.id, { open: true });
+  $("#rqDelBtn").onclick = () => rqDeleteReqDialog(r.id, { fromDetail: true });
+  $("#rqEditBtn").onclick = () => {
+    if (RQ.editing) return;
+    RQ.editing = true;
+    viewRequirementDetail($("#view"), r);
+  };
+  if (editing) {
+    $("#rqEditBtn").disabled = true;
+    rqBindForm($("#rqEditForm"), r);
+    RQ.editSnap = rqFormSnapshot($("#rqEditForm"));
+    $("#rqEditDiscard").onclick = () => {
+      if (rqFormDirty($("#rqEditForm"), RQ.editSnap) && !confirm("Discard unsaved changes?")) return;
+      RQ.editing = false; RQ.editSnap = ""; viewRequirementDetail($("#view"), r);
+    };
+    $("#rqEditSave").onclick = () => guarded($("#rqEditSave"), async () => {
+      const body = rqReadForm($("#rqEditForm"));
+      if (!rqValidateForm($("#rqEditForm"), body)) return;
+      const j = await api("/api/requirements/" + encodeURIComponent(r.id), { method: "PUT", body });
+      await rqSyncLinks(r.id, (r.linked_cases || []).map((c) => c.id), body.case_ids);
+      const fresh = await api("/api/requirements/" + encodeURIComponent(r.id));
+      RQ.detail = fresh.requirement; RQ.editing = false; RQ.editSnap = "";
+      toast("Saved " + r.id);
+      viewRequirementDetail($("#view"), RQ.detail);
+    });
+  }
   v.querySelectorAll(".rq-tabs button").forEach((b) => b.onclick = () => { RQ.tab = b.dataset.tab; rqRenderTab(r); });
   rqRenderTab(r);
 }
@@ -332,7 +633,8 @@ function rqRenderTab(r) {
   }
   if (RQ.tab === "activity") {
     el.innerHTML = (r.activity || []).map((a) =>
-      `<div class="rq-act"><span class="muted">${rqEsc(rqDate(a.ts))}</span> <b>${rqEsc(a.type)}</b> ${rqEsc(a.text || "")}</div>`
+      `<div class="rq-act"><span class="muted">${rqEsc(rqDateTime(a.ts))}</span>
+        ${a.by ? `<span class="rq-by">${rqEsc(a.by)}</span> · ` : ""}<b>${rqEsc(a.type)}</b> ${rqEsc(a.text || "")}</div>`
     ).join("") || `<div class="muted">No activity yet.</div>`;
     return;
   }
@@ -373,33 +675,377 @@ async function rqGenerateAI(rid) {
   } catch (e) { toast(e.message, true); }
 }
 
-function rqNewReqModal() {
+function rqNewReqModal() { rqOpenReqDrawer({ mode: "new" }); }
+
+function rqCloseDrawer({ force } = {}) {
+  const root = $("#rqDrw");
+  if (!force && root && rqFormDirty(root, RQ._drawerSnap) && !confirm("You have unsaved changes. Close without saving?")) return false;
+  ["rqDrw", "rqDbg"].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); });
+  document.body.style.overflow = "";
+  RQ._drawerSnap = "";
+  if (RQ._drawerEsc) { document.removeEventListener("keydown", RQ._drawerEsc); RQ._drawerEsc = null; }
+  return true;
+}
+
+async function rqOpenReqDrawer({ mode, id } = {}) {
+  rqCloseDrawer({ force: true });
+  let r = { folder_id: RQ.folder || "", type: "Story", priority: "Medium", status: "Draft", acs: [""], linked_cases: [] };
+  if (mode === "edit" && id) {
+    try {
+      const j = await api("/api/requirements/" + encodeURIComponent(id));
+      r = j.requirement;
+    } catch (e) { toast(e.message, true); return; }
+  }
+  if (!RQ.data || !RQ.data.folders) {
+    try {
+      const params = new URLSearchParams({ project_id: RQ.projectId });
+      RQ.data = await api("/api/requirements?" + params.toString());
+    } catch (e) { /* folder list may already be loaded */ }
+  }
   const folders = (RQ.data && RQ.data.folders) || [];
-  const html = `<div class="tr-mh"><b>New requirement</b><button class="tr-x">✕</button></div>
-    <label>Title</label><input id="rqRT" style="width:100%">
-    <label>Type</label><select id="rqRTy">${["Story","Epic","Feature"].map((t)=>`<option>${t}</option>`).join("")}</select>
-    <label>Priority</label><select id="rqRPr">${["High","Medium","Low"].map((t)=>`<option ${t==="Medium"?"selected":""}>${t}</option>`).join("")}</select>
-    <label>Status</label><select id="rqRSt">${["Draft","Ready","Approved"].map((t)=>`<option>${t}</option>`).join("")}</select>
-    <label>Jira key (optional, 1:1)</label><input id="rqRJ" placeholder="EXPO-33" style="width:160px">
-    <label>Folder</label><select id="rqRF"><option value="">(none)</option>${folders.map((f)=>`<option value="${rqEsc(f.id)}" ${RQ.folder===f.id?"selected":""}>${rqEsc(f.name)}</option>`).join("")}</select>
-    <label>Description</label><textarea id="rqRD" rows="3" style="width:100%"></textarea>
-    <label>Acceptance criteria (one per line)</label><textarea id="rqRA" rows="3" style="width:100%"></textarea>
-    <label><input type="checkbox" id="rqRAuto"> Auto-link test cases where story matches Jira key</label>
-    <div class="tr-mf"><button class="btn g" id="rqRCancel">Cancel</button><button class="btn" id="rqRSave">Create</button></div>`;
-  const ov = (typeof trModal === "function") ? trModal(html, 560) : rqModal(html, 560);
-  $("#rqRCancel").onclick = () => (typeof trClose === "function" ? trClose() : ov.remove());
-  $("#rqRSave").onclick = () => guarded($("#rqRSave"), async () => {
-    const body = {
-      project_id: RQ.projectId, title: $("#rqRT").value, type: $("#rqRTy").value,
-      priority: $("#rqRPr").value, status: $("#rqRSt").value, jira_key: $("#rqRJ").value,
-      folder_id: $("#rqRF").value, description: $("#rqRD").value,
-      acs: $("#rqRA").value.split(/\n/).map((s) => s.trim()).filter(Boolean),
-      auto_link: $("#rqRAuto").checked, source: $("#rqRJ").value.trim() ? "Jira" : "Manual",
+  const p = rqProject();
+  const isNew = mode !== "edit";
+  document.body.style.overflow = "hidden";
+  const dbg = document.createElement("div"); dbg.className = "rq-dbg"; dbg.id = "rqDbg";
+  const drw = document.createElement("div"); drw.className = "rq-drw"; drw.id = "rqDrw";
+  drw.innerHTML = `<div class="rq-drw-h">
+      <div>
+        <h2>${isNew ? "New requirement" : "Edit " + rqEsc(r.id)}</h2>
+        <div class="muted" style="font-size:12px;margin-top:4px">Project ${rqEsc(p ? p.key : "")}${isNew ? " · will be created as REQ-####" : " · same fields as New"}</div>
+      </div>
+      <button type="button" class="btn g sm" id="rqDrwX" title="Close">✕</button>
+    </div>
+    <div class="rq-drw-b">${rqFormHtml(r, folders, { isNew })}</div>
+    <div class="rq-drw-f">
+      <button type="button" class="btn g" id="rqDrwCancel">Cancel</button>
+      ${isNew ? `<button type="button" class="btn g" id="rqDrwAnother">Save &amp; add another</button>` : ""}
+      <button type="button" class="btn" id="rqDrwSave">${isNew ? "Save" : "Save changes"}</button>
+    </div>`;
+  document.body.appendChild(dbg);
+  document.body.appendChild(drw);
+  const close = () => rqCloseDrawer();
+  dbg.addEventListener("mousedown", (e) => { if (e.target === dbg) close(); });
+  $("#rqDrwX").onclick = close;
+  $("#rqDrwCancel").onclick = close;
+  rqBindForm(drw, r);
+  RQ._drawerSnap = rqFormSnapshot(drw);
+  const save = async (addAnother) => {
+    const body = rqReadForm(drw);
+    if (!rqValidateForm(drw, body)) return false;
+    body.project_id = RQ.projectId;
+    body.source = (body.jira_key || "").trim() ? (r.source || "Jira") : (isNew ? "Manual" : (r.source || "Manual"));
+    if (isNew) {
+      const j = await api("/api/requirements", { method: "POST", body });
+      const extra = (j.auto_linked && j.auto_linked.length) ? ` · linked ${j.auto_linked.length}` : "";
+      toast(`Created ${j.requirement.id}` + extra);
+      if (addAnother) {
+        const keep = { folder_id: body.folder_id, type: body.type, priority: body.priority, status: body.status, acs: [""], linked_cases: [], title: "", description: "", jira_key: "" };
+        drw.querySelector(".rq-drw-b").innerHTML = rqFormHtml(keep, folders, { isNew: true });
+        rqBindForm(drw, keep);
+        RQ._drawerSnap = rqFormSnapshot(drw);
+        const title = drw.querySelector("[data-f=title]"); if (title) title.focus();
+        return true;
+      }
+      rqCloseDrawer({ force: true });
+      RQ.detail = j.requirement; RQ.view = "detail"; RQ.editing = false;
+      viewRequirementDetail($("#view"), RQ.detail);
+      return true;
+    }
+    await api("/api/requirements/" + encodeURIComponent(r.id), { method: "PUT", body });
+    await rqSyncLinks(r.id, (r.linked_cases || []).map((c) => c.id), body.case_ids);
+    toast("Saved " + r.id);
+    rqCloseDrawer({ force: true });
+    if (RQ.view === "detail" && RQ.detail && RQ.detail.id === r.id) {
+      const fresh = await api("/api/requirements/" + encodeURIComponent(r.id));
+      RQ.detail = fresh.requirement; RQ.editing = false;
+      viewRequirementDetail($("#view"), RQ.detail);
+    } else {
+      rqReloadList();
+    }
+    return true;
+  };
+  $("#rqDrwSave").onclick = () => guarded($("#rqDrwSave"), () => save(false));
+  const another = $("#rqDrwAnother");
+  if (another) another.onclick = () => guarded(another, () => save(true));
+  if (RQ._drawerEsc) document.removeEventListener("keydown", RQ._drawerEsc);
+  RQ._drawerEsc = (e) => {
+    if (e.key !== "Escape" || !$("#rqDrw")) return;
+    e.preventDefault();
+    if (rqCloseDrawer()) { document.removeEventListener("keydown", RQ._drawerEsc); RQ._drawerEsc = null; }
+  };
+  document.addEventListener("keydown", RQ._drawerEsc);
+  setTimeout(() => { const i = drw.querySelector("[data-f=title]"); if (i) i.focus(); }, 30);
+}
+
+function rqFormHtml(r, folders, { isNew } = {}) {
+  r = r || {};
+  const acs = (r.acs && r.acs.length) ? r.acs : [""];
+  const chips = r.linked_cases || [];
+  return `<div class="rq-form">
+    <section class="rq-sec">
+      <h3>1 · Basics</h3>
+      <div class="rq-field">
+        <label class="rq-lbl">TITLE <span style="color:#d33333">*</span></label>
+        <input type="text" data-f="title" value="${rqEsc(r.title || "")}" placeholder="Requirement title" maxlength="300">
+        <div class="rq-err" data-err="title" hidden></div>
+      </div>
+      <div class="rq-grid3">
+        <div class="rq-field"><label class="rq-lbl">TYPE</label>
+          <select data-f="type">${["Story","Epic","Feature"].map((t) => `<option ${(r.type || "Story") === t ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div class="rq-field"><label class="rq-lbl">PRIORITY</label>
+          <select data-f="priority">${["High","Medium","Low"].map((t) => `<option ${(r.priority || "Medium") === t ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div class="rq-field"><label class="rq-lbl">STATUS</label>
+          <select data-f="status">${["Draft","Ready","Approved"].map((t) => `<option ${(r.status || "Draft") === t ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      </div>
+      <div class="rq-grid2">
+        <div class="rq-field"><label class="rq-lbl">FOLDER</label>
+          <select data-f="folder_id">${rqFolderOptions(folders, r.folder_id || RQ.folder || "")}</select></div>
+        <div class="rq-field"><label class="rq-lbl">JIRA KEY <span style="font-weight:500">(optional · 1:1)</span></label>
+          <input type="text" data-f="jira_key" value="${rqEsc(r.jira_key || "")}" placeholder="EXPO-33" maxlength="40">
+          <div class="rq-hint">Must be unique in this project if set</div>
+          <div class="rq-err" data-err="jira_key" hidden></div></div>
+      </div>
+    </section>
+    <section class="rq-sec">
+      <h3>2 · Description</h3>
+      <div class="muted" style="font-size:11px;margin-bottom:6px">B · I · List · Link &nbsp; plain textarea for now</div>
+      <textarea data-f="description" rows="5" placeholder="As a … I want … so that …">${rqEsc(r.description || "")}</textarea>
+    </section>
+    <section class="rq-sec">
+      <h3>3 · Acceptance criteria</h3>
+      <div data-acs>${acs.map((a, i) => rqAcRowHtml(a, i)).join("")}</div>
+      <button type="button" class="btn g sm" data-ac-add style="margin-top:6px">+ Add criterion</button>
+    </section>
+    <section class="rq-sec">
+      <h3>4 · Linked test cases (optional)</h3>
+      <div class="rq-field" style="position:relative">
+        <input type="text" data-tc-q placeholder="Search Test Case Repo… e.g. TC-0001 or title" autocomplete="off">
+        <div class="rq-suggest" data-tc-sug hidden></div>
+      </div>
+      <div class="rq-chips" data-tc-chips>${chips.map((c) => rqChipHtml(c.id, c.title)).join("")}</div>
+      <div class="rq-hint">Search existing repo cases. Unlink keeps cases in Repo.${isNew ? " You can also auto-link later by Jira key." : ""}</div>
+      ${isNew ? `<label style="margin-top:8px;display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-f="auto_link"> Auto-link test cases where story matches Jira key</label>` : ""}
+    </section>
+    <div class="rq-ok" data-ok hidden></div>
+  </div>`;
+}
+
+function rqAcRowHtml(text, i) {
+  return `<div class="rq-ac-row" data-ac>
+    <span class="rq-ac-h" title="Reorder">⋮⋮</span>
+    <button type="button" class="rq-ac-move" data-ac-up title="Move up">▲</button>
+    <button type="button" class="rq-ac-move" data-ac-dn title="Move down">▼</button>
+    <input type="text" data-ac-text value="${rqEsc(text || "")}" placeholder="AC${i + 1} · e.g. Redirect to IdP when clicking Sign in">
+    <button type="button" class="rq-ac-del" data-ac-del title="Remove">✕</button>
+  </div>`;
+}
+
+function rqChipHtml(id, title) {
+  return `<span class="rq-chip" data-cid="${rqEsc(id)}">${rqEsc(id)}${title && title !== id ? " · " + rqEsc(title) : ""} <button type="button" data-chip-x title="Remove">×</button></span>`;
+}
+
+function rqBindForm(root, r) {
+  if (!root) return;
+  const acsHost = () => root.querySelector("[data-acs]");
+  const refreshAc = () => {
+    const add = root.querySelector("[data-ac-add]");
+    if (add) add.onclick = () => {
+      acsHost().insertAdjacentHTML("beforeend", rqAcRowHtml("", acsHost().querySelectorAll("[data-ac]").length));
+      bindAc();
     };
-    const j = await api("/api/requirements", { method: "POST", body });
-    toast(`Created ${j.requirement.id}` + (j.auto_linked && j.auto_linked.length ? ` · linked ${j.auto_linked.length}` : ""));
-    if (typeof trClose === "function") trClose(); else ov.remove();
-    RQ.detail = j.requirement; RQ.view = "detail"; viewRequirementDetail($("#view"), RQ.detail);
+    bindAc();
+  };
+  const bindAc = () => {
+    acsHost().querySelectorAll("[data-ac]").forEach((row, i) => {
+      const input = row.querySelector("[data-ac-text]");
+      if (input && !input.placeholder) input.placeholder = "AC" + (i + 1);
+      const up = row.querySelector("[data-ac-up]");
+      const dn = row.querySelector("[data-ac-dn]");
+      const del = row.querySelector("[data-ac-del]");
+      if (up) up.onclick = () => { if (row.previousElementSibling) acsHost().insertBefore(row, row.previousElementSibling); };
+      if (dn) dn.onclick = () => { if (row.nextElementSibling) acsHost().insertBefore(row.nextElementSibling, row); };
+      if (del) del.onclick = () => {
+        if (acsHost().querySelectorAll("[data-ac]").length <= 1) { input.value = ""; return; }
+        row.remove();
+      };
+    });
+  };
+  refreshAc();
+
+  const q = root.querySelector("[data-tc-q]");
+  const sug = root.querySelector("[data-tc-sug]");
+  const chips = root.querySelector("[data-tc-chips]");
+  const selected = () => [...chips.querySelectorAll(".rq-chip")].map((c) => c.dataset.cid);
+  const addChip = (id, title) => {
+    if (selected().includes(id)) return;
+    chips.insertAdjacentHTML("beforeend", rqChipHtml(id, title));
+    bindChips();
+  };
+  const bindChips = () => {
+    chips.querySelectorAll("[data-chip-x]").forEach((b) => b.onclick = () => b.closest(".rq-chip").remove());
+  };
+  bindChips();
+  let timer;
+  const runSearch = async () => {
+    const term = (q.value || "").trim().toLowerCase();
+    if (!term) { sug.hidden = true; sug.innerHTML = ""; return; }
+    const cases = await rqLoadRepoCases();
+    const have = new Set(selected());
+    const hits = cases.filter((c) => !have.has(c.id) && (`${c.id} ${c.title || ""} ${c.story || ""}`).toLowerCase().includes(term)).slice(0, 12);
+    if (!hits.length) { sug.hidden = false; sug.innerHTML = `<div class="muted" style="padding:8px 10px">No matching cases</div>`; return; }
+    sug.hidden = false;
+    sug.innerHTML = hits.map((c) => `<button type="button" data-pick="${rqEsc(c.id)}" data-title="${rqEsc(c.title || "")}"><b>${rqEsc(c.id)}</b> ${rqEsc(c.title || "")}${c.story ? ` <span class="muted">${rqEsc(c.story)}</span>` : ""}</button>`).join("");
+    sug.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => {
+      addChip(b.dataset.pick, b.dataset.title);
+      q.value = ""; sug.hidden = true;
+    });
+  };
+  if (q) {
+    q.oninput = () => { clearTimeout(timer); timer = setTimeout(runSearch, 180); };
+    q.onfocus = () => { if (q.value.trim()) runSearch(); };
+    q.onkeydown = (e) => { if (e.key === "Escape") { sug.hidden = true; } };
+  }
+  document.addEventListener("mousedown", function hideSug(e) {
+    if (!root.isConnected) return document.removeEventListener("mousedown", hideSug);
+    if (sug && !sug.contains(e.target) && e.target !== q) sug.hidden = true;
+  });
+}
+
+async function rqLoadRepoCases() {
+  if (RQ.repoCases) return RQ.repoCases;
+  try {
+    const j = await api("/api/repo");
+    RQ.repoCases = (j.cases || []).filter((c) => c.status !== "Archived");
+  } catch (e) {
+    RQ.repoCases = [];
+    toast("Could not load Test Case Repo for linking: " + e.message, true);
+  }
+  return RQ.repoCases;
+}
+
+function rqReadForm(root) {
+  const g = (name) => {
+    const el = root.querySelector(`[data-f="${name}"]`);
+    if (!el) return "";
+    if (el.type === "checkbox") return el.checked;
+    return el.value;
+  };
+  const acs = [...root.querySelectorAll("[data-ac-text]")].map((i) => i.value.trim()).filter(Boolean);
+  const case_ids = [...root.querySelectorAll(".rq-chip")].map((c) => c.dataset.cid);
+  return {
+    title: (g("title") || "").trim(),
+    type: g("type") || "Story",
+    priority: g("priority") || "Medium",
+    status: g("status") || "Draft",
+    folder_id: g("folder_id") || "",
+    jira_key: (g("jira_key") || "").trim(),
+    description: g("description") || "",
+    acs,
+    case_ids,
+    auto_link: !!g("auto_link"),
+  };
+}
+
+function rqFormSnapshot(root) { try { return JSON.stringify(rqReadForm(root)); } catch (e) { return ""; } }
+function rqFormDirty(root, snap) { if (!root || !snap) return false; return rqFormSnapshot(root) !== snap; }
+
+function rqValidateForm(root, body) {
+  body = body || rqReadForm(root);
+  let ok = true;
+  const show = (name, msg) => {
+    const el = root.querySelector(`[data-err="${name}"]`);
+    if (el) { el.hidden = !msg; el.textContent = msg || ""; }
+    const field = root.querySelector(`[data-f="${name}"]`);
+    if (field) field.style.borderColor = msg ? "#d33333" : "";
+  };
+  if (!body.title) { show("title", "Title is required."); ok = false; const t = root.querySelector("[data-f=title]"); if (t) t.focus(); }
+  else show("title", "");
+  const jk = (body.jira_key || "").trim();
+  if (jk && !/^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(jk) && !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(jk)) {
+    show("jira_key", "Use a short key such as EXPO-33.");
+  } else show("jira_key", "");
+  const banner = root.querySelector("[data-ok]");
+  if (banner) {
+    banner.hidden = !ok;
+    if (ok) banner.textContent = "Ready to save · Title and project are set";
+  }
+  return ok;
+}
+
+async function rqSyncLinks(rid, before, after) {
+  const prev = new Set(before || []);
+  const next = new Set(after || []);
+  const add = [...next].filter((id) => !prev.has(id));
+  const rem = [...prev].filter((id) => !next.has(id));
+  if (add.length) await api(`/api/requirements/${encodeURIComponent(rid)}/links`, { method: "POST", body: { case_ids: add } });
+  for (const cid of rem) {
+    await api(`/api/requirements/${encodeURIComponent(rid)}/links/${encodeURIComponent(cid)}`, { method: "DELETE" });
+  }
+}
+
+async function rqDuplicate(id, { open } = {}) {
+  try {
+    const j = await api("/api/requirements/" + encodeURIComponent(id) + "/duplicate", { method: "POST", body: {} });
+    toast(`Duplicated as ${j.requirement.id}`);
+    if (open || (RQ.view === "detail")) {
+      RQ.detail = j.requirement; RQ.view = "detail"; RQ.editing = false;
+      viewRequirementDetail($("#view"), RQ.detail);
+    } else {
+      rqReloadList();
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function rqDeleteReqDialog(id, { fromDetail } = {}) {
+  let info;
+  try { info = await api("/api/requirements/" + encodeURIComponent(id) + "/delete-check"); }
+  catch (e) { toast(e.message, true); return; }
+  const canPerm = !!info.can_permanent_delete;
+  const cycles = (info.cycles || []).map((c) => c.id + (c.name ? " · " + c.name : "")).join(", ");
+  const html = canPerm
+    ? `<div class="tr-mh"><b>Permanently delete ${rqEsc(id)}?</b><button class="tr-x">✕</button></div>
+        <p class="muted" style="margin:0 0 8px">${rqEsc(info.title || "")} · ${rqEsc(info.status || "")}</p>
+        <div class="rq-danger"><b>No linked test cases or executions (0 / 0)</b>
+          <div>This cannot be undone. Type the ID to confirm.</div></div>
+        <label>Confirm ID</label>
+        <input id="rqDelConfirm" style="width:100%" placeholder="${rqEsc(id)}" autocomplete="off">
+        <div class="rq-err" id="rqDelErr" hidden></div>
+        <div class="tr-mf"><button class="btn g" id="rqDelCancel">Cancel</button>
+          <button class="btn r" id="rqDelGo">Delete permanently</button></div>`
+    : `<div class="tr-mh"><b>Archive ${rqEsc(id)}?</b><button class="tr-x">✕</button></div>
+        <p class="muted" style="margin:0 0 8px">${rqEsc(info.title || "")}</p>
+        <div class="rq-warn"><b>This requirement is in use</b>
+          <ul style="margin:8px 0 0;padding-left:18px">
+            <li>${info.linked_cases || 0} linked test case(s)${info.case_ids && info.case_ids.length ? " (" + rqEsc(info.case_ids.join(", ")) + ")" : ""}</li>
+            <li>${info.executions || 0} execution(s)${info.cycle_count ? " in " + rqEsc(cycles || (info.cycle_count + " cycle(s)")) : ""}</li>
+          </ul>
+          <p style="margin:8px 0 0">Permanent delete is blocked. Archive hides it from the default list; cases and cycle results stay intact.</p>
+        </div>
+        <div class="tr-mf"><button class="btn g" id="rqDelCancel">Cancel</button>
+          <button class="btn" id="rqDelGo" style="background:#d97706;border-color:#d97706;color:#fff">Archive requirement</button></div>`;
+  const ov = (typeof trModal === "function") ? trModal(html, 560) : rqModal(html, 560);
+  const close = () => (typeof trClose === "function" ? trClose() : ov.remove());
+  $("#rqDelCancel").onclick = close;
+  $("#rqDelGo").onclick = () => guarded($("#rqDelGo"), async () => {
+    if (canPerm) {
+      const typed = (($("#rqDelConfirm") && $("#rqDelConfirm").value) || "").trim().toUpperCase();
+      if (typed !== String(id).toUpperCase()) {
+        const err = $("#rqDelErr"); if (err) { err.hidden = false; err.textContent = "Type " + id + " to confirm permanent delete."; }
+        return;
+      }
+      await api("/api/requirements/" + encodeURIComponent(id) + "?permanent=true", { method: "DELETE" });
+      toast("Deleted " + id);
+    } else {
+      await api("/api/requirements/" + encodeURIComponent(id), { method: "DELETE" });
+      toast("Archived " + id);
+    }
+    close();
+    RQ.sel.delete(id);
+    if (fromDetail || (RQ.view === "detail" && RQ.detail && RQ.detail.id === id)) {
+      RQ.view = "list"; RQ.detail = null; RQ.editing = false; go("requirements");
+    } else {
+      rqReloadList();
+    }
   });
 }
 
