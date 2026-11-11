@@ -38,6 +38,13 @@ if not log.handlers:
         logging.getLogger(_n).addHandler(_h)
 
 app = FastAPI(title="AI TestCase Generator")
+
+
+@app.on_event("startup")
+def _init_sqlite():
+    """Create/upgrade backend/app.db and import leftover JSON once if the DB has no product data."""
+    from .db import init_db
+    init_db()
 COOKIE = "atg_session"
 HCOOKIE = "atg_history"   # long-lived, separate from the session cookie; survives Logout / New run
 HMAX_AGE = 60 * 60 * 24 * 365

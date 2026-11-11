@@ -1,4 +1,4 @@
-"""Token usage ledger (additive feature). Stored in backend/token_usage.json (gitignored).
+"""Token usage ledger (additive feature). Stored in SQLite (`token_ledger` in backend/app.db).
 Recording must never break generation: every public writer swallows its own errors.
 Entries carry a stable `id` (`TU-` + 12 hex). Older rows are backfilled on load.
 Deletes write a backup under ai_test_generator/reports/ (token_ledger.bak.json + last few stamped copies).
@@ -31,17 +31,13 @@ def _new_id() -> str:
 
 
 def _read() -> List[Dict[str, Any]]:
-    try:
-        d = json.loads(PATH.read_text(encoding="utf-8"))
-        return d if isinstance(d, list) else []
-    except Exception:
-        return []
+    from .db import load_token_ledger
+    return load_token_ledger()
 
 
 def _write(data: List[Dict[str, Any]]) -> None:
-    tmp = PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    tmp.replace(PATH)
+    from .db import save_token_ledger
+    save_token_ledger(data)
 
 
 def _ensure_ids(data: List[Dict[str, Any]]) -> bool:
@@ -76,11 +72,11 @@ def _load() -> List[Dict[str, Any]]:
 
 
 def _backup() -> None:
-    """Copy the current ledger into reports/ before a delete. Keeps a rolling latest + last few stamps."""
-    if not PATH.exists():
-        return
+    """Copy the current ledger into reports/ before a delete. Keeps a rolling latest + last few stamps.
+    Writes the live SQLite ledger as JSON (same list shape as the old file). Does not touch gemini_usage.json."""
+    data = _read()
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    raw = PATH.read_bytes()
+    raw = json.dumps(data, indent=1).encode("utf-8")
     (REPORTS_DIR / "token_ledger.bak.json").write_bytes(raw)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     stamped = REPORTS_DIR / f"token_ledger.bak-{ts}.json"
@@ -165,11 +161,8 @@ def set_settings(values: Dict[str, Any]) -> Dict[str, float]:
                 raise ValueError("Daily token limit must be a whole number ≥ 1.")
             v = int(v)
         clean[k] = v
-    data = settings_store._app()
-    data.update(clean)
-    tmp = settings_store.APP_SETTINGS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(settings_store.APP_SETTINGS_PATH)
+    from .db import update_app_settings
+    update_app_settings(clean)
     return get_settings()
 
 

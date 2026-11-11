@@ -12,3 +12,6 @@ backend/prompt_templates.json
 backend/recordings/
 backend/test_repo/
 backend/attachments/
+backend/app.db
+backend/app.db-wal
+backend/app.db-shm

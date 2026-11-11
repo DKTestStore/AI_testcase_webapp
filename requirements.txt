@@ -8,6 +8,8 @@
 
 # --- Web app ---
 fastapi>=0.110
+sqlalchemy>=2.0              # Phase 1 product data in backend/app.db
+alembic>=1.13                  # schema migrations (upgrade on startup)
 uvicorn[standard]>=0.29          # run: python -m uvicorn backend.app:app --port 8000
 python-dotenv>=1.0
 requests>=2.31

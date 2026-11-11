@@ -40,14 +40,14 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | AI / LLM | Gemini (`google-genai`), Grok/xAI, Claude (Anthropic Messages via `requests`), OpenAI / Codex (`openai`), Ollama | Generation / review / regenerate; provider chosen on Generate; keys + model IDs on Settings |
 | Integrations | Jira (`jira` + FastMCP worker), qTest (REST via `requests`) | Story fetch; module / test-case upload + RTM |
 | Record | Playwright (Chromium) | Capture browser actions as test steps |
-| Data | JSON files on disk | Sessions, history, repo, runs, requirements (no SQL DB yet) |
+| Data | SQLite (`backend/app.db`) + JSON files | Repo, runs, requirements, token ledger, app settings, and prompt templates live in SQLite. Sessions, history, recordings, Gemini quota, and attachments stay as files. |
 | Import / Export | pandas, openpyxl | Excel (.xlsx) / CSV; one row per step |
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
 | Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
 | Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=40`) |
 
-**Planned (not built yet):** SQLAlchemy + Alembic, object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
+**Persistence:** SQLAlchemy 2.x + Alembic; durable product data in `backend/app.db` (WAL). On first start, leftover JSON files are imported once if the database has no product data yet; the JSON files are kept as a backup and are not the live store. Sessions, history, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
 ---
 
@@ -103,7 +103,7 @@ Copy from `.env.example`. **Never commit `.env`**. Secrets are masked in the Set
 
 Model IDs are free-text — enter the exact ID from each provider console. Do not treat example names as guaranteed current IDs.
 
-Non-secret app settings (e.g. history limit) live in `backend/app_settings.json`, not `.env`.
+Non-secret app settings (history limit, duplicate threshold, token rates/limit) live in the SQLite `app_settings` table in `backend/app.db`, not `.env`. A leftover `backend/app_settings.json` is imported once on first start and kept as a backup.
 
 ---
 
@@ -165,7 +165,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 - **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences. Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
 - **Logs:** `backend/logs/app.log` (rotating 5 MB × 3).
 
-Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.
+Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/app.db` (and `-wal`/`-shm`), `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.
 
 ---
 
@@ -196,12 +196,15 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 | `ai_test_generator/reports/` | Generated Excel, payload JSON, Gemini usage tracker, version exports |
 | `backend/sessions/` | Per-browser current run |
 | `backend/history/` | Rolling run history index + snapshots |
-| `backend/test_repo/repo.json` | Test Case Repo folders + cases |
-| `backend/test_repo/runs.json` | Test Runs cycles + executions |
-| `backend/test_repo/requirements.json` | Projects, requirement folders, REQ-####, case links |
+| `backend/app.db` | Live SQLite store (repo, runs, requirements, token ledger, app settings, prompt templates) |
+| `backend/test_repo/repo.json` | Backup of Test Case Repo (imported once on first start; not the live store) |
+| `backend/test_repo/runs.json` | Backup of Test Runs |
+| `backend/test_repo/requirements.json` | Backup of Projects / requirements / links |
 | `backend/attachments/` | Execution / case attachments (≤ 50 MB), served via `/api/attachments/…` |
 | `backend/logs/app.log` | Server log |
-| `backend/app_settings.json` | Non-secret settings (history limit, …) |
+| `backend/app_settings.json` | Backup of non-secret settings (history limit, …) |
+| `backend/token_usage.json` | Backup of the token ledger |
+| `backend/prompt_templates.json` | Backup of prompt templates |
 
 ---
 
@@ -258,7 +261,7 @@ Sidebar: project switcher + **Requirements** (Projects / Traceability reachable 
 
 ## Token Usage
 
-`#tokens` — ledger in `backend/token_usage.json`. `GET /api/tokens` accepts the existing From/To/Mode/Model filters plus server-side pagination (`page`, `page_size` of 10/25/50/100, default 25). The Per-run table shows “Showing X–Y of N”; page size is remembered in `localStorage`. `GET /api/tokens/export.csv` still exports **all** filtered rows (not just the current page).
+`#tokens` — ledger in SQLite (`token_ledger` in `backend/app.db`; leftover `backend/token_usage.json` is imported once and kept as a backup). `GET /api/tokens` accepts the existing From/To/Mode/Model filters plus server-side pagination (`page`, `page_size` of 10/25/50/100, default 25). The Per-run table shows “Showing X–Y of N”; page size is remembered in `localStorage`. `GET /api/tokens/export.csv` still exports **all** filtered rows (not just the current page).
 
 Delete: row icon, checkboxes (select-all on the current page), **Delete selected**, and **Delete older than** a date. `POST /api/tokens/delete` with `{ids:[…]}` or `{before:"YYYY-MM-DD"}`; `confirm: false` previews count + token total, `confirm: true` applies. Each entry has a stable `id` (`TU-` + 12 hex); older rows are backfilled on read/write. Before each delete the ledger is copied to `ai_test_generator/reports/token_ledger.bak.json` plus a timestamped file (last 5 kept).
 
@@ -272,7 +275,7 @@ Deletes refresh this page’s tiles, daily chart, breakdown and table, and the *
 
 ## Prompt templates (multi-select)
 
-Sidebar → **Prompt templates**. Built-in Default mirrors `ai_test_generator/prompt/test_cases_generator_prompt.md`. Multi-select on Input → Generate runs once per template and merges. **Custom prompt** on Generate always overrides. Storage: `backend/prompt_templates.json` (gitignored, re-seeded if missing).
+Sidebar → **Prompt templates**. Built-in Default mirrors `ai_test_generator/prompt/test_cases_generator_prompt.md`. Multi-select on Input → Generate runs once per template and merges. **Custom prompt** on Generate always overrides. Storage: SQLite `prompt_templates` in `backend/app.db` (re-seeded if empty). Leftover `backend/prompt_templates.json` is imported once on first start and kept as a backup.
 
 ---
 

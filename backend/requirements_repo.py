@@ -1,6 +1,7 @@
 """Requirement Repo + Projects (additive feature).
 
-Storage: backend/test_repo/requirements.json
+Storage: SQLite (projects, requirement_folders, requirements, requirement_links in backend/app.db). Leftover backend/test_repo/requirements.json is imported once and kept as a backup.
+Shape:
   {
     "pseq": int, "rseq": int, "fseq": int,
     "projects": [...],
@@ -42,7 +43,8 @@ def _empty() -> Dict[str, Any]:
 
 
 def _load() -> Dict[str, Any]:
-    d = load_json(REQ_FILE, {})
+    from .db import load_requirements
+    d = load_requirements()
     for k, v in _empty().items():
         d.setdefault(k, v if not isinstance(v, list) else list(v) if not d.get(k) else d[k])
     d.setdefault("pseq", 0); d.setdefault("rseq", 0); d.setdefault("fseq", 0)
@@ -53,7 +55,8 @@ def _load() -> Dict[str, Any]:
 
 
 def _save(d: Dict[str, Any]) -> None:
-    write_json(REQ_FILE, d)
+    from .db import save_requirements
+    save_requirements(d)
 
 
 def _ensure_local(d: Dict[str, Any]) -> None:

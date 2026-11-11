@@ -112,8 +112,10 @@ HISTORY_LIMIT_DEFAULT, HISTORY_LIMIT_MIN, HISTORY_LIMIT_MAX = 5, 1, 100
 
 
 def _app() -> dict:
+    """Non-secret app settings (history_limit, dup_threshold, token rates/limit) in SQLite."""
     try:
-        return _json.loads(APP_SETTINGS_PATH.read_text(encoding="utf-8"))
+        from .db import load_app_settings
+        return load_app_settings()
     except Exception:
         return {}
 
@@ -139,11 +141,8 @@ def set_history_limit(value) -> int:
         raise ValueError("Run history limit must be a whole number.")
     if not HISTORY_LIMIT_MIN <= n <= HISTORY_LIMIT_MAX:
         raise ValueError(f"Run history limit must be between {HISTORY_LIMIT_MIN} and {HISTORY_LIMIT_MAX}.")
-    data = _app()
-    data["history_limit"] = n
-    tmp = APP_SETTINGS_PATH.with_suffix(".tmp")
-    tmp.write_text(_json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(APP_SETTINGS_PATH)
+    from .db import update_app_settings
+    update_app_settings({"history_limit": n})
     return n
 
 
@@ -167,9 +166,6 @@ def set_dup_threshold(value) -> int:
         raise ValueError(f"Duplicate threshold must be a whole number between {DUP_THRESHOLD_MIN} and {DUP_THRESHOLD_MAX}.")
     if not DUP_THRESHOLD_MIN <= n <= DUP_THRESHOLD_MAX:
         raise ValueError(f"Duplicate threshold must be a whole number between {DUP_THRESHOLD_MIN} and {DUP_THRESHOLD_MAX}.")
-    data = _app()
-    data["dup_threshold"] = n
-    tmp = APP_SETTINGS_PATH.with_suffix(".tmp")
-    tmp.write_text(_json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(APP_SETTINGS_PATH)
+    from .db import update_app_settings
+    update_app_settings({"dup_threshold": n})
     return n

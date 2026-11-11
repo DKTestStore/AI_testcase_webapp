@@ -1,4 +1,4 @@
-"""Custom prompt templates (additive feature). Stored in backend/prompt_templates.json (gitignored).
+"""Custom prompt templates (additive feature). Stored in SQLite (`prompt_templates` in backend/app.db).
 
 The built-in 'Default' template reads the original prompt file (ai_test_generator/prompt/test_cases_generator_prompt.md)
 unless it has been edited on the Prompt templates page; the edit is stored here as 'default_text' and is what every
@@ -100,23 +100,18 @@ def _default_entry(d: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
 
 def _load() -> Dict[str, Any]:
-    try:
-        d = json.loads(PATH.read_text(encoding="utf-8"))
-        if isinstance(d, dict) and isinstance(d.get("templates"), list):
-            return d
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+    from .db import load_prompt_templates
+    d = load_prompt_templates()
+    if isinstance(d, dict) and isinstance(d.get("templates"), list):
+        return d
     d = {"default_id": DEFAULT_ID, "templates": _starters(), "default_used": 0}
     _write(d)
     return d
 
 
 def _write(d: Dict[str, Any]) -> None:
-    tmp = PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
-    tmp.replace(PATH)
+    from .db import save_prompt_templates
+    save_prompt_templates(d)
 
 
 def default_text() -> str:
