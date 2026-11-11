@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.x models for Phase 1 product data.
+"""SQLAlchemy 2.x models for Phase 1 product data and run history.
 
 Foreign keys do not use ON DELETE CASCADE; archive/delete rules stay in application code.
 Optional parent/folder ids are stored as NULL when the dict form uses "".
@@ -219,3 +219,43 @@ class PromptTemplateMeta(Base):
     default_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     default_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     default_updated_at: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+
+
+class HistoryEntry(Base):
+    """One Run history index item (newest-first via descending position).
+
+    Leftover fields such as children / rec are stored in extra so no data is lost.
+    No FKs: FIFO and user-delete rules stay in application code.
+    """
+    __tablename__ = "history_entries"
+    hid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    rid: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    created: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    updated: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    story_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reviewed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    extra: Mapped[Any] = mapped_column(JSON, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class HistorySnapshot(Base):
+    """Full run or batch snapshot loaded lazily on Open / Excel."""
+    __tablename__ = "history_snapshots"
+    hid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    payload: Mapped[Any] = mapped_column(JSON, nullable=False)
+
+
+class HistorySeq(Base):
+    """Per-browser daily sequence counters (seq / bseq). Trimmed to last 10 days in app code."""
+    __tablename__ = "history_seq"
+    hid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    day: Mapped[str] = mapped_column(String(8), primary_key=True)
+    n: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -1,4 +1,4 @@
-"""SQLite engine, WAL/foreign_keys/busy_timeout, Alembic upgrade, first-start JSON import."""
+"""SQLite engine, WAL/foreign_keys/busy_timeout, Alembic upgrade, first-start JSON import (product + run history)."""
 from __future__ import annotations
 
 import logging
@@ -112,14 +112,21 @@ def _product_is_empty(session: Session) -> bool:
         or (meta.default_id and meta.default_id != "default")
     ):
         return False
+    from .import_json import HISTORY_IMPORT_MARKER
+
     for c in session.query(Counter).all():
-        # Any counter row (including the import marker, even when seq is 0) means we already imported or used the DB.
+        # The history import marker is independent of Phase 1 product data and must
+        # not block a later product-JSON import on a still-empty product schema.
+        if c.name == HISTORY_IMPORT_MARKER:
+            continue
+        # Any other counter row (including the Phase 1 import marker, even when seq is 0)
+        # means we already imported or used the DB.
         return False
     return True
 
 
 def init_db() -> None:
-    """Run Alembic migrations and, if the DB has no product data, import leftover JSON once."""
+    """Run Alembic migrations, import leftover product JSON if empty, then import run history once."""
     global _ready, _initializing
     if _ready:
         return
@@ -133,7 +140,7 @@ def init_db() -> None:
         try:
             get_engine()
             _run_alembic()
-            from .import_json import import_legacy_json
+            from .import_json import import_legacy_history, import_legacy_json
 
             assert _SessionLocal is not None
             with _SessionLocal() as session:
@@ -141,6 +148,10 @@ def init_db() -> None:
                     import_legacy_json(session)
                 else:
                     log.info("SQLite already has product data at %s; skipping JSON import", DB_PATH)
+            # History import is independent of product data: leftover folders are
+            # scanned once (and the marker is set even when none exist).
+            with _SessionLocal() as session:
+                import_legacy_history(session)
             _ready = True
             log.info("SQLite ready at %s", DB_PATH)
         finally:
