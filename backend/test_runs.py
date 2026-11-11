@@ -1,6 +1,6 @@
 """Test Runs (cycles + executions + attachments). Additive feature.
 
-Storage: backend/test_repo/runs.json {"seq", "eseq", "cycles": [...], "executions": [...]}
+Storage: SQLite tables cycles, cycle_items, executions in backend/app.db (same dict shape as the leftover backend/test_repo/runs.json backup).
 Attachments: backend/attachments/<32-hex>.<ext> (max 50 MB each), served by /api/attachments/{name}
 with a strict filename pattern + resolved-path check.
 """
@@ -29,8 +29,14 @@ CYCLE_FIELDS = ("name", "description", "release", "sprint", "build", "env", "sta
 router = APIRouter()
 
 
+def _save(d):
+    from .db import save_runs
+    save_runs(d)
+
+
 def _load():
-    d = load_json(RUNS_FILE, {})
+    from .db import load_runs
+    d = load_runs()
     for k, v in (("seq", 0), ("eseq", 0), ("cycles", []), ("executions", [])):
         d.setdefault(k, v)
     return d
@@ -98,7 +104,7 @@ def create_cycle(data, case_ids=None, source="") -> Dict[str, Any]:
         c.update({"id": f"CY-{d['seq']:04d}", "status": "Active", "created": now(), "source": source, "items": []})
         _add_items(c, case_ids or [], c.get("assignee", ""))
         d["cycles"].append(c)
-        write_json(RUNS_FILE, d)
+        _save(d)
     return c
 
 
@@ -163,7 +169,7 @@ def runs_update(cid: str, data: Dict[str, Any] = Body(...)):
         d = _load()
         c = _cyc(d, cid)
         c.update(_clean_cycle(data, c))
-        write_json(RUNS_FILE, d)
+        _save(d)
     return {"ok": True, "cycle": _pub(c)}
 
 
@@ -181,7 +187,7 @@ def runs_archive(cid: str, data: Dict[str, Any] = Body(default={})):
         d = _load()
         c = _cyc(d, cid)
         c["status"] = "Active" if data.get("restore") else "Archived"
-        write_json(RUNS_FILE, d)
+        _save(d)
     return {"ok": True}
 
 
@@ -194,7 +200,7 @@ def runs_delete(cid: str, confirm: str = ""):
             raise ServiceError("Type the cycle name exactly to confirm deletion.")
         d["cycles"] = [x for x in d["cycles"] if x["id"] != cid]
         d["executions"] = [e for e in d["executions"] if e["cycle_id"] != cid]
-        write_json(RUNS_FILE, d)
+        _save(d)
     return {"ok": True}
 
 
@@ -205,7 +211,7 @@ def runs_add_items(cid: str, data: Dict[str, Any] = Body(...)):
         d = _load()
         c = _cyc(d, cid)
         n = _add_items(c, [x for x in data.get("case_ids") or [] if x in repo_ids], _s(data.get("assignee")) or c.get("assignee", ""))
-        write_json(RUNS_FILE, d)
+        _save(d)
     return {"ok": True, "added": n}
 
 
@@ -236,7 +242,7 @@ def runs_items_bulk(cid: str, data: Dict[str, Any] = Body(...)):
             raise ServiceError("Unknown action.")
         for n, i in enumerate(sorted(c["items"], key=lambda i: i["order"]) if op != "reorder" else c["items"], 1):
             i["order"] = n
-        write_json(RUNS_FILE, d)
+        _save(d)
     return {"ok": True}
 
 
@@ -294,7 +300,7 @@ def runs_execute(cid: str, key: str, data: Dict[str, Any] = Body(...)):
         it["status"], it["last_run"] = final, ex["ts"]
         it["executions"].append(ex["id"])
         it["defects"] = sorted(set(it.get("defects", []) + ex["defects"]))
-        write_json(RUNS_FILE, d)
+        _save(d)
     if final != "Not run":
         test_repo.set_last_result(it["case_id"], final)
     test_repo.log_event(it["case_id"], "ran", c.get("name", ""), ex.get("tester", ""), result=final, exec_id=ex["id"], cycle_id=cid)

@@ -1,8 +1,9 @@
 """Test Case Repository (additive feature).
 
-Storage: backend/test_repo/repo.json  {"seq": int, "fseq": int, "folders": [...], "cases": [...]}
-Writes are atomic (tmp + replace) under a thread lock + an fcntl file lock (same pattern as history_store).
-Routes are mounted by app.py with the session dependency (include_router(..., dependencies=[Depends(current)])).
+Storage: SQLite tables repo_folders + cases in backend/app.db
+(same dict shape as the leftover backend/test_repo/repo.json backup).
+Writes use a thread lock plus a SQLite transaction. Routes are mounted by
+app.py with the session dependency (include_router(..., dependencies=[Depends(current)])).
 """
 import contextlib
 import csv
@@ -36,20 +37,11 @@ def now() -> str:
 
 
 @contextlib.contextmanager
-def locked(path: Path):
-    """Thread lock + advisory file lock so two server processes don't interleave writes."""
+def locked(path=None):
+    """Thread lock around a read-modify-write. SQLite transactions provide write atomicity."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _LOCK:
-        fh = open(str(path) + ".lock", "w")
-        try:
-            try:
-                import fcntl
-                fcntl.flock(fh, fcntl.LOCK_EX)
-            except Exception:
-                pass
-            yield
-        finally:
-            fh.close()
+        yield
 
 
 def load_json(path: Path, default):
@@ -66,19 +58,15 @@ def write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
+def _save(d: Dict[str, Any]) -> None:
+    from .db import save_repo
+    save_repo(d)
+
+
 def _load() -> Dict[str, Any]:
-    d = load_json(REPO_FILE, {})
+    from .db import load_repo
+    d = load_repo()
     d.setdefault("seq", 0); d.setdefault("fseq", 0); d.setdefault("folders", []); d.setdefault("cases", [])
-    if d.get("fver", 1) < 2 and (d["folders"] or d["cases"]):
-        with _LOCK:   # one-time migration, persisted immediately so folder ids stay stable
-            d = load_json(REPO_FILE, d)
-            d.setdefault("seq", 0); d.setdefault("fseq", 0); d.setdefault("folders", []); d.setdefault("cases", [])
-            if d.get("fver", 1) < 2:
-                _migrate(d)
-                try:
-                    write_json(REPO_FILE, d)
-                except Exception:
-                    log.exception("repo migration write failed")
     d["fver"] = 2
     return d
 
@@ -254,7 +242,7 @@ def set_last_result(cid: str, result: str) -> None:
         c = next((x for x in d["cases"] if x["id"] == cid), None)
         if c:
             c["last_result"], c["last_run"] = result, now()
-            write_json(REPO_FILE, d)
+            _save(d)
 
 
 def _text(c) -> str:
@@ -312,7 +300,7 @@ def save_many(cases: List[Dict[str, Any]], *, story="", story_title="", folder_i
                 res["updated"].append(c["id"]); res["ids"].append(c["id"]); continue
             c = _new_case(d, data, source, status, fid, note or "Created from Review")
             res["created"].append(c["id"]); res["ids"].append(c["id"])
-        write_json(REPO_FILE, d)
+        _save(d)
     return res
 
 
@@ -358,7 +346,7 @@ def repo_create(data: Dict[str, Any] = Body(...)):
             for p in parts:
                 fid = _ensure_folder(d, p, fid)
         c = _new_case(d, data, data.get("source") or "Manual", data.get("status") or "Draft", fid)
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "case": c}
 
 
@@ -377,7 +365,7 @@ def repo_update(cid: str, data: Dict[str, Any] = Body(...)):
         if not _s(data.get("title", c["title"])):
             raise ServiceError("Title is required.")
         newv = _update_case(c, data, _s(data.get("note"), 200) or "Edited")
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "case": c, "new_version": newv}
 
 
@@ -422,7 +410,7 @@ def repo_bulk(data: Dict[str, Any] = Body(...)):
                     c["updated"] = now(); n += 1
         else:
             raise ServiceError("Unknown bulk action.")
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "count": n, "archived": archived}
 
 
@@ -438,7 +426,7 @@ def repo_folder(data: Dict[str, Any] = Body(...)):
             raise ServiceError(f"A folder named “{name}” already exists there. Choose another name.", 409)
         fid = _ensure_folder(d, name, parent)
         _folder(d, fid)["description"] = _s(data.get("description"), 1000)
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "id": fid, "folders": _tree(d)}
 
 
@@ -464,7 +452,7 @@ def repo_save_review(data: Dict[str, Any] = Body(...)):
     fid = data.get("folder_id") or ""
     if data.get("new_folder"):
         with locked(REPO_FILE):
-            d = _load(); fid = _ensure_folder(d, data["new_folder"], data.get("new_folder_parent") or _ensure_folder(d, project_of(story))); write_json(REPO_FILE, d)
+            d = _load(); fid = _ensure_folder(d, data["new_folder"], data.get("new_folder_parent") or _ensure_folder(d, project_of(story))); _save(d)
     res = save_many(cases, story=story, story_title=_s(data.get("story_title"), 80), folder_id=fid,
                     status=data.get("status") or "Draft", tags=[_s(t, 40) for t in data.get("tags") or [] if _s(t)],
                     source="Record" if data.get("source") == "record" else "AI", actions=data.get("actions") or {})
@@ -719,7 +707,7 @@ def repo_folder_update(fid: str, data: Dict[str, Any] = Body(...)):
         f.update({"name": name, "parent": parent})
         if "description" in data:
             f["description"] = _s(data.get("description"), 1000)
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "folders": _tree(d)}
 
 
@@ -749,7 +737,7 @@ def repo_folder_reorder(data: Dict[str, Any] = Body(...)):
                 if f.get("parent", "") != parent and _dup_name(d, f["name"], parent, fid):
                     raise ServiceError(f"A folder named “{f['name']}” already exists there.", 409)
                 f["parent"], f["order"] = parent, n
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "folders": _tree(d)}
 
 
@@ -777,7 +765,7 @@ def repo_folder_delete(fid: str, mode: str = "move", target: str = "", confirm: 
                 c["folder_id"], c["status"], c["updated"] = home, "Archived", now()
                 _event(c, "archived", f"Archived (folder “{f['name']}” deleted)")
         d["folders"] = [x for x in d["folders"] if x["id"] not in gone]
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "moved": len(cases) if mode == "move" else 0, "archived": len(cases) if mode != "move" else 0, "folders": _tree(d)}
 
 
@@ -801,7 +789,7 @@ def repo_save_back(data: Dict[str, Any] = Body(...)):
                 (res["updated"] if _update_case(c, rc, "Saved back from Review") else res["unchanged"]).append(c["id"])
             else:
                 res["created"].append(_new_case(d, rc, "AI", "Draft", "", "Created from Review (repo run)")["id"])
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, **res}
 
 
@@ -846,7 +834,7 @@ def log_event(cid: str, typ: str, text: str = "", by: str = "", **meta) -> None:
             c = next((x for x in d["cases"] if x["id"] == cid), None)
             if c:
                 _event(c, typ, text, by, **meta)
-                write_json(REPO_FILE, d)
+                _save(d)
     except Exception:
         log.exception("log_event failed")
 
@@ -871,7 +859,7 @@ def repo_case_status(cid: str, data: Dict[str, Any] = Body(...)):
         if c.get("status") != st:
             _event(c, "status", f"{c.get('status')} → {st}", _s(data.get("by"), 100), old=c.get("status"), new=st)
             c["status"], c["updated"] = st, now()
-            write_json(REPO_FILE, d)
+            _save(d)
     return {"ok": True, "case": _summary(c)}
 
 
@@ -885,7 +873,7 @@ def repo_case_comment(cid: str, data: Dict[str, Any] = Body(...)):
         c = _get(d, cid)
         m = {"id": f"CM{len(c.get('comments') or []) + 1}", "ts": now(), "by": _s(data.get("by"), 100) or "User", "text": text}
         c.setdefault("comments", []).append(m)
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "comment": m, "comments": c["comments"]}
 
 
@@ -898,7 +886,7 @@ def repo_case_duplicate(cid: str, data: Dict[str, Any] = Body(default={})):
                           "tags": c.get("tags") or [], "acs": c.get("acs") or [], "by": data.get("by")},
                       c.get("source") or "Manual", "Draft", c.get("folder_id", ""), f"Duplicated from {cid}")
         _event(c, "duplicated", f"Duplicated as {n['id']}", _s(data.get("by"), 100), copy=n["id"])
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "case": n}
 
 
@@ -916,7 +904,7 @@ def repo_case_restore_version(cid: str, data: Dict[str, Any] = Body(...)):
         if not v:
             raise ServiceError("Version not found.", 404)
         newv = _update_case(c, {**(v.get("snapshot") or {}), "by": data.get("by"), "event_type": "restored"}, f"Restored v{ver}")
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "case": c, "new_version": newv}
 
 
@@ -958,7 +946,7 @@ def repo_case_attach(cid: str, data: Dict[str, Any] = Body(...)):
                 "ts": now(), "by": _s(data.get("by"), 100)}
         c.setdefault("attachments", []).append(item)
         _event(c, "attached", "Attached " + item["orig"], item["by"])
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "attachments": c["attachments"]}
 
 
@@ -968,5 +956,5 @@ def repo_case_detach(cid: str, name: str):
         d = _load()
         c = _get(d, cid)
         c["attachments"] = [a for a in c.get("attachments") or [] if a.get("name") != name]
-        write_json(REPO_FILE, d)
+        _save(d)
     return {"ok": True, "attachments": c["attachments"]}
