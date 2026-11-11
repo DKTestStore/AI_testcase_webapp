@@ -1,8 +1,11 @@
-"""One-time import of Phase 1 JSON files into an empty SQLite database.
+"""One-time import of leftover JSON files into SQLite.
 
-The original JSON files are not modified or deleted. Cleanups that the JSON
-loaders already apply (repo fver migration, token TU- backfill, Local project,
-missing optional fields) run in memory before insert.
+Phase 1 product files are imported into an empty database. Run history folders
+under backend/history/<hid>/ are imported once (marker _history_json_imported),
+even when product tables already have data. The original JSON files are not
+modified or deleted. Cleanups that the JSON loaders already apply (repo fver
+migration, token TU- backfill, Local project, missing optional fields) run in
+memory before insert.
 """
 from __future__ import annotations
 
@@ -22,6 +25,8 @@ REQ_FILE = BACKEND / "test_repo" / "requirements.json"
 TOKEN_FILE = BACKEND / "token_usage.json"
 SETTINGS_FILE = BACKEND / "app_settings.json"
 TEMPLATES_FILE = BACKEND / "prompt_templates.json"
+HISTORY_DIR = BACKEND / "history"
+HISTORY_IMPORT_MARKER = "_history_json_imported"
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -224,5 +229,143 @@ def import_legacy_json(session: Session) -> Dict[str, int]:
         counts["token_rows"],
         counts["templates"],
         counts["settings_keys"],
+    )
+    return counts
+
+
+def _valid_hid(hid: str) -> bool:
+    return bool(hid) and hid.isalnum() and len(hid) <= 64
+
+
+def import_legacy_history(session: Session) -> Dict[str, int]:
+    """Import leftover backend/history/<hid>/ folders once, then set a global marker.
+
+    Items are stored newest-first (same order as history.json). Snapshots in
+    runs/*.json and seq/bseq counters are preserved. JSON files stay on disk
+    as a backup. If no history folders exist, the marker is still set so later
+    folders are not treated as a first-start import.
+    """
+    from .models import HistoryEntry, HistorySeq, HistorySnapshot
+    from .persist import _get_counter, _set_counter
+
+    counts = {"browsers": 0, "entries": 0, "snapshots": 0, "seq_rows": 0}
+    if _get_counter(session, HISTORY_IMPORT_MARKER, 0):
+        log.info("Run history JSON already imported; skipping")
+        return counts
+
+    folders = []
+    if HISTORY_DIR.is_dir():
+        folders = sorted(
+            d for d in HISTORY_DIR.iterdir() if d.is_dir() and _valid_hid(d.name)
+        )
+
+    def _jsonable(obj: Any) -> Any:
+        return json.loads(json.dumps(obj, default=str))
+
+    try:
+        for folder in folders:
+            hid = folder.name
+            raw = _read_json(folder / "history.json", {"items": [], "seq": {}})
+            if not isinstance(raw, dict):
+                log.warning("Skipping malformed history index in %s", folder)
+                raw = {"items": [], "seq": {}}
+            items = raw.get("items") or []
+            if not isinstance(items, list):
+                items = []
+            n_items = len(items)
+            seen = set()
+            for i, ent in enumerate(items):
+                if not isinstance(ent, dict):
+                    continue
+                run_id = str(ent.get("run_id") or "")
+                if not run_id.isalnum() or run_id in seen:
+                    continue
+                seen.add(run_id)
+                extra = {
+                    k: v
+                    for k, v in ent.items()
+                    if k
+                    not in (
+                        "run_id",
+                        "rid",
+                        "kind",
+                        "created",
+                        "updated",
+                        "story_id",
+                        "title",
+                        "source",
+                        "count",
+                        "reviewed",
+                        "status",
+                    )
+                }
+                session.add(
+                    HistoryEntry(
+                        hid=hid,
+                        run_id=run_id,
+                        rid=str(ent.get("rid") or ""),
+                        kind=str(ent.get("kind") or ""),
+                        created=str(ent.get("created") or ""),
+                        updated=str(ent.get("updated") or ""),
+                        story_id=str(ent.get("story_id") or ""),
+                        title=str(ent.get("title") or ""),
+                        source=str(ent.get("source") or ""),
+                        count=int(ent.get("count") or 0),
+                        reviewed=int(ent.get("reviewed") or 0),
+                        status=str(ent.get("status") or ""),
+                        extra=_jsonable(extra) if extra else None,
+                        # items are newest-first; higher position stays first.
+                        position=n_items - i,
+                    )
+                )
+                counts["entries"] += 1
+
+            for key in ("seq", "bseq"):
+                mapping = raw.get(key) or {}
+                if not isinstance(mapping, dict):
+                    continue
+                for day, n in mapping.items():
+                    day_s = str(day)
+                    try:
+                        n_i = int(n)
+                    except (TypeError, ValueError):
+                        continue
+                    session.add(HistorySeq(hid=hid, key=key, day=day_s, n=n_i))
+                    counts["seq_rows"] += 1
+
+            runs_dir = folder / "runs"
+            if runs_dir.is_dir():
+                for snap in sorted(runs_dir.glob("*.json")):
+                    run_id = snap.stem
+                    if not run_id.isalnum():
+                        continue
+                    payload = _read_json(snap, None)
+                    if payload is None:
+                        continue
+                    session.add(
+                        HistorySnapshot(
+                            hid=hid, run_id=run_id, payload=_jsonable(payload)
+                        )
+                    )
+                    counts["snapshots"] += 1
+
+            counts["browsers"] += 1
+
+        _set_counter(session, HISTORY_IMPORT_MARKER, 1)
+        session.commit()
+    except Exception:
+        session.rollback()
+        log.exception(
+            "Run history JSON import into SQLite failed; original files were not changed"
+        )
+        raise
+
+    log.info(
+        "Imported run history JSON into %s: browsers=%s entries=%s snapshots=%s seq_rows=%s",
+        BACKEND / "app.db",
+        counts["browsers"],
+        counts["entries"],
+        counts["snapshots"],
+        counts["seq_rows"],
     )
     return counts

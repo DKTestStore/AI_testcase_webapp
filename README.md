@@ -40,14 +40,14 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | AI / LLM | Gemini (`google-genai`), Grok/xAI, Claude (Anthropic Messages via `requests`), OpenAI / Codex (`openai`), Ollama | Generation / review / regenerate; provider chosen on Generate; keys + model IDs on Settings |
 | Integrations | Jira (`jira` + FastMCP worker), qTest (REST via `requests`) | Story fetch; module / test-case upload + RTM |
 | Record | Playwright (Chromium) | Capture browser actions as test steps |
-| Data | SQLite (`backend/app.db`) + JSON files | Repo, runs, requirements, token ledger, app settings, and prompt templates live in SQLite. Sessions, history, recordings, Gemini quota, and attachments stay as files. |
+| Data | SQLite (`backend/app.db`) + JSON files | Repo, runs, requirements, token ledger, app settings, prompt templates, and run history live in SQLite. Sessions, recordings, Gemini quota, and attachments stay as files. |
 | Import / Export | pandas, openpyxl | Excel (.xlsx) / CSV; one row per step |
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
 | Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
 | Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=40`) |
 
-**Persistence:** SQLAlchemy 2.x + Alembic; durable product data in `backend/app.db` (WAL). On first start, leftover JSON files are imported once if the database has no product data yet; the JSON files are kept as a backup and are not the live store. Sessions, history, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
+**Persistence:** SQLAlchemy 2.x + Alembic; durable product data and run history in `backend/app.db` (WAL). On first start, leftover product JSON files are imported once if the database has no product data yet. Leftover run history folders under `backend/history/<id>/` are imported once after the history migration (a marker is set even if no folders exist, so later folders are not treated as a first-start import). Those JSON files are kept as a backup and are not the live store. Sessions, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. The `atg_history` cookie still identifies the browser; Logout / New run do not clear history. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
 ---
 
@@ -155,7 +155,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 
 - Cookie `atg_history` (separate from session); Logout / New run do **not** clear history.
 - IDs `RUN-YYYYMMDD-NNN` (IST). Rolling FIFO; limit **1–100** (default 5) in Settings → Preferences.
-- Storage: `backend/history/<id>/history.json` + `runs/<run_id>.json`. Excel under `ai_test_generator/reports/runs/<run_id>/`.
+- Storage: SQLite (`backend/app.db` tables `history_entries`, `history_snapshots`, `history_seq`). Leftover `backend/history/<id>/history.json` + `runs/<run_id>.json` are imported once on first start after the history migration and kept as a backup. Excel / reports stay under `ai_test_generator/reports/runs/<run_id>/`. The list is still per-browser via the `atg_history` cookie (not stored in the browser itself).
 
 ---
 
@@ -195,8 +195,8 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 |---|---|
 | `ai_test_generator/reports/` | Generated Excel, payload JSON, Gemini usage tracker, version exports |
 | `backend/sessions/` | Per-browser current run |
-| `backend/history/` | Rolling run history index + snapshots |
-| `backend/app.db` | Live SQLite store (repo, runs, requirements, token ledger, app settings, prompt templates) |
+| `backend/history/` | Backup of run history index + snapshots (imported once; not the live store) |
+| `backend/app.db` | Live SQLite store (repo, runs, requirements, token ledger, app settings, prompt templates, run history) |
 | `backend/test_repo/repo.json` | Backup of Test Case Repo (imported once on first start; not the live store) |
 | `backend/test_repo/runs.json` | Backup of Test Runs |
 | `backend/test_repo/requirements.json` | Backup of Projects / requirements / links |

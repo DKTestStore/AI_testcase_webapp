@@ -1183,9 +1183,7 @@ def _batch_zip(b, sess=None, hid=None):
     if sess is not None:
         session_store.save(sess["sid"])
     elif hid:   # opened from history without loading: keep the written Excel paths in the snapshot
-        p = config.HISTORY_DIR / hid / "runs" / f"{b['batch_id']}.json"
-        if p.exists():
-            p.write_text(json.dumps(b, default=str), encoding="utf-8")
+        history_store.save_snapshot(hid, b)
     name = f"{b.get('rid') or 'BATCH'}_test_cases.zip"
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
