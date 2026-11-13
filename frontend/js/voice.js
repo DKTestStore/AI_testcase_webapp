@@ -68,7 +68,7 @@
   const TEXT_TYPES = ["text", "search", "url", "tel", ""];
   function isEditable(el) {
     if (!el || el.nodeType !== 1) return false;
-    if (el.closest("#voiceWin, #vPill")) return false;
+    if (el.closest("#voiceWin, #vPill, #helpWin, #helpPill, #wmTray")) return false;
     if (el.isContentEditable) return true;
     if (el.tagName === "TEXTAREA") return !el.disabled && !el.readOnly;
     if (el.tagName === "INPUT") {
@@ -287,12 +287,14 @@
     else { w.style.right = "20px"; w.style.bottom = "16px"; }
   }
   function resetPosition() {
+    if (window.WinMgr) { window.WinMgr.reset("voice"); return; }
     try { localStorage.removeItem(POS_KEY); } catch (e) { /* ignore */ }
     if (V.mode === "max") exitMax(true);
     applyStartPos("br");
     say("Voice window moved back to the bottom-right");
   }
   function bindDrag() {
+    if (window.WinMgr) return; // shared window manager owns drag, snap, resize, and z-order
     const title = q("#vTitle"), w = win();
     let drag = null;
     title.addEventListener("pointerdown", (e) => {
@@ -322,28 +324,42 @@
     V.open = true; V.minimized = false;
     q("#vPill").classList.remove("show");
     w.classList.add("open");
-    if (V.mode !== "max" && (first || opts.reposition)) { applyStartPos(); w.dataset.placed = "1"; }
+    if (window.WinMgr) {
+      if (V.mode === "max") window.WinMgr.maximize("voice");
+      else window.WinMgr.show("voice", { reposition: !!opts.reposition });
+      w.dataset.placed = "1";
+    } else if (V.mode !== "max" && (first || opts.reposition)) { applyStartPos(); w.dataset.placed = "1"; }
     if (!liveTarget()) { const a = editableRoot(document.activeElement); if (a) setTarget(a); }
     updateTargetLabel(); updateLaunch();
   }
   function closeWindow() {
     if (V.state !== "idle") stopListening();
     V.open = false; V.minimized = false;
-    const w = win(); w.classList.remove("open", "max"); w.style.transform = "";
-    if (V.mode === "max") { V.mode = "normal"; applyStartPos(); }
+    if (window.WinMgr) {
+      window.WinMgr.close("voice");
+    } else {
+      const w = win(); w.classList.remove("open", "max"); w.style.transform = "";
+      if (V.mode === "max") { V.mode = "normal"; applyStartPos(); }
+      q("#vPill").classList.remove("show");
+    }
+    V.mode = "normal";
     q("#vMax").title = "Maximize";
-    q("#vPill").classList.remove("show"); hideHelp(); updateLaunch();
+    hideHelp(); updateLaunch();
   }
   function minimize() {
     V.open = false; V.minimized = true;
-    win().classList.remove("open"); hideHelp();
-    q("#vPill").classList.add("show"); updateLaunch();
+    hideHelp();
+    if (window.WinMgr) window.WinMgr.minimize("voice");
+    else { win().classList.remove("open"); q("#vPill").classList.add("show"); }
+    updateLaunch();
   }
   function enterMax() {
+    if (window.WinMgr) { window.WinMgr.maximize("voice"); return; }
     if (V.mode === "normal") savePos();
     V.mode = "max"; win().classList.add("max"); q("#vMax").title = "Restore"; q("#vMax").setAttribute("aria-label", "Restore");
   }
   function exitMax(skipPlace) {
+    if (window.WinMgr) { window.WinMgr.unmaximize("voice", { keepHidden: !!skipPlace && !V.open }); return; }
     V.mode = "normal"; const w = win(); w.classList.remove("max"); w.style.transform = "";
     q("#vMax").title = "Maximize"; q("#vMax").setAttribute("aria-label", "Maximize");
     if (skipPlace) return;
@@ -369,8 +385,11 @@
     q("#vStateLbl").textContent = s === "listening" ? "Listening… speak now" : s === "paused" ? "Paused" : "Idle";
     const w = win(); w.classList.toggle("listening", s === "listening"); w.classList.toggle("paused", s === "paused");
     q("#vwLiveLbl").textContent = s === "paused" ? "PAUSED" : "LIVE";
-    const pill = q("#vPill"); pill.classList.toggle("live", s === "listening"); pill.classList.toggle("paused", s === "paused");
-    q("#vPillBadge").textContent = s === "paused" ? "PAUSED" : "LIVE";
+    const pill = q("#vPill"); if (pill) { pill.classList.toggle("live", s === "listening"); pill.classList.toggle("paused", s === "paused"); }
+    const pb = q("#vPillBadge"); if (pb) pb.textContent = s === "paused" ? "PAUSED" : "LIVE";
+    const wp = q("#wmPill-voice");
+    if (wp) { wp.classList.toggle("live", s === "listening"); wp.classList.toggle("paused", s === "paused"); }
+    const wb = q("#wmVoiceBadge"); if (wb) wb.textContent = s === "paused" ? "PAUSED" : "LIVE";
     q("#vStart").disabled = s !== "idle";
     q("#vPause").disabled = s !== "listening";
     q("#vResume").disabled = s !== "paused";
@@ -666,8 +685,41 @@
     bindDrag();
   }
 
+  function registerWinMgr() {
+    if (!window.WinMgr) return;
+    window.WinMgr.register({
+      id: "voice",
+      el: "#voiceWin",
+      title: "#vTitle",
+      posKey: POS_KEY,
+      slot: "right",
+      fallbackSize: { w: 400, h: 330 },
+      pillId: "wmPill-voice",
+      pillClass: "voice",
+      pillLabel: "Voice input",
+      pillHTML: MIC + '<span>Voice input</span><span class="live-badge" id="wmVoiceBadge">LIVE</span>',
+      enabled: () => P.enabled,
+      getStartPos: () => P.startPos,
+      requestOpen: () => {
+        if (!P.enabled) return;
+        V.open = true; V.minimized = false; V.mode = "normal";
+        const w = win(); if (w) w.classList.add("open");
+        updateLaunch();
+      },
+      syncState: (state) => {
+        V.open = state === "open" || state === "max";
+        V.minimized = state === "min";
+        V.mode = state === "max" ? "max" : "normal";
+        const b = q("#vMax");
+        if (b) { b.title = V.mode === "max" ? "Restore" : "Maximize"; b.setAttribute("aria-label", b.title); }
+        if (state !== "open" && state !== "max") hideHelp();
+        updateLaunch();
+      }
+    });
+  }
   function init() {
     if (!buildDom()) return;
+    registerWinMgr();
     bind(); setState("idle"); applyEnabled(); fillHelp();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();

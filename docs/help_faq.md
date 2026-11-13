@@ -108,3 +108,14 @@ Use **Restart chat** in the Help Assistant window:
 - Or, when the window is maximized, click **Restart chat** next to **＋ New** in the history sidebar.
 
 If the current chat already has questions, a short confirm appears in the window first (Cancel to keep chatting). The current conversation is saved in **History** so you can open it again. A new empty chat then shows the welcome message and quick-question chips, clears the input, and keeps the current-screen banner. This only affects the help window in this browser — it does not change your test cases, Settings, or `.env`.
+
+## Why do the Voice and Help windows overlap?
+
+They should not, once you hard-refresh after this update. Voice input and Help Assistant share a window manager:
+
+- They dock **side by side** at the bottom-right of the content area (Help to the left of Voice).
+- Minimized pills sit together in one tray, not on top of each other.
+- Maximizing one fills the content area and sends the other to the tray; un-maximize brings the other back.
+- Click or drag a window to bring it to the front. If you drop one on top of the other, it snaps apart.
+
+If they still stack (for example after using an older saved position), open **Settings → Preferences → Floating windows** and click **Reset layout** (or **Dock both (side by side)**). **Reset window position** on the Voice or Help card moves only that window. These settings stay in this browser only (not in `.env`).

@@ -678,6 +678,7 @@ async function viewSettings(v) {
   $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
   if (window.voiceRenderSettings) voiceRenderSettings($('.set-pane[data-pane="preferences"]'));  // Voice input card (voice.js, browser-only prefs)
   if (window.helpRenderSettings) helpRenderSettings($('.set-pane[data-pane="preferences"]'));    // Help Assistant card (help.js, browser-only prefs)
+  if (window.winmgrRenderSettings) winmgrRenderSettings($('.set-pane[data-pane="preferences"]')); // Floating windows card (winmgr.js)
   if (SET_ST.tab && SET_ST.tab !== "providers") {
     setShowTab(SET_ST.tab);
     $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === SET_ST.tab ? "true" : "false"));
