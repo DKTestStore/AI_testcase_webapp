@@ -27,9 +27,10 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 15. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
 16. [Voice input](#voice-input)
 17. [Help Assistant](#help-assistant)
-18. [Troubleshooting](#troubleshooting)
-19. [Testing notes](#6-testing-notes)
-20. [Original CLI](#original-cli-pipeline)
+18. [Floating windows](#floating-windows)
+19. [Troubleshooting](#troubleshooting)
+20. [Testing notes](#6-testing-notes)
+21. [Original CLI](#original-cli-pipeline)
 
 ---
 
@@ -47,7 +48,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
 | Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
-| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=44`) |
+| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=45`) |
 
 **Persistence:** SQLAlchemy 2.x + Alembic; durable product data and run history in `backend/app.db` (WAL). On first start, leftover product JSON files are imported once if the database has no product data yet. Leftover run history folders under `backend/history/<id>/` are imported once after the history migration (a marker is set even if no folders exist, so later folders are not treated as a first-start import). Those JSON files are kept as a backup and are not the live store. Sessions, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. The `atg_history` cookie still identifies the browser; Logout / New run do not clear history. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
@@ -125,7 +126,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Area | What you get |
 |---|---|
 | Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
-| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, voice input, Help Assistant) |
+| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, voice input, Help Assistant, floating windows) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
@@ -136,6 +137,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
 | Voice input | Teal mic in the header opens a draggable **Voice input** window (minimize / maximize / close). Dictate into whichever field you click on any screen; Start / Pause / Resume / Stop, `Ctrl+Shift+Space`, language picker, configurable voice commands. Browser Web Speech API (Chrome / Edge) — no AI model, no API key. See [Voice input](#voice-input) |
 | Help Assistant | Dark-blue robot-headset icon in the header (right after the voice mic) opens a draggable **Help Assistant** window (minimize to a pill / maximize with conversation history / close). Answers are grounded in this README and `docs/help_faq.md`. Choose the Generate provider, a specific provider, or No-AI docs search. Quick-question chips, source citations, and jump buttons to the matching screen or Settings tab. Prefs stay in this browser. See [Help Assistant](#help-assistant) |
+| Floating windows | Voice input and Help Assistant share a window manager: they dock side by side (Help to the left of Voice), share one minimize tray, fill the content area when maximized (the other window auto-minimizes), click-to-front, and snap apart if they overlap. See [Floating windows](#floating-windows) |
 | Lucide sidebar icons | Professional line icons on every visible item; workflow steps Input / Generate / Review / qTest Upload use an icon plus a mini numbered badge (1–4). Grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
 
 ---
@@ -177,7 +179,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 ## 4. Setup checklist, Settings, logs
 
 - **Setup checklist:** Gemini key + model (required), Jira, qTest (optional), default prompt file.
-- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, Voice input, Help Assistant). Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
+- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, Voice input, Help Assistant, Floating windows). Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
 - **Logs:** `backend/logs/app.log` (rotating 5 MB × 3).
 
 Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/app.db` (and `-wal`/`-shm`), `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.
@@ -199,7 +201,7 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 │   ├── test_repo.py / test_runs.py / requirements_repo.py / dashboard.py / recorder.py / help.py
 │   ├── settings_store.py / history_store.py / session_store.py / token_usage.py
 │   └── …
-├── frontend/                   # welcome.html, app.html, css/ (incl. help.css), js/ (incl. help.js)
+├── frontend/                   # welcome.html, app.html, css/ (incl. help.css, winmgr.css), js/ (incl. help.js, winmgr.js)
 ├── docs/
 │   └── help_faq.md             # Short FAQ used by the Help Assistant
 ├── requirements.txt
@@ -308,7 +310,7 @@ Additive Review toolbar features: Export ▾, Edit mode, List/Matrix AC coverage
 Dictate instead of typing — into the story box on **Input**, any field of a test case on **Review**, Requirements, Repo, Settings, or any other text box in the app. It uses the browser's built-in **Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition`): **no AI model, no API key, no `.env` change, no backend call**.
 
 **Open it**
-- Click the **teal mic** in the top-right header (next to **＋ New run**). The **Voice input** window opens at the bottom-right.
+- Click the **teal mic** in the top-right header (next to **＋ New run**). The **Voice input** window opens at the bottom-right of the content area (when Help is also open, they dock side by side — see [Floating windows](#floating-windows)).
 - Click into any text field, then press **Start** (or `Ctrl+Shift+Space`). The window shows **Typing into: &lt;field&gt;** and the field glows blue. Click or Tab to another field at any time — dictation follows the field you focus, no restart needed.
 - While listening, the header mic shows a red **LIVE** badge.
 
@@ -319,11 +321,11 @@ Dictate instead of typing — into the story box on **Input**, any field of a te
 | **Start / Pause / Resume / Stop** | Start listening, pause (keeps the field and caret), resume where you left off, stop |
 | **Language** | English (India) `en-IN` (default), English (US), Hindi, Tamil |
 | Live transcript | Grey italic text is what is being heard right now; each finished phrase is listed with its time (and recognised commands) |
-| **–** Minimize | Shrinks to a **Voice input** pill at the bottom-right (shows LIVE / PAUSED); click to restore |
-| **▢** Maximize | Large centred panel with the full transcript history; click again (or double-click the title) to restore |
+| **–** Minimize | Shrinks to a **Voice input** pill in the shared bottom-right tray (shows LIVE / PAUSED); click to restore |
+| **▢** Maximize | Fills the content area (sidebar stays visible) with the full transcript history; the Help window auto-minimizes to the tray and is restored when you un-maximize. Click again (or double-click the title) to restore |
 | **×** Close | Stops listening and hides the window; the header mic reopens it |
-| Drag | Drag the teal title bar anywhere; it stays inside the browser window and the position is remembered |
-| **Reset position** | Moves the window back to the bottom-right |
+| Drag | Drag the teal title bar anywhere; it stays inside the browser window, comes to the front, and snaps apart from Help if they overlap. The position is remembered |
+| **Reset position** | Moves the window back to its default dock slot (bottom-right; side by side with Help when both are open) |
 | **?** | Lists the enabled voice commands |
 
 Text is inserted **at the caret** of the focused input / textarea / editable cell and fires the normal `input` event, so the app reacts exactly as if you typed it (e.g. Review marks the case as edited and enables **Save changes**). Chrome stops recognition after a few seconds of silence; the app restarts it automatically while you are listening.
@@ -362,7 +364,7 @@ Custom commands can map any phrase to one of the actions above or to **Insert te
 An in-app chat that answers questions about how this app works, grounded in this README and `docs/help_faq.md`. It will not change your data, run Generate, or upload anything. If a feature is not implemented (for example **Zephyr Scale Cloud upload**), the assistant says so.
 
 **Open it**
-- Click the **dark-blue robot-headset icon** in the top-right header, immediately after the teal Voice input mic. The window opens at the bottom-right.
+- Click the **dark-blue robot-headset icon** in the top-right header, immediately after the teal Voice input mic. The window opens at the bottom-right of the content area (when Voice is also open, Help docks to the left of it — see [Floating windows](#floating-windows)).
 - Ask a question, press **Enter** to send (**Shift+Enter** for a new line), or click a **quick-question chip**. The teal mic in the help window dictates into the help input (same browser Web Speech API as Voice input; auto-sends if the box was empty). Chrome / Edge only — other browsers show a greyed-out mic.
 
 **Window controls**
@@ -370,11 +372,11 @@ An in-app chat that answers questions about how this app works, grounded in this
 | Control | What it does |
 |---|---|
 | **Restart chat** | Refresh icon in the title bar (before minimize), and a **Restart chat** button next to **＋ New** in the maximized history sidebar. If the current chat has questions, an in-window confirm asks first. The current conversation is kept in History; a fresh chat opens with the welcome message and quick-question chips, the input is cleared, and the screen-context banner stays. |
-| **–** Minimize | Shrinks to a **Help Assistant** pill at the bottom-right; click to restore |
-| **▢** Maximize | Large centred panel with a **conversation history** sidebar, **Restart chat**, and **＋ New** chat; click again (or double-click the title) to restore |
+| **–** Minimize | Shrinks to a **Help Assistant** pill in the shared bottom-right tray; click to restore |
+| **▢** Maximize | Fills the content area (sidebar stays visible) with a **conversation history** sidebar, **Restart chat**, and **＋ New** chat; the Voice window auto-minimizes to the tray and is restored when you un-maximize. Click again (or double-click the title) to restore |
 | **×** Close | Hides the window; the header icon reopens it |
-| Drag | Drag the title bar anywhere; it stays inside the browser window and the position is remembered |
-| **Reset window position** | In Settings → Preferences → Help Assistant; moves the window back to the bottom-right |
+| Drag | Drag the title bar anywhere; it stays inside the browser window, comes to the front, and snaps apart from Voice if they overlap. The position is remembered |
+| **Reset window position** | In Settings → Preferences → Help Assistant; moves the window back to its default dock slot (side by side with Voice when both are open) |
 
 Answers include **source citations** (README or FAQ heading) and, when relevant, **jump buttons** that open the matching screen or Settings tab (for example Settings → Integrations → Zephyr Scale). A context banner can show the current screen name (“You are on Review — ask about this screen”).
 
@@ -388,6 +390,24 @@ Answers include **source citations** (README or FAQ heading) and, when relevant,
 **Settings → Preferences → 💬 Help Assistant** (after the Voice input card)
 - **Enable launcher**, **Answer engine**, **Include current screen context**, **Clear chat history**, **Reset window position**, editable **quick-question chips** (＋ Add question).
 - These preferences, the window position, and conversation history are saved **in this browser’s `localStorage`** (keys `atg.help.prefs`, `atg.help.pos`, `atg.help.history`) — not in `.env` or the database, and not shared between browsers. The page’s **Save changes** button is not needed for them.
+
+---
+
+## Floating windows
+
+Voice input and Help Assistant share a front-end window manager (`frontend/js/winmgr.js`) so the two windows no longer land on the same corner or cover each other.
+
+- **Default dock:** both sit at the bottom-right of the content area (not over the sidebar), with **Help to the left of Voice** and a 12px gap. If there is not enough width, they stack vertically; if there is not enough height either, they cascade (offset) so both title bars stay visible.
+- **Minimize tray:** minimized windows become pills in a single tray at the bottom-right (Help, then Voice). Each pill restores that window. The Voice pill still shows LIVE / PAUSED.
+- **Maximize:** fills the content area (the sidebar stays visible). The other window is auto-minimized to the tray and is restored to its previous spot when you un-maximize.
+- **Click or drag** brings a window to the front (stronger shadow and a slightly brighter title bar). Dragging keeps the window on screen; if the overlap is large at drop, it snaps to the nearest free side.
+- Previously saved positions (`atg.voice.pos`, `atg.help.pos`) are still used. If they came from the old “both at `right: 20px; bottom: 16px`” default and would stack on top of each other, they are treated as the new side-by-side dock.
+
+**Settings → Preferences → 🪟 Floating windows** (after the Help Assistant card)
+- **Dock both (side by side)** opens both windows (if their launchers are enabled) and places them in the default dock.
+- **Reset layout** clears remembered positions and docks both windows.
+- Each window’s own **Reset window position** button still moves only that window to its dock slot.
+- These preferences stay in this browser’s `localStorage` (not in `.env` or the database). The page’s **Save changes** button is not needed for them.
 
 ---
 

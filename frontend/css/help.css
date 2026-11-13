@@ -9,7 +9,7 @@ body.help-off .help-launch,body.help-off #helpWin,body.help-off #helpPill{displa
 
 #helpWin{position:fixed;z-index:47;width:420px;height:580px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);background:#fff;border:1px solid #b7c9de;border-radius:12px;box-shadow:0 16px 48px #0b102040;display:none;overflow:hidden;flex-direction:column;color:#1e2433;font-size:13px;right:20px;bottom:16px}
 #helpWin.open{display:flex}
-#helpWin.max{width:min(960px,94vw);height:min(620px,88vh);left:50%!important;top:50%!important;right:auto!important;bottom:auto!important;transform:translate(-50%,-50%);box-shadow:0 24px 64px #0b102055}
+#helpWin.max{box-shadow:0 24px 64px #0b102055}
 .hw-title{display:flex;align-items:center;gap:8px;background:#0b4f8a;color:#fff;padding:7px 8px 7px 10px;cursor:move;user-select:none;flex-shrink:0;touch-action:none}
 #helpWin.max .hw-title{cursor:default}
 .hw-title .help-mark{width:22px;height:22px}

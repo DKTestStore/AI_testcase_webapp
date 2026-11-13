@@ -213,12 +213,14 @@
     Object.assign(w.style, { transform: "", left: "auto", top: "auto", right: "20px", bottom: "16px" });
   }
   function resetPosition() {
+    if (window.WinMgr) { window.WinMgr.reset("help"); return; }
     try { localStorage.removeItem(POS_KEY); } catch (e) { /* ignore */ }
     if (V.mode === "max") exitMax(true);
     applyStartPos("br");
     say("Help window moved back to the bottom-right");
   }
   function bindDrag() {
+    if (window.WinMgr) return; // shared window manager owns drag, snap, resize, and z-order
     const title = q("#helpTitle"), w = winEl();
     let drag = null;
     title.addEventListener("pointerdown", (e) => {
@@ -248,11 +250,15 @@
   function openWindow(opts) {
     opts = opts || {};
     if (!P.enabled) return;
-    const w = winEl(); const first = !w.dataset.placed;
+    const w = winEl();
     V.open = true; V.minimized = false;
     q("#helpPill").classList.remove("show");
     w.classList.add("open");
-    if (V.mode !== "max" && (first || opts.reposition)) { applyStartPos(); w.dataset.placed = "1"; }
+    if (window.WinMgr) {
+      if (V.mode === "max") window.WinMgr.maximize("help");
+      else window.WinMgr.show("help", { reposition: !!opts.reposition });
+      w.dataset.placed = "1";
+    } else if (V.mode !== "max" && (!w.dataset.placed || opts.reposition)) { applyStartPos(); w.dataset.placed = "1"; }
     updateContext(); updateBadge(); updateLaunch();
     if (q("#helpMsgs").childElementCount === 0) showWelcome();
   }
@@ -260,20 +266,29 @@
     hideRestartConfirm();
     stopMic();
     V.open = false; V.minimized = false;
-    if (V.mode === "max") exitMax(true);
-    winEl().classList.remove("open");
-    q("#helpPill").classList.remove("show");
+    if (window.WinMgr) {
+      window.WinMgr.close("help");
+    } else {
+      if (V.mode === "max") exitMax(true);
+      winEl().classList.remove("open");
+      q("#helpPill").classList.remove("show");
+    }
+    V.mode = "normal";
     updateLaunch();
   }
   function minimize() {
     stopMic();
     V.minimized = true; V.open = false;
-    if (V.mode === "max") exitMax(true);
-    winEl().classList.remove("open");
-    q("#helpPill").classList.add("show");
+    if (window.WinMgr) window.WinMgr.minimize("help");
+    else {
+      if (V.mode === "max") exitMax(true);
+      winEl().classList.remove("open");
+      q("#helpPill").classList.add("show");
+    }
     updateLaunch();
   }
   function enterMax() {
+    if (window.WinMgr) { window.WinMgr.maximize("help"); renderHistory(); return; }
     V.mode = "max";
     const w = winEl();
     if (!w.style.left || w.style.left === "auto") {
@@ -288,6 +303,7 @@
     renderHistory();
   }
   function exitMax(keepClosed) {
+    if (window.WinMgr) { window.WinMgr.unmaximize("help", { keepHidden: !!keepClosed && !V.open }); return; }
     const w = winEl();
     w.classList.remove("max");
     V.mode = "normal";
@@ -775,8 +791,40 @@
     }
   }
 
+  function registerWinMgr() {
+    if (!window.WinMgr) return;
+    window.WinMgr.register({
+      id: "help",
+      el: "#helpWin",
+      title: "#helpTitle",
+      posKey: POS_KEY,
+      slot: "left",
+      fallbackSize: { w: 420, h: 580 },
+      pillId: "wmPill-help",
+      pillClass: "help",
+      pillLabel: "Help Assistant",
+      pillHTML: ICON + "<span>Help Assistant</span>",
+      enabled: () => P.enabled,
+      requestOpen: () => {
+        if (!P.enabled) return;
+        V.open = true; V.minimized = false; V.mode = "normal";
+        const w = winEl(); if (w) w.classList.add("open");
+        updateLaunch();
+        if (q("#helpMsgs") && q("#helpMsgs").childElementCount === 0) showWelcome();
+      },
+      syncState: (state) => {
+        V.open = state === "open" || state === "max";
+        V.minimized = state === "min";
+        V.mode = state === "max" ? "max" : "normal";
+        if (state === "max") renderHistory();
+        if (state !== "open" && state !== "max") hideRestartConfirm();
+        updateLaunch();
+      }
+    });
+  }
   function init() {
     if (!buildDom()) return;
+    registerWinMgr();
     bind();
     applyEnabled();
     updateBadge();
