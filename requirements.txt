@@ -19,7 +19,7 @@ playwright>=1.40
 
 # --- AI providers ---
 google-genai>=0.3                # Gemini (from google.genai)
-openai>=1.40                     # OpenAI, Codex (OpenAI), and Grok (xAI via base_url)
+openai>=1.40                     # OpenAI, Codex (OpenAI), Grok (xAI) and Groq (via base_url)
 ollama>=0.2                      # local Ollama
 
 # --- Integrations / Excel ---

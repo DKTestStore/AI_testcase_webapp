@@ -307,7 +307,7 @@ function bViewGen(v) {
   }).join("");
   const pDone = gi.length ? done * 100 / gi.length : 0, pRun = gi.length ? run * 100 / gi.length : 0;
   v.innerHTML = `<div class="bmv">${bBar()}<h1>Generate Test Cases <span class="batch-pill">Batch · ${gi.length} to generate · ${imp.length} imported</span></h1>
-    <div class="sub">Model <select id="bModel" style="padding:2px 6px"><option value="gemini">Gemini</option><option value="codex">Codex</option><option value="ollama">Ollama</option></select> · Default prompt · items generate one at a time · Excel items skip this step</div>
+    <div class="sub">Model <select id="bModel" style="padding:2px 6px"><option value="gemini">Gemini</option><option value="grok">Grok</option><option value="groq">Groq</option><option value="claude">Claude</option><option value="openai">OpenAI</option><option value="codex">Codex</option><option value="ollama">Ollama</option></select> · Default prompt · items generate one at a time · Excel items skip this step</div>
     <div class="card"><div class="ovp"><b>Overall</b><div class="obar"><i style="width:${pDone}%;background:#12a150"></i><i style="width:${pRun}%;background:#4361ee"></i></div>
       <span id="bOverall"><b>${done}</b> of ${gi.length} generated · ${run} running · ${imp.length} imported</span>
       ${BS.running || queued ? `<button class="btn g sm" id="bCancelAll" style="color:#d33;border-color:#f3b4b4">■ Cancel batch</button>` : ""}
