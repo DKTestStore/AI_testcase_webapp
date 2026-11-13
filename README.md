@@ -26,9 +26,10 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 14. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
 15. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
 16. [Voice input](#voice-input)
-17. [Troubleshooting](#troubleshooting)
-18. [Testing notes](#6-testing-notes)
-19. [Original CLI](#original-cli-pipeline)
+17. [Help Assistant](#help-assistant)
+18. [Troubleshooting](#troubleshooting)
+19. [Testing notes](#6-testing-notes)
+20. [Original CLI](#original-cli-pipeline)
 
 ---
 
@@ -46,7 +47,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
 | Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
-| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=42`) |
+| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=43`) |
 
 **Persistence:** SQLAlchemy 2.x + Alembic; durable product data and run history in `backend/app.db` (WAL). On first start, leftover product JSON files are imported once if the database has no product data yet. Leftover run history folders under `backend/history/<id>/` are imported once after the history migration (a marker is set even if no folders exist, so later folders are not treated as a first-start import). Those JSON files are kept as a backup and are not the live store. Sessions, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. The `atg_history` cookie still identifies the browser; Logout / New run do not clear history. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
@@ -124,7 +125,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Area | What you get |
 |---|---|
 | Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
-| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, voice input) |
+| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, voice input, Help Assistant) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
@@ -134,6 +135,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
 | Voice input | Teal mic in the header opens a draggable **Voice input** window (minimize / maximize / close). Dictate into whichever field you click on any screen; Start / Pause / Resume / Stop, `Ctrl+Shift+Space`, language picker, configurable voice commands. Browser Web Speech API (Chrome / Edge) — no AI model, no API key. See [Voice input](#voice-input) |
+| Help Assistant | Dark-blue robot-headset icon in the header (right after the voice mic) opens a draggable **Help Assistant** window (minimize to a pill / maximize with conversation history / close). Answers are grounded in this README and `docs/help_faq.md`. Choose the Generate provider, a specific provider, or No-AI docs search. Quick-question chips, source citations, and jump buttons to the matching screen or Settings tab. Prefs stay in this browser. See [Help Assistant](#help-assistant) |
 | Lucide sidebar icons | Professional line icons on every visible item; workflow steps Input / Generate / Review / qTest Upload use an icon plus a mini numbered badge (1–4). Grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
 
 ---
@@ -175,7 +177,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 ## 4. Setup checklist, Settings, logs
 
 - **Setup checklist:** Gemini key + model (required), Jira, qTest (optional), default prompt file.
-- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences. Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
+- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, Voice input, Help Assistant). Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
 - **Logs:** `backend/logs/app.log` (rotating 5 MB × 3).
 
 Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/app.db` (and `-wal`/`-shm`), `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.
@@ -194,10 +196,12 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 ├── backend/
 │   ├── app.py                  # FastAPI routes + static pages
 │   ├── services.py             # AI / Jira / qTest wrappers
-│   ├── test_repo.py / test_runs.py / requirements_repo.py / dashboard.py / recorder.py
+│   ├── test_repo.py / test_runs.py / requirements_repo.py / dashboard.py / recorder.py / help.py
 │   ├── settings_store.py / history_store.py / session_store.py / token_usage.py
 │   └── …
-├── frontend/                   # welcome.html, app.html, css/, js/
+├── frontend/                   # welcome.html, app.html, css/ (incl. help.css), js/ (incl. help.js)
+├── docs/
+│   └── help_faq.md             # Short FAQ used by the Help Assistant
 ├── requirements.txt
 ├── THIRD_PARTY_NOTICES.md      # Lucide ISC attribution
 ├── README.md
@@ -237,6 +241,7 @@ All `/api/*` routes (except health/session start as applicable) require the sess
 | Test Runs | `/api/runs*`, `/api/attachments*` |
 | Projects / Requirements | `/api/projects*`, `/api/requirements*` (incl. `traceability`, `import`, `auto-link`, `generate-context`, `delete-check`, `duplicate`, `bulk`, folder `delete-check`) |
 | Dashboard | `GET /api/dashboard` |
+| Help Assistant | `POST /api/help/chat`, `GET /api/help/search` |
 | Record | recorder routes under the Record UI (Playwright) |
 
 ---
@@ -352,6 +357,39 @@ Custom commands can map any phrase to one of the actions above or to **Insert te
 
 ---
 
+## Help Assistant
+
+An in-app chat that answers questions about how this app works, grounded in this README and `docs/help_faq.md`. It will not change your data, run Generate, or upload anything. If a feature is not implemented (for example **Zephyr Scale Cloud upload**), the assistant says so.
+
+**Open it**
+- Click the **dark-blue robot-headset icon** in the top-right header, immediately after the teal Voice input mic. The window opens at the bottom-right.
+- Ask a question, press **Enter** to send (**Shift+Enter** for a new line), or click a **quick-question chip**. The teal mic in the help window dictates into the help input (same browser Web Speech API as Voice input; auto-sends if the box was empty). Chrome / Edge only — other browsers show a greyed-out mic.
+
+**Window controls**
+
+| Control | What it does |
+|---|---|
+| **–** Minimize | Shrinks to a **Help Assistant** pill at the bottom-right; click to restore |
+| **▢** Maximize | Large centred panel with a **conversation history** sidebar and **＋ New** chat; click again (or double-click the title) to restore |
+| **×** Close | Hides the window; the header icon reopens it |
+| Drag | Drag the title bar anywhere; it stays inside the browser window and the position is remembered |
+| **Reset window position** | In Settings → Preferences → Help Assistant; moves the window back to the bottom-right |
+
+Answers include **source citations** (README or FAQ heading) and, when relevant, **jump buttons** that open the matching screen or Settings tab (for example Settings → Integrations → Zephyr Scale). A context banner can show the current screen name (“You are on Review — ask about this screen”).
+
+**Answer engine**
+- **Use Generate provider** (default) — follows the Provider dropdown on Generate (`S.run.model`); no extra key.
+- A specific provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, or Ollama) — uses that provider’s key and model from Settings → AI Providers, via the same backend dispatch as Generate.
+- **No AI — docs search only** — no model is called. `GET /api/help/search` returns ranked README / FAQ sections with snippets.
+
+`POST /api/help/chat` keyword-ranks the docs, sends the top excerpts to the chosen provider, and returns `{answer, sources, provider, model}`. Token usage is recorded as action **Help chat**. Provider errors use the existing error mapper (429 / 504 / 502).
+
+**Settings → Preferences → 💬 Help Assistant** (after the Voice input card)
+- **Enable launcher**, **Answer engine**, **Include current screen context**, **Clear chat history**, **Reset window position**, editable **quick-question chips** (＋ Add question).
+- These preferences, the window position, and conversation history are saved **in this browser’s `localStorage`** (keys `atg.help.prefs`, `atg.help.pos`, `atg.help.history`) — not in `.env` or the database, and not shared between browsers. The page’s **Save changes** button is not needed for them.
+
+---
+
 ## Troubleshooting
 
 | Issue | What to try |
@@ -372,6 +410,7 @@ Offline mocks (process env only, **not** read from `.env`): `ATG_MOCK_GEMINI=1`,
 - E2E historically run with Playwright against `http://127.0.0.1:8000` (Review, Excel, history, …).
 - Create data without live LLM calls via Excel import or `PUT /api/review/test_cases` after Local input; use **Preview payload** for qTest.
 - Useful: `GET /api/health`, `GET /api/setup/status`, `GET /api/history`, `GET|PUT /api/settings/history_limit`.
+- Help Assistant ranking is covered by mocked unit tests in `tests/test_help_search.py` (no network, no provider calls).
 
 ---
 
