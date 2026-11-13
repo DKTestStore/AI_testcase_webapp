@@ -1,0 +1,85 @@
+/* Voice input — header mic launcher, draggable Voice input window, minimized pill,
+   Settings → Preferences card. Browser Web Speech API only (no model, no API key). */
+body.voice-off .voice-launch,body.voice-off #voiceWin,body.voice-off #vPill{display:none!important}
+.voice-launch{position:relative;width:36px;height:36px;padding:0;border:0;background:transparent;cursor:pointer;border-radius:8px;flex-shrink:0;line-height:0}
+.voice-launch:hover{filter:brightness(1.08);box-shadow:0 0 0 3px #0e9f9022}
+.voice-launch:focus-visible{outline:2px solid #0e9f90;outline-offset:2px}
+.voice-launch.unsupported{filter:grayscale(1);opacity:.5;cursor:help}
+.voice-launch.unsupported:hover{box-shadow:none}
+.mic-mark{width:36px;height:36px;display:block}
+.voice-launch .live-badge{display:none;position:absolute;top:-7px;right:-10px;background:#e11d2e;color:#fff;font-size:8px;font-weight:800;letter-spacing:.04em;line-height:1;padding:2px 4px 2px 3px;border-radius:6px;box-shadow:0 1px 3px #0003;align-items:center;gap:3px}
+.voice-launch .live-badge i{width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block;animation:vliveblink 1s ease-in-out infinite}
+.voice-launch.live .live-badge{display:inline-flex}
+@keyframes vliveblink{50%{opacity:.35}}
+.voice-focus{border-color:#4361ee!important;box-shadow:0 0 0 3px #4361ee44,0 0 12px #4361ee33!important}
+
+#voiceWin{position:fixed;z-index:46;width:400px;max-width:calc(100vw - 16px);background:#fff;border:1px solid #c9d3cc;border-radius:12px;box-shadow:0 16px 48px #0b102040;display:none;overflow:hidden;flex-direction:column;color:#1e2433;font-size:13px}
+#voiceWin.open{display:flex}
+#voiceWin.max{width:min(720px,92vw);height:min(560px,82vh);left:50%!important;top:50%!important;right:auto!important;bottom:auto!important;transform:translate(-50%,-50%);box-shadow:0 24px 64px #0b102055}
+#voiceWin .vw-title{display:flex;align-items:center;gap:8px;background:#0e9f90;color:#fff;padding:7px 8px 7px 10px;cursor:move;user-select:none;flex-shrink:0;touch-action:none}
+#voiceWin.max .vw-title{cursor:default}
+#voiceWin .vw-title .mic-mark{width:22px;height:22px}
+#voiceWin .vw-title b{font-size:13px;font-weight:700}
+.vw-live{display:none;align-items:center;gap:4px;background:#e11d2e;color:#fff;font-size:9px;font-weight:800;letter-spacing:.05em;padding:2px 6px 2px 5px;border-radius:8px}
+.vw-live i{width:6px;height:6px;border-radius:50%;background:#fff;animation:vliveblink 1s ease-in-out infinite}
+#voiceWin.listening .vw-live{display:inline-flex}
+#voiceWin.paused .vw-live{display:inline-flex;background:#d97706}
+#voiceWin.paused .vw-live i{animation:none}
+.vw-sp{flex:1}
+.vw-tb{width:28px;height:24px;border:0;background:transparent;color:#fff;font-size:14px;cursor:pointer;border-radius:5px;font-family:inherit;line-height:1;padding:0}
+.vw-tb:hover{background:#ffffff28}
+.vw-tb.x:hover{background:#e11d2e}
+.vw-body{padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-height:0;flex:1;position:relative}
+.vstate{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px}
+.vstate .dot{width:9px;height:9px;border-radius:50%;background:#94a3b8;flex-shrink:0}
+.vstate.idle{color:#6b7385}
+.vstate.listening{color:#d33}
+.vstate.listening .dot{background:#d33;animation:vpulse 1s ease-in-out infinite}
+.vstate.paused{color:#a36b00}
+.vstate.paused .dot{background:#f59e0b;box-shadow:0 0 0 4px #f59e0b33}
+@keyframes vpulse{0%,100%{box-shadow:0 0 0 0 rgba(211,51,51,.55)}50%{box-shadow:0 0 0 7px rgba(211,51,51,0)}}
+.vtarget{font-size:11.5px;color:#3046b8;background:#eef2ff;border:1px solid #c9d3ff;border-radius:8px;padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vtarget .muted{color:#9aa1b2}
+.vrow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.vrow .btn{padding:6px 8px;font-size:12px;width:100%;justify-content:center}
+.btn.vam{background:#fff;color:#a36b00;border-color:#f5c26b}
+.vlang{display:flex;align-items:center;gap:8px}
+.vlang label{margin:0;text-transform:none;font-size:11.5px}
+.vlang select{padding:5px 8px;font-size:12px;flex:1}
+.vtranscript{border:1px solid #e3e7f0;border-radius:8px;background:#f8fafc;padding:8px 10px;min-height:64px;max-height:110px;overflow:auto;font-size:12.5px;line-height:1.45}
+#voiceWin.max .vtranscript{min-height:220px;max-height:none;flex:1}
+.vtranscript .th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7385;margin-bottom:6px}
+.vtranscript .line{margin:0 0 4px;white-space:pre-wrap;word-break:break-word}
+.vtranscript .line .t{color:#94a3b8;font-size:10.5px;margin-right:6px}
+.vtranscript .line.cmd{color:#0e7f73}
+.vtranscript .line.live{color:#6b7385;font-style:italic}
+.vtranscript .muted{color:#9aa1b2}
+.vmsg{font-size:11.5px;color:#a12020;background:#fdeaea;border:1px solid #f3b4b4;border-radius:8px;padding:4px 8px}
+.vfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:#6b7385}
+.vfoot .link{border:0;background:none;color:#4361ee;font-weight:700;cursor:pointer;font-size:11.5px;font-family:inherit;padding:0}
+.v-ico-btn{width:24px;height:24px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#64748b;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;padding:0;font-family:inherit}
+.v-ico-btn:hover,.v-ico-btn.on{border-color:#4361ee;color:#4361ee;background:#eef2ff}
+.vpop{position:absolute;right:12px;bottom:44px;width:340px;max-width:calc(100% - 24px);max-height:70%;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 16px 40px #0b102033;padding:12px 14px;z-index:47}
+.vpop h4{margin:0 0 6px;font-size:13.5px}
+.vpop table{width:100%;border-collapse:collapse;font-size:12px}
+.vpop td{padding:4px 0;border-top:0;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.vpop td:first-child{padding-right:8px;width:52%}
+.vkbd{display:inline-block;background:#fff;border:1px solid #c9d3ff;border-radius:5px;padding:1px 6px;font-size:11px;font-family:inherit;color:#3046b8;font-weight:700;margin:1px 0}
+
+#vPill{display:none;position:fixed;right:20px;bottom:16px;z-index:46;align-items:center;gap:8px;background:#0e9f90;color:#fff;border:0;border-radius:24px;padding:7px 14px 7px 7px;box-shadow:0 8px 24px #0e9f9066;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit}
+#vPill.show{display:inline-flex}
+#vPill .mic-mark{width:28px;height:28px}
+#vPill .live-badge{display:none;background:#e11d2e;color:#fff;font-size:8px;font-weight:800;letter-spacing:.04em;padding:2px 5px;border-radius:6px;margin-left:2px}
+#vPill.live .live-badge{display:inline-block}
+#vPill.paused .live-badge{display:inline-block;background:#d97706}
+
+/* Settings → Preferences → Voice input card */
+.v-pref-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px 18px;margin:8px 0 12px;align-items:start}
+.v-pref-grid label.sw{text-transform:none;font-size:13px;color:#1e2433;margin:0}
+.v-cmd-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.v-cmd-table th{position:static;text-align:left;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:#6b7385;padding:6px 8px;border-bottom:1px solid #e3e7f0;background:#f8f9fc}
+.v-cmd-table td{padding:5px 8px;border-top:0;border-bottom:1px solid #f0f2f7;vertical-align:middle}
+.v-cmd-table input[type=text],.v-cmd-table select{width:100%;padding:5px 8px;font-size:12px}
+.v-cmd-table label.sw{margin:0}
+@media (max-width:900px){.v-pref-grid{grid-template-columns:1fr 1fr}}
+@media (prefers-reduced-motion:reduce){.voice-launch .live-badge i,.vw-live i,.vstate.listening .dot{animation:none}}
