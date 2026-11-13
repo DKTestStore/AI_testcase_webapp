@@ -215,7 +215,7 @@ def _build_user_content(question: str, screen: str, history: List[Dict[str, Any]
     if screen:
         parts.append(f"Current screen: {screen}")
     turns = []
-    for h in (history or [])[-6]:
+    for h in (history or [])[-6:]:
         if not isinstance(h, dict):
             continue
         role = "User" if str(h.get("role") or "").lower() in ("user", "human") else "Assistant"
