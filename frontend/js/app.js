@@ -631,7 +631,8 @@ async function viewSettings(v) {
     const fs = groups[g.group] || [];
     const ok = setGroupConfigured(fs);
     const badge = ok ? '<span class="pill">configured</span>' : '<span class="pill r">not set</span>';
-    return `<div class="card"><h2>${esc(g.group)} ${badge}</h2><div class="sub" style="margin:0 0 12px">${esc(g.lede)}</div>
+    const iid = "set-int-" + g.group.toLowerCase().replace(/\s+/g, "-");
+    return `<div class="card" id="${esc(iid)}"><h2>${esc(g.group)} ${badge}</h2><div class="sub" style="margin:0 0 12px">${esc(g.lede)}</div>
       ${fs.map(setFieldHtml).join("")}</div>`;
   }).join("");
 
@@ -676,6 +677,17 @@ async function viewSettings(v) {
   $$(".set-prov").forEach((p) => { if (!p.classList.contains("a")) p.hidden = true; else p.hidden = false; });
   $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
   if (window.voiceRenderSettings) voiceRenderSettings($('.set-pane[data-pane="preferences"]'));  // Voice input card (voice.js, browser-only prefs)
+  if (window.helpRenderSettings) helpRenderSettings($('.set-pane[data-pane="preferences"]'));    // Help Assistant card (help.js, browser-only prefs)
+  if (SET_ST.tab && SET_ST.tab !== "providers") {
+    setShowTab(SET_ST.tab);
+    $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === SET_ST.tab ? "true" : "false"));
+    $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+  }
+  if (SET_ST.jumpId) {
+    const el = document.getElementById(SET_ST.jumpId);
+    if (el) setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 0);
+    SET_ST.jumpId = "";
+  }
 
   $$(".set-tabs button").forEach((b) => (b.onclick = () => {
     setShowTab(b.dataset.tab);
@@ -784,6 +796,27 @@ $("#logoutItem").onclick = logoutDialog;
 $("#newRunBtn").onclick = newRunDialog;
 $$("#userMenu [data-go]").forEach((d) => (d.onclick = () => { $("#userMenu").classList.remove("open"); go(d.dataset.go); }));
 $$("#nav a").forEach((a) => (a.onclick = () => go(a.dataset.view)));
+window.go = go;
+window.goSettings = function (tab, opts) {
+  opts = opts || {};
+  if (tab) SET_ST.tab = tab;
+  if (opts.provider) SET_ST.provider = opts.provider;
+  SET_ST.jumpId = opts.jumpId || "";
+  if (S.view === "settings") {
+    setShowTab(SET_ST.tab);
+    $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === SET_ST.tab ? "true" : "false"));
+    $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+    if (opts.provider) setShowProvider(opts.provider);
+    if (SET_ST.jumpId) {
+      const el = document.getElementById(SET_ST.jumpId);
+      if (el) setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 0);
+      SET_ST.jumpId = "";
+    }
+    return;
+  }
+  go("settings");
+};
+
 $("#modalBg").onclick = (e) => { if (e.target.id === "modalBg") closeModal(); };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h.startsWith("repo/case/")) { if (window.cpRoute) window.cpRoute(h.slice(10)); return; } if (h && h !== S.view) go(h); });
 (async function boot() {

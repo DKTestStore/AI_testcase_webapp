@@ -168,6 +168,8 @@ app.include_router(test_runs.router, dependencies=[Depends(current)])
 app.include_router(requirements_repo.router, dependencies=[Depends(current)])
 from . import dashboard  # noqa: E402
 app.include_router(dashboard.router, dependencies=[Depends(current)])
+from . import help as help_api  # noqa: E402
+app.include_router(help_api.router, dependencies=[Depends(current)])
 
 
 @app.post("/api/repo/review")
