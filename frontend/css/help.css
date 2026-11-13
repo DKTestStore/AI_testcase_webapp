@@ -15,13 +15,18 @@ body.help-off .help-launch,body.help-off #helpWin,body.help-off #helpPill{displa
 .hw-title .help-mark{width:22px;height:22px}
 .hw-title b{font-size:13px;font-weight:700;white-space:nowrap}
 .hw-sp{flex:1}
-.hw-tb{width:28px;height:24px;border:0;background:transparent;color:#fff;font-size:14px;cursor:pointer;border-radius:5px;font-family:inherit;line-height:1;padding:0}
+.hw-tb{width:28px;height:24px;border:0;background:transparent;color:#fff;font-size:14px;cursor:pointer;border-radius:5px;font-family:inherit;line-height:1;padding:0;display:inline-flex;align-items:center;justify-content:center}
 .hw-tb:hover{background:#ffffff28}
 .hw-tb.x:hover{background:#e11d2e}
+.hw-tb svg{width:14px;height:14px;display:block}
+.hw-confirm{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;background:#fff8e8;border-bottom:1px solid #e8d7a8;font-size:12.5px;color:#1e2433}
+.hw-confirm-acts{display:inline-flex;gap:6px;margin-left:auto}
 .hw-shell{display:flex;flex:1;min-height:0;min-width:0}
 .hw-side{display:none;width:220px;flex-shrink:0;border-right:1px solid #e3e7f0;background:#f8f9fc;flex-direction:column;min-height:0}
 #helpWin.max .hw-side{display:flex}
-.hw-side-h{display:flex;align-items:center;justify-content:space-between;padding:10px 10px 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7385}
+.hw-side-h{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;padding:10px 10px 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7385}
+.hw-side-acts{display:inline-flex;flex-wrap:wrap;gap:6px}
+.hw-side-h .btn{text-transform:none;letter-spacing:0;font-weight:600}
 .hw-side-list{flex:1;overflow:auto;padding:0 8px 10px}
 .hw-th{display:block;width:100%;text-align:left;background:#fff;border:1px solid #e3e7f0;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;font-family:inherit;color:#1e2433}
 .hw-th:hover{border-color:#b7c9de;background:#eef5fb}

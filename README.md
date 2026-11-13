@@ -47,7 +47,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
 | Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
-| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=43`) |
+| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=44`) |
 
 **Persistence:** SQLAlchemy 2.x + Alembic; durable product data and run history in `backend/app.db` (WAL). On first start, leftover product JSON files are imported once if the database has no product data yet. Leftover run history folders under `backend/history/<id>/` are imported once after the history migration (a marker is set even if no folders exist, so later folders are not treated as a first-start import). Those JSON files are kept as a backup and are not the live store. Sessions, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. The `atg_history` cookie still identifies the browser; Logout / New run do not clear history. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
@@ -369,8 +369,9 @@ An in-app chat that answers questions about how this app works, grounded in this
 
 | Control | What it does |
 |---|---|
+| **Restart chat** | Refresh icon in the title bar (before minimize), and a **Restart chat** button next to **＋ New** in the maximized history sidebar. If the current chat has questions, an in-window confirm asks first. The current conversation is kept in History; a fresh chat opens with the welcome message and quick-question chips, the input is cleared, and the screen-context banner stays. |
 | **–** Minimize | Shrinks to a **Help Assistant** pill at the bottom-right; click to restore |
-| **▢** Maximize | Large centred panel with a **conversation history** sidebar and **＋ New** chat; click again (or double-click the title) to restore |
+| **▢** Maximize | Large centred panel with a **conversation history** sidebar, **Restart chat**, and **＋ New** chat; click again (or double-click the title) to restore |
 | **×** Close | Hides the window; the header icon reopens it |
 | Drag | Drag the title bar anywhere; it stays inside the browser window and the position is remembered |
 | **Reset window position** | In Settings → Preferences → Help Assistant; moves the window back to the bottom-right |
