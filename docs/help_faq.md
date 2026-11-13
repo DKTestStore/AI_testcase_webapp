@@ -99,3 +99,12 @@ The **Help Assistant** is an in-app chat that answers how this app’s features 
 - Optional **Include current screen context** lets it know which page you are on (for example Review).
 - Quick-question chips, the answer engine, and the launcher visibility are set in **Settings → Preferences → Help Assistant** and are saved in this browser’s `localStorage` (not in `.env`).
 - The assistant does not change your data, run Generate, or upload anything. If a feature is not implemented, it should say so.
+
+## How do I start a new help chat?
+
+Use **Restart chat** in the Help Assistant window:
+
+- Click the **refresh icon** in the title bar (just before Minimize). The tooltip is “Restart chat”.
+- Or, when the window is maximized, click **Restart chat** next to **＋ New** in the history sidebar.
+
+If the current chat already has questions, a short confirm appears in the window first (Cancel to keep chatting). The current conversation is saved in **History** so you can open it again. A new empty chat then shows the welcome message and quick-question chips, clears the input, and keeps the current-screen banner. This only affects the help window in this browser — it does not change your test cases, Settings, or `.env`.

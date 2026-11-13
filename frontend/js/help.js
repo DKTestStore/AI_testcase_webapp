@@ -153,13 +153,21 @@
     win.innerHTML = `
       <div class="hw-title" id="helpTitle">
         ${ICON}<b>Help Assistant</b><span class="hw-sp"></span>
+        <button type="button" class="hw-tb" id="helpRestart" title="Restart chat" aria-label="Restart chat"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.65 8A5.65 5.65 0 1 1 11.2 3.15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M11.15 1.35v2.7h2.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         <button type="button" class="hw-tb" id="helpMin" title="Minimize" aria-label="Minimize">–</button>
         <button type="button" class="hw-tb" id="helpMax" title="Maximize" aria-label="Maximize">▢</button>
         <button type="button" class="hw-tb x" id="helpClose" title="Close" aria-label="Close">×</button>
       </div>
+      <div class="hw-confirm" id="helpRestartConfirm" hidden role="alertdialog" aria-label="Restart chat?">
+        <span>Restart this chat? The current conversation stays in History.</span>
+        <span class="hw-confirm-acts">
+          <button type="button" class="btn sm" id="helpRestartYes">Restart</button>
+          <button type="button" class="btn g sm" id="helpRestartNo">Cancel</button>
+        </span>
+      </div>
       <div class="hw-shell">
         <aside class="hw-side" aria-label="Conversation history">
-          <div class="hw-side-h"><span>History</span><button type="button" class="btn g sm" id="helpNewChat">＋ New</button></div>
+          <div class="hw-side-h"><span>History</span><span class="hw-side-acts"><button type="button" class="btn g sm" id="helpRestartSide" title="Restart chat">Restart chat</button><button type="button" class="btn g sm" id="helpNewChat">＋ New</button></span></div>
           <div class="hw-side-list" id="helpHistList"></div>
         </aside>
         <div class="hw-main">
@@ -249,6 +257,7 @@
     if (q("#helpMsgs").childElementCount === 0) showWelcome();
   }
   function closeWindow() {
+    hideRestartConfirm();
     stopMic();
     V.open = false; V.minimized = false;
     if (V.mode === "max") exitMax(true);
@@ -356,15 +365,51 @@
     return `<p>Hi, I’m the <b>Help Assistant</b> for AI TestCase Generator. Ask how a feature works — I’ll answer from the app docs (README, Settings help, and a short FAQ). I won’t change your data or run anything.</p><p>Try a suggested question, or type your own. You can also dictate with the teal mic.</p>`;
   }
   function showWelcome() {
+    hideRestartConfirm();
     H.currentId = "";
     q("#helpMsgs").innerHTML = "";
     addMsg("bot", welcomeHtml(), { scroll: false });
+    q("#helpMsgs").scrollTop = 0;
     renderChips();
     renderHistory();
+  }
+  function currentHasUserMsgs() {
+    const th = H.threads.find((t) => t.id === H.currentId);
+    return !!(th && th.messages && th.messages.some((m) => m.role === "user"));
+  }
+  function hideRestartConfirm() {
+    const el = q("#helpRestartConfirm");
+    if (el) el.hidden = true;
+  }
+  function requestRestartChat() {
+    if (!currentHasUserMsgs()) { restartChat(); return; }
+    const el = q("#helpRestartConfirm");
+    if (el) { el.hidden = false; const yes = q("#helpRestartYes"); if (yes) yes.focus(); }
+  }
+  function restartChat() {
+    hideRestartConfirm();
+    stopMic();
+    V.pending = false;
+    const send = q("#helpSend"); if (send) send.disabled = false;
+    // Keep the current thread in History if it already has messages (pushMsg saved it).
+    saveHist();
+    H.currentId = "";
+    saveHist();
+    const input = q("#helpInput");
+    if (input) { input.value = ""; autoSize(input); }
+    q("#helpMsgs").innerHTML = "";
+    addMsg("bot", welcomeHtml(), { scroll: false });
+    q("#helpMsgs").scrollTop = 0;
+    renderChips();
+    renderHistory();
+    updateContext();
+    say("Started a new help chat");
+    if (input) input.focus();
   }
   function loadThread(id) {
     const th = H.threads.find((t) => t.id === id);
     if (!th) return;
+    hideRestartConfirm();
     H.currentId = id;
     saveHist();
     const box = q("#helpMsgs");
@@ -533,21 +578,29 @@
         html = formatAnswer(j.answer || "") + citesHtml(sources);
       }
       const jumps = inferJumps(question, sources);
-      typing.dataset.jumps = JSON.stringify(jumps);
       html += jumpsHtml(jumps);
-      typing.querySelector(".hm-bubble").innerHTML = html || "<p>(No answer returned.)</p>";
-      q("#helpMsgs").scrollTop = q("#helpMsgs").scrollHeight;
-      pushMsg(th, "bot", (resp && resp.answer) || question, typing.querySelector(".hm-bubble").innerHTML);
-      updateBadge(resp);
+      const out = html || "<p>(No answer returned.)</p>";
+      if (document.body.contains(typing)) {
+        typing.dataset.jumps = JSON.stringify(jumps);
+        typing.querySelector(".hm-bubble").innerHTML = out;
+        q("#helpMsgs").scrollTop = q("#helpMsgs").scrollHeight;
+        updateBadge(resp);
+      }
+      pushMsg(th, "bot", (resp && resp.answer) || question, out);
     } catch (err) {
       const msg = (err && err.message) ? err.message : "Help request failed.";
-      typing.querySelector(".hm-bubble").innerHTML = `<p>${esc(msg)}</p>`;
-      pushMsg(th, "bot", msg, typing.querySelector(".hm-bubble").innerHTML);
-      say(msg, true);
+      const out = `<p>${esc(msg)}</p>`;
+      if (document.body.contains(typing)) {
+        typing.querySelector(".hm-bubble").innerHTML = out;
+        say(msg, true);
+      }
+      pushMsg(th, "bot", msg, out);
     } finally {
-      V.pending = false;
-      q("#helpSend").disabled = false;
-      if (input) input.focus();
+      if (H.currentId === th.id) {
+        V.pending = false;
+        const send = q("#helpSend"); if (send) send.disabled = false;
+        if (input) input.focus();
+      }
     }
   }
 
@@ -681,7 +734,11 @@
   // ------------------------------------------------------------------ bind
   function bind() {
     q("#helpLaunch").onclick = () => { if (V.open) closeWindow(); else openWindow(); };
-    q("#helpMin").onclick = (e) => { e.stopPropagation(); minimize(); };
+    q("#helpRestart").onclick = (e) => { e.stopPropagation(); requestRestartChat(); };
+    q("#helpRestartSide").onclick = (e) => { e.stopPropagation(); requestRestartChat(); };
+    q("#helpRestartYes").onclick = (e) => { e.stopPropagation(); restartChat(); };
+    q("#helpRestartNo").onclick = (e) => { e.stopPropagation(); hideRestartConfirm(); };
+    q("#helpMin").onclick = (e) => { e.stopPropagation(); hideRestartConfirm(); minimize(); };
     q("#helpMax").onclick = (e) => { e.stopPropagation(); V.mode === "max" ? exitMax() : enterMax(); };
     q("#helpClose").onclick = (e) => { e.stopPropagation(); closeWindow(); };
     q("#helpPill").onclick = () => openWindow();
