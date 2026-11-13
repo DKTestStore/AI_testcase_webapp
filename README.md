@@ -37,7 +37,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 |---|---|---|
 | Backend | Python 3.10+, FastAPI, Uvicorn | REST API (`/api/...`) and serving the frontend |
 | Config | python-dotenv (`ai_test_generator/.env`) | API keys and settings (never commit `.env`) |
-| AI / LLM | Gemini (`google-genai`), Grok/xAI, Claude (Anthropic Messages via `requests`), OpenAI / Codex (`openai`), Ollama | Generation / review / regenerate; provider chosen on Generate; keys + model IDs on Settings |
+| AI / LLM | Gemini (`google-genai`), Grok/xAI, Groq (OpenAI-compatible via `openai`), Claude (Anthropic Messages via `requests`), OpenAI / Codex (`openai`), Ollama | Generation / review / regenerate; provider chosen on Generate; keys + model IDs on Settings |
 | Integrations | Jira (`jira` + FastMCP worker), qTest (REST via `requests`) | Story fetch; module / test-case upload + RTM |
 | Record | Playwright (Chromium) | Capture browser actions as test steps |
 | Data | SQLite (`backend/app.db`) + JSON files | Repo, runs, requirements, token ledger, app settings, prompt templates, and run history live in SQLite. Sessions, recordings, Gemini quota, and attachments stay as files. |
@@ -92,6 +92,7 @@ Copy from `.env.example`. **Never commit `.env`**. Secrets are masked in the Set
 |---|---|
 | Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` |
 | Grok (xAI) | `GROK_API_KEY`, `GROK_MODEL`, optional `GROK_TIMEOUT` (default 120) |
+| Groq | `GROQ_API_KEY`, `GROQ_MODEL` (default `llama-3.3-70b-versatile` when blank), optional `GROQ_TIMEOUT` (120), `GROQ_MAX_TOKENS` (8192) — see [Groq provider](#groq-provider) |
 | Claude (Anthropic) | `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, optional `CLAUDE_TIMEOUT` (120), `CLAUDE_MAX_TOKENS` (8192) |
 | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_TIMEOUT` (120) |
 | Codex (OpenAI family) | Uses `OPENAI_API_KEY`. Optional `CODEX_MODEL` (falls back to `OPENAI_MODEL`, then legacy `gpt-5-mini`) |
@@ -103,6 +104,16 @@ Copy from `.env.example`. **Never commit `.env`**. Secrets are masked in the Set
 
 Model IDs are free-text — enter the exact ID from each provider console. Do not treat example names as guaranteed current IDs.
 
+### Groq provider
+
+[Groq](https://console.groq.com/) hosts open models (Llama, Qwen, GPT-OSS, etc.) behind an OpenAI-compatible API at `https://api.groq.com/openai/v1`. The app calls its **Chat Completions** endpoint with the existing `openai` package — no new dependency.
+
+1. Create a free API key at <https://console.groq.com/keys>.
+2. **Settings → AI Providers → Groq**: paste the key; optionally set a Model ID (blank = `llama-3.3-70b-versatile`), timeout and max output tokens.
+3. Pick **Groq** in the Provider dropdown on **Generate** (or the Model dropdown on **Batch**).
+
+**Free-tier note:** Groq's free plan has per-model limits per minute and per day (requests and tokens; check the *Limits* page in your Groq console for current numbers). When Groq returns HTTP 429 the app waits for the `retry-after` header (capped at 30 s) and retries up to **2** times; if it is still rate-limited the UI shows a clear "rate limit reached" error (HTTP 429). Large stories with a high `GROQ_MAX_TOKENS` can hit the per-minute token cap — lower it or use a smaller model if that happens.
+
 Non-secret app settings (history limit, duplicate threshold, token rates/limit) live in the SQLite `app_settings` table in `backend/app.db`, not `.env`. A leftover `backend/app_settings.json` is imported once on first start and kept as a backup.
 
 ---
@@ -111,7 +122,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 
 | Area | What you get |
 |---|---|
-| Multi-provider AI | Gemini, Grok, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
+| Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
 | Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
@@ -176,7 +187,7 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 ├── ai_test_generator/          # Jira worker, AI helpers, qTest utils, CLI pipeline
 │   ├── .env.example            # copy to .env (never commit .env)
 │   ├── prompt/                 # generator + reviewer prompts
-│   ├── ai_helpers/             # test_generator_{gemini,grok,claude,openai,codex,ollama}.py
+│   ├── ai_helpers/             # test_generator_{gemini,grok,groq,claude,openai,codex,ollama}.py
 │   └── reports/                # run Excel, usage JSON, exports
 ├── backend/
 │   ├── app.py                  # FastAPI routes + static pages

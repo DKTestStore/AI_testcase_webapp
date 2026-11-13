@@ -250,6 +250,7 @@ async function viewGenerate(v) {
       <div><label style="margin-top:0">Provider</label><select id="model">
         <option value="gemini" ${r.model === "gemini" ? "selected" : ""}>Gemini</option>
         <option value="grok" ${r.model === "grok" ? "selected" : ""}>Grok</option>
+        <option value="groq" ${r.model === "groq" ? "selected" : ""}>Groq</option>
         <option value="claude" ${r.model === "claude" ? "selected" : ""}>Claude</option>
         <option value="openai" ${r.model === "openai" ? "selected" : ""}>OpenAI</option>
         <option value="codex" ${r.model === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
@@ -501,6 +502,7 @@ async function qRtm(el) {
 const SET_AI = [
   { group: "Gemini", sub: "Cloud", note: null },
   { group: "Grok (xAI)", sub: "Cloud", note: null },
+  { group: "Groq", sub: "Cloud · free tier", note: "groq" },
   { group: "Claude (Anthropic)", sub: "Cloud", note: null },
   { group: "OpenAI", sub: "Cloud · key shared", note: "openai" },
   { group: "Codex (OpenAI)", sub: "Uses OpenAI key", note: "codex" },
@@ -612,6 +614,9 @@ async function viewSettings(v) {
     if (p.note === "openai") {
       lede = "Cloud provider · API key is also used by Codex (OpenAI).";
       note = `<div class="set-note"><b>Codex (OpenAI) note</b><br>Codex uses this same OpenAI API key. Set an optional Codex model ID under the <b>Codex (OpenAI)</b> provider in the list (falls back to OPENAI_MODEL, then the app’s legacy default).</div>`;
+    } else if (p.note === "groq") {
+      lede = "Cloud provider · fast hosted open models (Llama, etc.) via Groq’s OpenAI-compatible API.";
+      note = `<div class="set-note"><b>Groq free tier</b><br>Free keys from console.groq.com have per-minute and per-day request/token limits. Rate-limited calls are retried up to 2 times; Model ID defaults to <span class="mono">llama-3.3-70b-versatile</span> when blank.</div>`;
     } else if (p.note === "codex") {
       lede = "OpenAI family profile — uses the OpenAI API key (not a separate vendor). Not ChatGPT Plus / CLI subscription.";
       note = `<div class="set-note"><b>Shared key</b><br>API key is configured under <b>OpenAI</b>. Only the Codex model ID is set here.</div>`;

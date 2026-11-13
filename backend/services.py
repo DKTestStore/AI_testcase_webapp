@@ -184,7 +184,7 @@ def _codex_module():
     return c
 
 
-KNOWN_PROVIDERS = ("gemini", "grok", "claude", "openai", "codex", "ollama")
+KNOWN_PROVIDERS = ("gemini", "grok", "groq", "claude", "openai", "codex", "ollama")
 
 
 def _norm_provider(model: str) -> str:
@@ -195,6 +195,8 @@ def _norm_provider(model: str) -> str:
         return "codex"
     if m in ("grok", "xai"):
         return "grok"
+    if m in ("groq",):
+        return "groq"
     if m in ("claude", "anthropic"):
         return "claude"
     if m in ("ollama", "local"):
@@ -209,6 +211,8 @@ def _provider_error(ex: Exception) -> ServiceError:
     if isinstance(ex, ServiceError):
         return ex
     msg = getattr(ex, "args", [None])[0] or str(ex)
+    if getattr(ex, "status", None) == 429:   # e.g. Groq rate limit after retries
+        return ServiceError(str(msg), 429)
     status = 504 if "timed out" in str(msg).lower() or "timeout" in str(msg).lower() else 502
     return ServiceError(str(msg), status)
 
@@ -275,6 +279,14 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
 
+    if provider == "groq":
+        try:
+            mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_groq")
+            text, usage = mod.complete(system_prompt, user_content, temperature=temperature)
+        except Exception as ex:
+            raise _provider_error(ex)
+        return {"text": text, "usage": usage}
+
     if provider == "claude":
         try:
             mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_claude")
@@ -309,7 +321,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
             "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
         }}
 
-    raise ServiceError(f"Unknown provider '{provider}'. Choose Gemini, Grok, Claude, OpenAI, Codex (OpenAI), or Ollama.")
+    raise ServiceError(f"Unknown provider '{provider}'. Choose Gemini, Grok, Groq, Claude, OpenAI, Codex (OpenAI), or Ollama.")
 
 
 def _ollama_chat(system_prompt: str, user_content: str) -> str:
