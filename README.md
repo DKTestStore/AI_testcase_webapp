@@ -25,9 +25,10 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 13. [Prompt templates](#prompt-templates-multi-select)
 14. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
 15. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
-16. [Troubleshooting](#troubleshooting)
-17. [Testing notes](#6-testing-notes)
-18. [Original CLI](#original-cli-pipeline)
+16. [Voice input](#voice-input)
+17. [Troubleshooting](#troubleshooting)
+18. [Testing notes](#6-testing-notes)
+19. [Original CLI](#original-cli-pipeline)
 
 ---
 
@@ -45,7 +46,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 | Frontend | Plain HTML, CSS, JavaScript | `frontend/app.html`, hash routing, feature modules |
 | Charts | Custom SVG donut / bar | Dashboard; preferences in `localStorage` |
 | Icons | Lucide (ISC), inline SVG | Sidebar nav; workflow steps also show a numbered badge (1–4) |
-| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=40`) |
+| Caching | `?v=N` on static assets | Cache-bust after frontend changes (currently `v=42`) |
 
 **Persistence:** SQLAlchemy 2.x + Alembic; durable product data and run history in `backend/app.db` (WAL). On first start, leftover product JSON files are imported once if the database has no product data yet. Leftover run history folders under `backend/history/<id>/` are imported once after the history migration (a marker is set even if no folders exist, so later folders are not treated as a first-start import). Those JSON files are kept as a backup and are not the live store. Sessions, Record drafts/recordings, Review `versions.json`, `gemini_usage.json`, attachment bytes, Excel/exports, and logs stay as files. The `atg_history` cookie still identifies the browser; Logout / New run do not clear history. Secrets stay in `ai_test_generator/.env`. **Still planned:** object storage for attachments, hosted deploy. **Zephyr Scale Cloud upload is not implemented** (Projects may store an optional `zephyr_project_key` mapping field only).
 
@@ -123,7 +124,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Area | What you get |
 |---|---|
 | Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
-| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold) |
+| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, voice input) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
@@ -132,6 +133,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
+| Voice input | Teal mic in the header opens a draggable **Voice input** window (minimize / maximize / close). Dictate into whichever field you click on any screen; Start / Pause / Resume / Stop, `Ctrl+Shift+Space`, language picker, configurable voice commands. Browser Web Speech API (Chrome / Edge) — no AI model, no API key. See [Voice input](#voice-input) |
 | Lucide sidebar icons | Professional line icons on every visible item; workflow steps Input / Generate / Review / qTest Upload use an icon plus a mini numbered badge (1–4). Grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
 
 ---
@@ -293,6 +295,60 @@ Sidebar → **Prompt templates**. Built-in Default mirrors `ai_test_generator/pr
 ## Review tools (Export, Edit mode, Traceability matrix, Type tags, Version history, Quality score)
 
 Additive Review toolbar features: Export ▾, Edit mode, List/Matrix AC coverage, type tags, version history (`reports/runs/<run>/versions.json`), local quality score + Improve with AI. Existing cards and Batch layout stay as before.
+
+---
+
+## Voice input
+
+Dictate instead of typing — into the story box on **Input**, any field of a test case on **Review**, Requirements, Repo, Settings, or any other text box in the app. It uses the browser's built-in **Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition`): **no AI model, no API key, no `.env` change, no backend call**.
+
+**Open it**
+- Click the **teal mic** in the top-right header (next to **＋ New run**). The **Voice input** window opens at the bottom-right.
+- Click into any text field, then press **Start** (or `Ctrl+Shift+Space`). The window shows **Typing into: &lt;field&gt;** and the field glows blue. Click or Tab to another field at any time — dictation follows the field you focus, no restart needed.
+- While listening, the header mic shows a red **LIVE** badge.
+
+**Window controls**
+
+| Control | What it does |
+|---|---|
+| **Start / Pause / Resume / Stop** | Start listening, pause (keeps the field and caret), resume where you left off, stop |
+| **Language** | English (India) `en-IN` (default), English (US), Hindi, Tamil |
+| Live transcript | Grey italic text is what is being heard right now; each finished phrase is listed with its time (and recognised commands) |
+| **–** Minimize | Shrinks to a **Voice input** pill at the bottom-right (shows LIVE / PAUSED); click to restore |
+| **▢** Maximize | Large centred panel with the full transcript history; click again (or double-click the title) to restore |
+| **×** Close | Stops listening and hides the window; the header mic reopens it |
+| Drag | Drag the teal title bar anywhere; it stays inside the browser window and the position is remembered |
+| **Reset position** | Moves the window back to the bottom-right |
+| **?** | Lists the enabled voice commands |
+
+Text is inserted **at the caret** of the focused input / textarea / editable cell and fires the normal `input` event, so the app reacts exactly as if you typed it (e.g. Review marks the case as edited and enables **Save changes**). Chrome stops recognition after a few seconds of silence; the app restarts it automatically while you are listening.
+
+**Keyboard shortcut:** `Ctrl+Shift+Space` starts / pauses / resumes from anywhere (can be turned off in Settings).
+
+**Voice commands** (say the phrase on its own; phrases are editable)
+
+| Say | Action |
+|---|---|
+| "next field", "next box" | Move to the next text field (like Tab) |
+| "next step" | Review: jump to the same column of the next step row |
+| "new line", "new paragraph" | Insert a line break |
+| "pause", "pause dictation" | Pause |
+| "stop listening", "stop dictation" | Stop |
+| "undo", "scratch that", "delete that" | Undo the last dictated phrase |
+| "add step", "new step" | Review: add a step below the current step (same as the row's **＋** / **＋ Add step**) and move into it |
+| "save changes", "save" | Review: click **💾 Save changes** (only on the Review screen) |
+
+Custom commands can map any phrase to one of the actions above or to **Insert text…** (e.g. say "standard login" to insert a snippet).
+
+**Settings → Preferences → 🎤 Voice input**
+- **Enable launcher** (show / hide the header mic), **Default language**, **Keyboard shortcut** on/off, **Auto-punctuation** (capitalises sentences; "comma", "full stop", "question mark", "exclamation mark", "colon", "semicolon" become symbols), **Window start position** (bottom right · bottom left · top right · remember last position), **Reset window position**.
+- **Voice commands** table: edit the comma-separated phrases for each action, turn rows on/off, **＋ Add custom command**, **Reset to defaults**.
+- These preferences are saved **instantly in this browser's `localStorage`** (keys `atg.voice.prefs`, `atg.voice.pos`) — not in `.env` or the database, and not shared between browsers. The page's **Save changes** button is not needed for them.
+
+**Browser support & privacy**
+- Works in **Google Chrome** and **Microsoft Edge** (desktop). Firefox (and other browsers without speech recognition) shows a greyed-out mic with a tooltip, and the Settings card shows a notice.
+- The first time you press Start, the browser asks for **microphone permission** — click **Allow**. If you blocked it, re-enable it from the site settings (padlock icon in the address bar). Mic access needs `http://localhost` or HTTPS.
+- **Chrome / Edge send the audio to their speech service (Google / Microsoft) for recognition**, so dictation needs an internet connection. Nothing is sent to this app's backend or to any AI provider, and no API key is used.
 
 ---
 

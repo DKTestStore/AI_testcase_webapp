@@ -675,6 +675,7 @@ async function viewSettings(v) {
   // Sync hidden attr with .a for a11y (provider panes)
   $$(".set-prov").forEach((p) => { if (!p.classList.contains("a")) p.hidden = true; else p.hidden = false; });
   $$(".set-pane").forEach((p) => { p.hidden = !p.classList.contains("a"); });
+  if (window.voiceRenderSettings) voiceRenderSettings($('.set-pane[data-pane="preferences"]'));  // Voice input card (voice.js, browser-only prefs)
 
   $$(".set-tabs button").forEach((b) => (b.onclick = () => {
     setShowTab(b.dataset.tab);

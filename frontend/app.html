@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI TestCase Generator</title>
-<link rel="stylesheet" href="/static/css/app.css?v=41">
-<link rel="stylesheet" href="/static/css/search.css?v=41">
-<link rel="stylesheet" href="/static/css/rt.css?v=41">
-<link rel="stylesheet" href="/static/css/rec.css?v=41">
-<link rel="stylesheet" href="/static/css/repo.css?v=41">
-<link rel="stylesheet" href="/static/css/casepreview.css?v=41">
-<link rel="stylesheet" href="/static/css/dashboard.css?v=41">
-<link rel="stylesheet" href="/static/css/requirements.css?v=41">
+<link rel="stylesheet" href="/static/css/app.css?v=42">
+<link rel="stylesheet" href="/static/css/search.css?v=42">
+<link rel="stylesheet" href="/static/css/rt.css?v=42">
+<link rel="stylesheet" href="/static/css/rec.css?v=42">
+<link rel="stylesheet" href="/static/css/repo.css?v=42">
+<link rel="stylesheet" href="/static/css/casepreview.css?v=42">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=42">
+<link rel="stylesheet" href="/static/css/requirements.css?v=42">
+<link rel="stylesheet" href="/static/css/voice.css?v=42">
 </head>
 <body>
 <!-- Lucide Icons (ISC License) — https://lucide.dev/license
@@ -94,6 +95,16 @@
     <path d="m17 8-5-5-5 5" />
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
   </symbol>
+  <!-- Voice input launcher mark (teal tile, mic + sound waves) -->
+  <symbol id="mic-mark" viewBox="0 0 36 36">
+    <rect width="36" height="36" rx="8" fill="#0e9f90" />
+    <path d="M15.2 9.6a3.2 3.2 0 0 0-3.2 3.2v6.4a3.2 3.2 0 0 0 6.4 0v-6.4a3.2 3.2 0 0 0-3.2-3.2z" fill="#fff" />
+    <path d="M10.4 18.2v.6a4.8 4.8 0 0 0 9.6 0v-.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
+    <path d="M15.2 24.4v2.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
+    <path d="M11.8 27h6.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" />
+    <path d="M23.2 13.2a5.2 5.2 0 0 1 0 9.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" />
+    <path d="M26.4 11a8 8 0 0 1 0 14" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" />
+  </symbol>
 </svg>
 <aside class="sb">
   <div class="logo">⚡ AI <span>TestCase</span> Generator</div>
@@ -122,6 +133,7 @@
 <div class="main">
   <div class="topbar">
     <button class="btn g sm" id="newRunBtn" title="Start a new run (clears current data)">＋ New run</button>
+    <button type="button" class="voice-launch" id="voiceLaunch" title="Voice input" aria-label="Voice input"><svg class="mic-mark" viewBox="0 0 36 36" aria-hidden="true"><use href="#mic-mark"></use></svg><span class="live-badge"><i></i>LIVE</span></button>
     <div class="user" id="userBtn"><span class="avatar">U</span>User ▾</div>
     <div class="menu" id="userMenu">
       <div data-go="settings">⚙ Settings</div>
@@ -135,24 +147,25 @@
 
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
-<script src="/static/js/review.js?v=41"></script>
-<script src="/static/js/regen.js?v=41"></script>
-<script src="/static/js/dup.js?v=41"></script>
-<script src="/static/js/cov.js?v=41"></script>
-<script src="/static/js/excel_upload.js?v=41"></script>
-<script src="/static/js/app.js?v=41"></script>
-<script src="/static/js/history.js?v=41"></script>
-<script src="/static/js/batch.js?v=41"></script>
-<script src="/static/js/cmp.js?v=41"></script>
-<script src="/static/js/tokens.js?v=41"></script>
-<script src="/static/js/search.js?v=41"></script>
-<script src="/static/js/prompts.js?v=41"></script>
-<script src="/static/js/rt.js?v=41"></script>
-<script src="/static/js/rec.js?v=41"></script>
-<script src="/static/js/repo.js?v=41"></script>
-<script src="/static/js/runs.js?v=41"></script>
-<script src="/static/js/casepreview.js?v=41"></script>
-<script src="/static/js/dashboard.js?v=41"></script>
-<script src="/static/js/requirements.js?v=41"></script>
+<script src="/static/js/review.js?v=42"></script>
+<script src="/static/js/regen.js?v=42"></script>
+<script src="/static/js/dup.js?v=42"></script>
+<script src="/static/js/cov.js?v=42"></script>
+<script src="/static/js/excel_upload.js?v=42"></script>
+<script src="/static/js/app.js?v=42"></script>
+<script src="/static/js/history.js?v=42"></script>
+<script src="/static/js/batch.js?v=42"></script>
+<script src="/static/js/cmp.js?v=42"></script>
+<script src="/static/js/tokens.js?v=42"></script>
+<script src="/static/js/search.js?v=42"></script>
+<script src="/static/js/prompts.js?v=42"></script>
+<script src="/static/js/rt.js?v=42"></script>
+<script src="/static/js/rec.js?v=42"></script>
+<script src="/static/js/repo.js?v=42"></script>
+<script src="/static/js/runs.js?v=42"></script>
+<script src="/static/js/casepreview.js?v=42"></script>
+<script src="/static/js/dashboard.js?v=42"></script>
+<script src="/static/js/requirements.js?v=42"></script>
+<script src="/static/js/voice.js?v=42"></script>
 </body>
 </html>
