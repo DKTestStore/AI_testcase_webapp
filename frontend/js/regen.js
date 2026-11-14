@@ -4,11 +4,11 @@
 "use strict";
 const RG = { loading: null, ctrl: null, last: null, undo: null, flash: null };
 window.RG = RG;
-window.RG_CHIPS = RG_CHIPS;
 const RG_CHIPS = [["neg", "＋ Add negative cases", "Add negative test cases (invalid, empty and unexpected inputs) with clear error expectations."],
   ["bnd", "Add boundary values", "Add boundary value checks (min, max, just below / above limits)."],
   ["det", "More detailed steps", "Make the steps more detailed and concrete with exact test data and observable expected results."],
   ["sim", "Simplify", "Simplify: fewer, clearer steps without losing coverage."]];
+window.RG_CHIPS = RG_CHIPS;
 const rgClone = (o) => JSON.parse(JSON.stringify(o));
 const rgFind = (k) => S.cases.find((t) => t._k === k);
 
