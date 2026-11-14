@@ -107,7 +107,7 @@ function cpBindHeader(root) {
   const db = $("#cpDrawer", root); if (db) db.onclick = () => { const id = c.id; RP.full = null; CP.full = false; location.hash = "repo"; document.body.classList.remove("cp-sbmin"); render(); setTimeout(() => trDrawer(id, CP.tab), 50); };
   const bk = $("#cpBack", root); if (bk) bk.onclick = () => { location.hash = "repo"; };
   const sbt = $("#cpSbT", root); if (sbt) sbt.onclick = () => { localStorage.setItem("trCpSb", document.body.classList.contains("cp-sbmin") ? "open" : "min"); cpSb(); };
-  $("#cpEdit", root).onclick = () => { trDrawerClose(); RP.full = null; CP.full = false; document.body.classList.remove("cp-sbmin"); RP.edit = { ...JSON.parse(JSON.stringify(c)), folder_path: c.folder_path }; if (location.hash !== "#repo") location.hash = "repo"; S.view = "repo"; render(); };
+  $("#cpEdit", root).onclick = () => { trDrawerClose(); RP.full = null; CP.full = false; document.body.classList.remove("cp-sbmin"); RP.edit = { ...JSON.parse(JSON.stringify(c)), folder_path: c.folder_path }; RP.editSnap = typeof trSnap === "function" ? JSON.stringify(trSnap(RP.edit)) : ""; if (location.hash !== "#repo") location.hash = "repo"; S.view = "repo"; render(); };
   $("#cpAdd", root).onclick = () => trAddToCycleModal([c.id]);
   $("#cpRun", root).onclick = cpRunNow;
   $("#cpMore", root).onclick = (e) => { e.stopPropagation(); cpMenu(e.currentTarget); };
@@ -258,24 +258,37 @@ function cpBindSteps(root) {
   $("#cpRegen", root).onclick = cpRegenModal;
 }
 function cpCopyFallback(txt, ok) { const t = document.createElement("textarea"); t.value = txt; t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); ok(); } catch (e) { toast("Copy failed", true); } t.remove(); }
-function cpRegenShowProposal(c, instruction, provider, model, prior) {
+function cpRegenShowProposal(c, instruction, provider, model, prior, opts) {
+  opts = opts || {};
   const ov = trModal(`<div class="hd"><h3>✨ Regenerate ${esc(c.id)} with AI</h3><span class="tr-x">✕</span></div>
-    <div class="hint">Proposal only — nothing is saved until you confirm, then it becomes a new version (restorable from Versions). ${provider ? esc((typeof prettyProvider === "function" ? prettyProvider(provider) : provider) + (model ? " · " + model : "")) : ""}</div>
+    <div class="hint">Proposal only — nothing is saved until you confirm${opts.asNew ? ", then it is saved as a <b>new case</b>" : ", then it becomes a new version (restorable from Versions)"}. ${provider ? esc((typeof prettyProvider === "function" ? prettyProvider(provider) : provider) + (model ? " · " + model : "")) : ""}</div>
     <div id="cpRgOut"><div class="sub">Generating proposal…</div></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn" id="cpRgGo">↻ Try again</button><button class="btn s" id="cpRgSave" style="display:none">✓ Save as new version</button></div>`, 820);
   let prop = prior || null;
   const load = () => guarded($("#cpRgGo", ov), async () => {
     $("#cpRgOut").innerHTML = `<div class="sub">Generating proposal…</div>`;
-    const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}/regenerate`, { method: "POST", body: { instruction: instruction || "", model: provider || undefined, model_name: model || undefined } });
-    prop = r.proposal; const u = r.usage || {}; const d = cpDiffBlocks(c, prop, "inline");
+    const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}/regenerate`, { method: "POST", body: { instruction: instruction || "", model: provider || undefined, model_name: model || undefined, keep_title_priority: !!opts.keep } });
+    prop = r.proposal; if (opts.keep && prop) { prop.title = c.title; prop.priority = c.priority; } const u = r.usage || {}; const d = cpDiffBlocks(c, prop, "inline");
     $("#cpRgOut").innerHTML = `<div class="cp-vh" style="margin-top:12px"><b>Proposed changes</b> <span class="cp-m">−${d.del}</span><span class="cp-p">+${d.ins}</span><small class="muted" style="margin-left:auto">${esc(u.model_name || "")} · ${fmt(u.total_tokens)} tokens</small></div><div style="max-height:45vh;overflow:auto">${d.html}</div>`;
     $("#cpRgSave").style.display = "";
   });
   $("#cpRgGo", ov).onclick = load;
   if (!prior) load();
   $("#cpRgSave", ov).onclick = () => guarded($("#cpRgSave"), async () => {
-    if (!prop || !confirm("Save the AI proposal as a new version of this case?")) return;
-    const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}`, { method: "PUT", body: { ...prop, note: "Regenerated with AI", event_type: "regenerated", by: cpMe() } });
+    if (!prop) return;
+    const body = { ...prop, note: "Regenerated with AI", event_type: "regenerated", by: cpMe() };
+    if (opts.keep) { body.title = c.title; body.priority = c.priority; }
+    if (opts.asNew) {
+      if (!confirm("Save the AI proposal as a new test case (this case stays unchanged)?")) return;
+      const created = await api("/api/repo/cases", { method: "POST", body: {
+        ...body, folder_path: c.folder_path || "", folder_id: c.folder_id || "", story: c.story || "",
+        tags: c.tags || [], source: "Manual", status: "Draft",
+      }});
+      trClose(); toast(`Added ${created.case.id} as a new case (from ${c.id})`); await cpReload(true);
+      return;
+    }
+    if (!confirm("Save the AI proposal as a new version of this case?")) return;
+    const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}`, { method: "PUT", body });
     trClose(); toast(r.new_version ? `Regenerated · new version v${r.case.version}` : "No changes"); await cpReload(true);
   });
 }
@@ -285,14 +298,17 @@ function cpRegenModal() {
   const defModel = (typeof tcDefaultId === "function" ? tcDefaultId(defProv) : "") || "";
   const tc = { id: c.id, name: c.title, title: c.title, description: c.description, precondition: c.precondition, priority: c.priority, steps: c.steps };
   if (typeof openAiPicker === "function") {
+    const acs = (c.acs || []).map((a) => typeof a === "string" ? { id: a, title: "" } : a);
     return openAiPicker({
       title: "Regenerate with AI",
-      sub: "Proposal only — nothing is saved until you confirm. Same picker as Review.",
+      sub: "Proposal only — nothing is saved until you confirm. Same options as Review Regenerate.",
       confirmLabel: "Confirm & generate proposal",
       kind: "regenerate", expected: 400, compose: true, instruction: true,
       provider: defProv, model: defModel, test_case: tc,
       extra: { feature_text: c.story || "" },
-      onConfirm: (p) => cpRegenShowProposal(c, p.instruction, p.provider, p.model),
+      regenOptions: true, acs, keepDefault: false,
+      asNewLabel: "Add as a new test case instead of replacing (this case stays unchanged)",
+      onConfirm: (p) => cpRegenShowProposal(c, p.instruction, p.provider, p.model, null, { keep: p.keep, asNew: p.asNew }),
     });
   }
   cpRegenShowProposal(c, "", defProv, defModel);

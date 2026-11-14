@@ -225,14 +225,19 @@ def _update_case(c, data, note="Edited") -> bool:
         c["folder_id"] = str(data["folder_id"])
     c["updated"] = now()
     if changed:
-        c["version"] = int(c.get("version", 1)) + 1
-        c.setdefault("versions", []).append({"version": c["version"], "ts": c["updated"], "note": note, "snapshot": _content(c)})
-        _event(c, _s(data.get("event_type"), 20) or "edited", note, by, version=c["version"])
+        if data.get("autosave"):
+            # Persist live fields without minting a version on every debounce tick.
+            # The next manual Save still bumps the version as usual.
+            pass
+        else:
+            c["version"] = int(c.get("version", 1)) + 1
+            c.setdefault("versions", []).append({"version": c["version"], "ts": c["updated"], "note": note, "snapshot": _content(c)})
+            _event(c, _s(data.get("event_type"), 20) or "edited", note, by, version=c["version"])
     if c.get("status") != old_status:
         _event(c, "status", f"{old_status} → {c['status']}", by, old=old_status, new=c["status"])
     if c.get("folder_id") != old_folder:
         _event(c, "moved", "Moved to another folder", by, folder_id=c.get("folder_id"))
-    return changed
+    return changed and not data.get("autosave")
 
 
 def _summary(c) -> Dict[str, Any]:
@@ -950,8 +955,9 @@ def repo_case_regenerate(cid: str, data: Dict[str, Any] = Body(default={})):
                                   model_name=_s(data.get("model_name"), 200) or None)
     p = res["test_case"]
     old = c.get("steps") or []
-    prop = {"title": p.get("name") or c["title"], "description": p.get("description", ""), "precondition": p.get("precondition", ""),
-            "priority": p.get("priority") or c.get("priority", "Medium"),
+    keep = bool(data.get("keep_title_priority"))
+    prop = {"title": (c["title"] if keep else (p.get("name") or c["title"])), "description": p.get("description", ""), "precondition": p.get("precondition", ""),
+            "priority": (c.get("priority") or "Medium") if keep else (p.get("priority") or c.get("priority", "Medium")),
             "steps": [{"step": s["description"], "expected": s["expected"],
                        "data": (s.get("data") or (old[i].get("data", "") if i < len(old) else "")),
                        **({"test_data": s.get("test_data") or (old[i].get("test_data") if i < len(old) else None)}

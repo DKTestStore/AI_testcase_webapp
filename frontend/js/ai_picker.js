@@ -4,7 +4,7 @@
   const st = document.createElement("style");
   st.textContent = `
 .ai-ov{position:fixed;inset:0;background:#0b102066;display:flex;align-items:center;justify-content:center;z-index:80;padding:16px}
-.ai-md{width:560px;max-width:100%;max-height:min(640px,calc(100vh - 32px));background:#fff;border-radius:14px;padding:14px 16px 12px;box-shadow:0 20px 50px #0005;display:flex;flex-direction:column}
+.ai-md{width:560px;max-width:100%;max-height:calc(100vh - 24px);overflow:auto;background:#fff;border-radius:14px;padding:14px 16px 12px;box-shadow:0 20px 50px #0005;display:flex;flex-direction:column}
 .ai-md h1{font-size:18px;margin:0 0 4px}
 .ai-md .sub{margin:0 0 8px}
 .ai-md .msearch{width:100%;margin:6px 0 8px;padding:8px 10px;border:1px solid #d5dbe8;border-radius:8px;font:13px inherit}
@@ -18,6 +18,12 @@
 .ai-md .macts{display:flex;justify-content:flex-end;gap:8px}
 .ai-md label{display:block;font-size:12px;color:#6b7385;margin:0 0 4px}
 .ai-md textarea{width:100%;padding:8px;border:1px solid #d5dbe8;border-radius:8px;font:13px inherit;margin:0 0 8px;min-height:36px;resize:vertical}
+.ai-md .rg-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.ai-md .rg-chip{border:1px solid #d5dbe8;border-radius:14px;padding:4px 8px;font-size:11.5px;background:#fff;cursor:pointer}
+.ai-md .rg-chip.on{border-color:#4361ee;background:#eef2ff;color:#3046c4}
+.ai-md .rg-row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1e2433;margin:4px 0;font-weight:400}
+.ai-md .rg-opts{margin:0 0 8px}
+
 `;
   document.head.appendChild(st);
 
@@ -51,6 +57,29 @@
     return html || `<div class="sub" style="padding:10px">No enabled models match.</div>`;
   }
 
+
+  function regenOptionsHtml(opts) {
+    const chips = (window.RG_CHIPS || [
+      ["neg", "＋ Add negative cases", "Add negative test cases (invalid, empty and unexpected inputs) with clear error expectations."],
+      ["bnd", "Add boundary values", "Add boundary value checks (min, max, just below / above limits)."],
+      ["det", "More detailed steps", "Make the steps more detailed and concrete with exact test data and observable expected results."],
+      ["sim", "Simplify", "Simplify: fewer, clearer steps without losing coverage."]
+    ]);
+    const acs = opts.acs || [];
+    const acOpts = acs.map((a) => {
+      const id = typeof a === "string" ? a : (a.id || "");
+      const title = typeof a === "string" ? "" : (a.title || "");
+      return `<option value="${esc(id)}">${esc(id)}${title ? " · " + esc(String(title).slice(0, 40)) : ""}</option>`;
+    }).join("");
+    const keep = opts.keepDefault ? "checked" : "";
+    const asNewLabel = opts.asNewLabel || "Add as a new test case instead of replacing";
+    return `<div class="rg-opts">
+      <div class="rg-chips">${chips.map((c) => `<span class="rg-chip" data-c="${esc(c[0])}">${esc(c[1])}</span>`).join("")}${acOpts ? `<select class="rg-chip rg-acsel" id="aiPickAc"><option value="">Cover AC… ▾</option>${acOpts}</select>` : ""}</div>
+      <label class="rg-row"><input type="checkbox" id="aiPickKeep" ${keep}> Keep my edits to title &amp; priority</label>
+      <label class="rg-row"><input type="checkbox" id="aiPickNew"> ${esc(asNewLabel)}</label>
+    </div>`;
+  }
+
   function closeAiPicker() {
     const ov = document.getElementById("aiPickerOv");
     if (ov) ov.remove();
@@ -80,6 +109,7 @@
       <h1>${esc(opts.title || "Select AI provider & model")}</h1>
       <p class="sub">${opts.sub || "Choose a provider and model. Nothing is sent until you confirm."}</p>
       ${ins ? `<label>Instruction (optional)</label><textarea id="aiPickIns" rows="2" placeholder="${esc(insPh)}">${esc(insVal)}</textarea>` : ""}
+      ${opts.regenOptions ? regenOptionsHtml(opts) : ""}
       <input class="msearch" id="aiPickQ" placeholder="Search provider or model…" autocomplete="off">
       <div class="mlist" id="aiPickList">${listHtml("", selModel, selProv)}</div>
       <div class="mest" id="aiPickEst"><div class="tc-chip"><span>Estimating…</span></div></div>
@@ -114,11 +144,27 @@
     };
     $("#aiPickQ", ov).oninput = () => paintList();
     if ($("#aiPickIns", ov)) $("#aiPickIns", ov).addEventListener("change", refreshEst);
+    const addLine = (txt) => {
+      const ta = $("#aiPickIns", ov); if (!ta) return;
+      if (!ta.value.includes(txt)) ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + txt;
+      refreshEst();
+    };
+    const chips = window.RG_CHIPS || [];
+    $$(".rg-chip[data-c]", ov).forEach((c) => (c.onclick = () => {
+      c.classList.add("on");
+      const row = chips.find((x) => x[0] === c.dataset.c);
+      if (row) addLine(row[2]);
+    }));
+    const acSel = $("#aiPickAc", ov);
+    if (acSel) acSel.onchange = () => { if (acSel.value) { addLine("Make sure it covers " + acSel.value + "."); acSel.classList.add("on"); } };
+    if (opts.regenOptions && ov.querySelector(".rg-opts") && ov.querySelector(".mlist")) ov.querySelector(".mlist").style.maxHeight = "180px";
     $("#aiPickNo", ov).onclick = () => { closeAiPicker(); if (opts.onCancel) opts.onCancel(); };
     ov.addEventListener("click", (e) => { if (e.target === ov) { closeAiPicker(); if (opts.onCancel) opts.onCancel(); } });
     $("#aiPickGo", ov).onclick = () => {
       const instruction = ins ? (($("#aiPickIns", ov) && $("#aiPickIns", ov).value) || "") : undefined;
-      const picked = { provider: selProv, model: selModel, instruction };
+      const picked = { provider: selProv, model: selModel, instruction,
+        keep: !!( $("#aiPickKeep", ov) && $("#aiPickKeep", ov).checked ),
+        asNew: !!( $("#aiPickNew", ov) && $("#aiPickNew", ov).checked ) };
       closeAiPicker();
       if (opts.onConfirm) opts.onConfirm(picked);
     };

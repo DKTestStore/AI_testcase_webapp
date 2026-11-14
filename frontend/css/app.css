@@ -130,7 +130,7 @@ tr.tcstart td{border-top:2px solid #d5dbec}
 .sr.lbl{border-bottom:1px solid #e3e7f0;margin:0}.sr .num{width:22px;height:22px;border-radius:50%;background:#eef2ff;color:#3730a3;font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
 .sr.just .num{background:#4361ee;color:#fff}
 .sr .ra{display:inline-flex;gap:3px;justify-content:flex-end;opacity:0;transition:opacity .15s}.sr:hover .ra,.sr:focus-within .ra{opacity:1}.sr:hover{background:#fafbff}
-.pop{position:absolute;z-index:80;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 12px 32px #0003;padding:6px;font-size:12.5px}
+.pop{position:fixed;z-index:80;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 12px 32px #0003;padding:6px;font-size:12.5px}
 .pop .pi{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer;text-transform:none;font-weight:400;color:#1e2433;font-size:12.5px;margin:0}.pop .pi:hover{background:#f1f5ff}.pop .pi.a{background:#eef2ff}
 .pop .pi.danger{color:#d33}.pop .pi.danger:hover{background:#fef2f2}.pop .aclist{max-height:260px;overflow:auto}.pop .aclist b{width:44px;flex-shrink:0}
 .pop .confirm{border-top:1px solid #f1f5f9;margin-top:4px;padding:8px}
@@ -359,3 +359,8 @@ del{background:#fdeaea;color:#a12020;text-decoration:line-through}ins{background
   .set-plist{width:100%}
   .set-int{grid-template-columns:1fr}
 }
+
+.as-ind{font-size:12px;color:#6b7385;margin-left:8px;align-self:center;white-space:nowrap}
+.as-ind.saving{color:#445}
+.as-ind.ok{color:#15803d}
+.as-ind.err{color:#b91c1c;cursor:pointer;text-decoration:underline}
