@@ -1,0 +1,322 @@
+{
+  "name": "Edge value library (Bug Magnet-style)",
+  "note": "Built-in standard edge values for test data. Not a copy of Bug Magnet's exact list. Works offline — no AI call. Security payloads are for testing only.",
+  "categories": [
+    {
+      "id": "text",
+      "name": "Text / long strings",
+      "match": [
+        "password",
+        "confirm",
+        "name",
+        "text"
+      ],
+      "items": [
+        {
+          "v": "",
+          "lab": "empty string"
+        },
+        {
+          "v": "A",
+          "lab": "1 character"
+        },
+        {
+          "v": "256-char string",
+          "lab": "256",
+          "len": 256
+        },
+        {
+          "v": "1,024-char string",
+          "lab": "1,024",
+          "len": 1024
+        },
+        {
+          "v": "65,536-char string",
+          "lab": "64k",
+          "len": 65536
+        }
+      ]
+    },
+    {
+      "id": "unicode",
+      "name": "Unicode & emoji",
+      "match": [
+        "password",
+        "confirm",
+        "name",
+        "text"
+      ],
+      "items": [
+        {
+          "v": "café",
+          "lab": "accents"
+        },
+        {
+          "v": "日本語",
+          "lab": "CJK"
+        },
+        {
+          "v": "😀🔥",
+          "lab": "emoji"
+        },
+        {
+          "v": "العربية",
+          "lab": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "ws",
+      "name": "Whitespace",
+      "match": [
+        "password",
+        "confirm",
+        "name",
+        "text",
+        "email"
+      ],
+      "items": [
+        {
+          "v": "  leading",
+          "lab": "leading spaces"
+        },
+        {
+          "v": "trailing  ",
+          "lab": "trailing spaces"
+        },
+        {
+          "v": "   ",
+          "lab": "whitespace only"
+        }
+      ]
+    },
+    {
+      "id": "special",
+      "name": "Special characters",
+      "match": [
+        "password",
+        "confirm",
+        "name",
+        "text"
+      ],
+      "items": [
+        {
+          "v": "!@#$%^&*()",
+          "lab": "symbols"
+        },
+        {
+          "v": "O'Brien",
+          "lab": "quote"
+        },
+        {
+          "v": "a < b > c & d",
+          "lab": "< > &"
+        }
+      ]
+    },
+    {
+      "id": "numbers",
+      "name": "Numbers",
+      "match": [
+        "number"
+      ],
+      "items": [
+        {
+          "v": "0",
+          "lab": "zero"
+        },
+        {
+          "v": "-1",
+          "lab": "negative"
+        },
+        {
+          "v": "2147483647",
+          "lab": "max 32-bit int"
+        },
+        {
+          "v": "0.1",
+          "lab": "decimal"
+        },
+        {
+          "v": "1e308",
+          "lab": "scientific"
+        }
+      ]
+    },
+    {
+      "id": "emails",
+      "name": "Emails",
+      "match": [
+        "email"
+      ],
+      "items": [
+        {
+          "v": "user@example.com",
+          "lab": "valid",
+          "kind": "valid"
+        },
+        {
+          "v": "user+tag@example.com",
+          "lab": "plus-tag (valid)",
+          "kind": "valid"
+        },
+        {
+          "v": "a@b.co",
+          "lab": "shortest valid",
+          "kind": "boundary"
+        },
+        {
+          "v": "not-an-email",
+          "lab": "invalid",
+          "kind": "invalid"
+        },
+        {
+          "v": "user@",
+          "lab": "invalid",
+          "kind": "invalid"
+        },
+        {
+          "v": "@example.com",
+          "lab": "invalid",
+          "kind": "invalid"
+        }
+      ]
+    },
+    {
+      "id": "names",
+      "name": "Names",
+      "match": [
+        "name"
+      ],
+      "items": [
+        {
+          "v": "José",
+          "lab": "accent",
+          "kind": "valid"
+        },
+        {
+          "v": "O'Brien",
+          "lab": "apostrophe",
+          "kind": "valid"
+        },
+        {
+          "v": "张伟",
+          "lab": "CJK",
+          "kind": "valid"
+        }
+      ]
+    },
+    {
+      "id": "urls",
+      "name": "URLs",
+      "match": [
+        "url"
+      ],
+      "items": [
+        {
+          "v": "https://example.com",
+          "lab": "valid https",
+          "kind": "valid"
+        },
+        {
+          "v": "not a url",
+          "lab": "invalid",
+          "kind": "invalid"
+        },
+        {
+          "v": "javascript:alert(1)",
+          "lab": "javascript: (testing)",
+          "kind": "invalid",
+          "testing_only": true
+        }
+      ]
+    },
+    {
+      "id": "dates",
+      "name": "Dates",
+      "match": [
+        "date"
+      ],
+      "items": [
+        {
+          "v": "2024-02-29",
+          "lab": "leap day",
+          "kind": "valid"
+        },
+        {
+          "v": "2023-02-31",
+          "lab": "31 Feb (invalid)",
+          "kind": "invalid"
+        },
+        {
+          "v": "1970-01-01",
+          "lab": "Unix epoch",
+          "kind": "boundary"
+        },
+        {
+          "v": "9999-12-31",
+          "lab": "far future",
+          "kind": "boundary"
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "name": "Security",
+      "match": [
+        "email",
+        "password",
+        "confirm",
+        "name",
+        "text",
+        "url"
+      ],
+      "testing_only": true,
+      "items": [
+        {
+          "v": "' OR 1=1 --",
+          "lab": "SQLi (testing only)",
+          "kind": "invalid",
+          "testing_only": true
+        },
+        {
+          "v": "<script>alert(1)</script>",
+          "lab": "XSS (testing only)",
+          "kind": "invalid",
+          "testing_only": true
+        }
+      ]
+    },
+    {
+      "id": "lorem",
+      "name": "Lorem / length text",
+      "match": [
+        "text",
+        "name"
+      ],
+      "items": [
+        {
+          "v": "256-char lorem",
+          "lab": "256",
+          "len": 256
+        },
+        {
+          "v": "1,024-char lorem",
+          "lab": "1,024",
+          "len": 1024
+        },
+        {
+          "v": "64k lorem",
+          "lab": "64k",
+          "len": 65536
+        }
+      ]
+    },
+    {
+      "id": "custom",
+      "name": "Custom",
+      "match": [],
+      "items": []
+    }
+  ]
+}

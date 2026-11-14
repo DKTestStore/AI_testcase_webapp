@@ -115,7 +115,14 @@
     try {
       if (typeof S !== "undefined" && S && S.run && S.run.model) return String(S.run.model).toLowerCase();
     } catch (e) { /* ignore */ }
+    if (typeof defaultProvider === "function") return defaultProvider();
     return "gemini";
+  }
+  function generateProviderSource() {
+    try {
+      if (typeof S !== "undefined" && S && S.run && S.run.model) return "generate";
+    } catch (e) { /* ignore */ }
+    return "settings";
   }
   function resolvedProvider() {
     if (P.engine === "none") return "none";
@@ -132,7 +139,11 @@
       const p = prettyProvider(resp.provider || resolvedProvider());
       return resp.model ? (p + " · " + resp.model) : p;
     }
-    if (P.engine === "generate") return "Generate provider · " + prettyProvider(generateProvider());
+    if (P.engine === "generate") {
+      const src = generateProviderSource();
+      const label = src === "settings" ? "Settings default" : "Generate provider";
+      return label + " · " + prettyProvider(generateProvider());
+    }
     return prettyProvider(P.engine);
   }
   function voiceLang() {
@@ -587,7 +598,8 @@
       } else {
         const j = await api("/api/help/chat", {
           method: "POST",
-          body: { question: question, history: historyPayload().slice(0, -1), screen: screen, provider: provider }
+          body: { question: question, history: historyPayload().slice(0, -1), screen: screen, provider: provider,
+            run_model: (typeof resolvedRunProvider === "function" ? (generateProviderSource() === "generate" ? generateProvider() : "") : (S && S.run && S.run.model) || "") }
         });
         resp = j;
         sources = j.sources || [];

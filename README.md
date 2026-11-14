@@ -28,9 +28,10 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 16. [Voice input](#voice-input)
 17. [Help Assistant](#help-assistant)
 18. [Floating windows](#floating-windows)
-19. [Troubleshooting](#troubleshooting)
-20. [Testing notes](#6-testing-notes)
-21. [Original CLI](#original-cli-pipeline)
+19. [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin)
+20. [Troubleshooting](#troubleshooting)
+21. [Testing notes](#6-testing-notes)
+22. [Original CLI](#original-cli-pipeline)
 
 ---
 
@@ -126,7 +127,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Area | What you get |
 |---|---|
 | Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
-| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, voice input, Help Assistant, floating windows) |
+| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, **default Generate provider**, **Edge value library**, voice input, Help Assistant, floating windows) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
@@ -136,7 +137,8 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
 | Voice input | Teal mic in the header opens a draggable **Voice input** window (minimize / maximize / close). Dictate into whichever field you click on any screen; Start / Pause / Resume / Stop, `Ctrl+Shift+Space`, language picker, configurable voice commands. Browser Web Speech API (Chrome / Edge) — no AI model, no API key. See [Voice input](#voice-input) |
-| Help Assistant | Dark-blue robot-headset icon in the header (right after the voice mic) opens a draggable **Help Assistant** window (minimize to a pill / maximize with conversation history / close). Answers are grounded in this README and `docs/help_faq.md`. Choose the Generate provider, a specific provider, or No-AI docs search. Quick-question chips, source citations, and jump buttons to the matching screen or Settings tab. Prefs stay in this browser. See [Help Assistant](#help-assistant) |
+| Help Assistant | Dark-blue robot-headset icon in the header (right after the voice mic) opens a draggable **Help Assistant** window (minimize to a pill / maximize with conversation history / close). Answers are grounded in this README and `docs/help_faq.md`. **Use Generate provider** follows the current run’s saved provider, or **Settings → Preferences → Default provider** when the run has none (Repo / Excel). Quick-question chips, source citations, and jump buttons to the matching screen or Settings tab. Prefs stay in this browser. See [Help Assistant](#help-assistant) |
+| Test data & coverage | Review can generate **Valid / Invalid / Boundary** test data per step (heuristic samples and/or the built-in **Edge value library**), **Boost coverage** with Negative / Boundary / Security suggestions (library values, no extra AI call by default), and export **Gherkin** (`.feature`, or a zip when a run has more than one story). See [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin) |
 | Floating windows | Voice input and Help Assistant share a window manager: they dock side by side (Help to the left of Voice), share one minimize tray, fill the content area when maximized (the other window auto-minimizes), click-to-front, and snap apart if they overlap. See [Floating windows](#floating-windows) |
 | Lucide sidebar icons | Professional line icons on every visible item; workflow steps Input / Generate / Review / qTest Upload use an icon plus a mini numbered badge (1–4). Grouped order: Dashboard + Setup; steps 1–4 + Run history; Requirements / Repo / Test Runs; Prompts / Token Usage / Settings. No “NEW” badges (Run history count badge kept). |
 
@@ -148,19 +150,19 @@ The sidebar is grouped (no section captions): **Dashboard** and **Setup checklis
 
 1. **Input:** *Jira Story* (fetch), *Local text*, or *Upload Excel* (skips Generate). Optional **Record**.
 2. **Generate:** pick **Provider** + Default / Custom prompt (or templates from Input). Optional AI Reviewer. Token usage card.
-3. **Review:** edit, map ACs, save Excel; **Save to Test Case Repo** / **Execute now**.
-4. **qTest Upload:** Preview payload → Confirm Upload; **RTM** tab for Story → AC → TC → qTest IDs.
+3. **Review:** edit, map ACs, generate test data, boost coverage, save Excel; **Save to Test Case Repo** / **Execute now**. The Review badge shows the Generate provider (or the Settings default when a Repo / Excel run has none).
+4. **qTest Upload:** Preview payload → Confirm Upload; **RTM** tab for Story → AC → TC → qTest IDs. Test data is appended into each step description so it reaches qTest without a new column.
 
 **＋ New run** starts fresh (previous run stays in history). **Log out** clears only the session.
 
 ### Review UI (summary)
 
-Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewer apply/dismiss, unsaved-edit guard. See also [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score).
+Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewer apply/dismiss (optional per-call provider override), unsaved-edit guard, **Test Data** column, coverage chips (Positive / Negative / Boundary / Security), **Generate test data**, **Boost coverage**, and **Export ▾** including Gherkin. See also [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score) and [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin).
 
 ### Excel download and upload
 
-- Export: qTest’s 6 columns plus review-only AC Tags / Priority / Review Status + **AC List** sheet (review columns are **not** sent to qTest).
-- Upload: `.xlsx`, max 5 MB; modes Replace / Append / Merge by TC ID; `GET /api/excel/template`.
+- Export: qTest’s 6 columns plus AC Tags / Priority / Review Status / **Type** / **Test Data** + **AC List** sheet. The six standard columns stay the same; Test Data is also appended into the step description for qTest upload.
+- Upload: `.xlsx`, max 5 MB; modes Replace / Append / Merge by TC ID; optional Type and Test Data columns; `GET /api/excel/template`.
 
 ### Batch mode (multiple stories)
 
@@ -179,7 +181,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 ## 4. Setup checklist, Settings, logs
 
 - **Setup checklist:** Gemini key + model (required), Jira, qTest (optional), default prompt file.
-- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, Voice input, Help Assistant, Floating windows). Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**.
+- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, **default Generate provider**, **Edge value library** enable / categories / custom values / import / export / reset, Voice input, Help Assistant, Floating windows). Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**. No new `.env` keys are required for these preferences.
 - **Logs:** `backend/logs/app.log` (rotating 5 MB × 3).
 
 Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/app.db` (and `-wal`/`-shm`), `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.
@@ -199,9 +201,11 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 │   ├── app.py                  # FastAPI routes + static pages
 │   ├── services.py             # AI / Jira / qTest wrappers
 │   ├── test_repo.py / test_runs.py / requirements_repo.py / dashboard.py / recorder.py / help.py
+│   ├── testdata.py             # test data, Edge library, boost coverage, Gherkin export
+│   ├── data/edge_values.json   # built-in Bug Magnet-style catalog (our own values)
 │   ├── settings_store.py / history_store.py / session_store.py / token_usage.py
 │   └── …
-├── frontend/                   # welcome.html, app.html, css/ (incl. help.css, winmgr.css), js/ (incl. help.js, winmgr.js)
+├── frontend/                   # welcome.html, app.html, css/ (incl. help.css, winmgr.css, testdata.css), js/ (incl. help.js, winmgr.js, testdata.js)
 ├── docs/
 │   └── help_faq.md             # Short FAQ used by the Help Assistant
 ├── requirements.txt
@@ -234,10 +238,10 @@ All `/api/*` routes (except health/session start as applicable) require the sess
 | Area | Examples |
 |---|---|
 | Session / health | `POST /api/session/start`, `POST /api/session/logout`, `GET /api/health`, `GET /api/state`, `GET /api/setup/status` |
-| Input / generate / review | `POST /api/input/jira\|local`, `POST /api/generate`, `POST /api/review/*`, `PUT /api/review/test_cases` |
-| Excel / export | `POST /api/excel/import`, `GET /api/excel/template`, `GET /api/export`, `GET /api/review/excel` |
+| Input / generate / review | `POST /api/input/jira\|local`, `POST /api/generate`, `POST /api/review/*` (incl. `testdata`, `boost`, `regenerate`, `ai`), `PUT /api/review/test_cases`, `GET /api/testdata/library` |
+| Excel / export | `POST /api/excel/import`, `GET /api/excel/template`, `GET /api/export` (`xlsx` / `csv` / `qtest` / `feature`; `outline`, `tags`, `background`, `stories`), `GET /api/review/excel` |
 | qTest | `POST /api/qtest/preview\|upload`, `GET /api/qtest/rtm`, `POST /api/qtest/retry_failed` |
-| Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/prompt/default`, `/api/templates*`, `GET /api/tokens` (paged), `GET /api/tokens/export.csv`, `POST /api/tokens/delete`, `/api/usage` |
+| Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/settings/prefs` (default provider + Edge library), `GET\|PUT /api/prompt/default`, `/api/templates*`, `GET /api/tokens` (paged), `GET /api/tokens/export.csv`, `POST /api/tokens/delete`, `/api/usage` |
 | History / batch | `/api/history*`, `/api/batch*` |
 | Test Case Repo | `/api/repo*` |
 | Test Runs | `/api/runs*`, `/api/attachments*` |
@@ -285,7 +289,7 @@ Sidebar: project switcher + **Requirements** (Projects / Traceability reachable 
 
 Delete: row icon, checkboxes (select-all on the current page), **Delete selected**, and **Delete older than** a date. `POST /api/tokens/delete` with `{ids:[…]}` or `{before:"YYYY-MM-DD"}`; `confirm: false` previews count + token total, `confirm: true` applies. Each entry has a stable `id` (`TU-` + 12 hex); older rows are backfilled on read/write. Before each delete the ledger is copied to `ai_test_generator/reports/token_ledger.bak.json` plus a timestamped file (last 5 kept).
 
-Deletes refresh this page’s tiles, daily chart, breakdown and table, and the **Dashboard** AI token totals (same `token_usage._load()` data). They do **not** modify `ai_test_generator/reports/gemini_usage.json` (the provider’s real Gemini daily quota). The Daily quota tile on this page is ledger vs the Token settings daily limit, so it **does** change after a delete.
+The ledger action list includes **Test data** and **Boost coverage** (recorded only when a model is actually called). Deletes refresh this page’s tiles, daily chart, breakdown and table, and the **Dashboard** AI token totals (same `token_usage._load()` data). They do **not** modify `ai_test_generator/reports/gemini_usage.json` (the provider’s real Gemini daily quota). The Daily quota tile on this page is ledger vs the Token settings daily limit, so it **does** change after a delete.
 
 ## Dashboard
 
@@ -301,7 +305,7 @@ Sidebar → **Prompt templates**. Built-in Default mirrors `ai_test_generator/pr
 
 ## Review tools (Export, Edit mode, Traceability matrix, Type tags, Version history, Quality score)
 
-Additive Review toolbar features: Export ▾, Edit mode, List/Matrix AC coverage, type tags, version history (`reports/runs/<run>/versions.json`), local quality score + Improve with AI. Existing cards and Batch layout stay as before.
+Additive Review toolbar features: Export ▾ (Excel, CSV, qTest-import CSV, **Gherkin .feature**), Edit mode, List/Matrix AC coverage, type tags (Positive / Negative / Edge / **Boundary** / **Security**), version history (`reports/runs/<run>/versions.json`), local quality score + Improve with AI, **Generate test data**, and **Boost coverage**. Existing cards and Batch layout stay as before.
 
 ---
 
@@ -381,7 +385,7 @@ An in-app chat that answers questions about how this app works, grounded in this
 Answers include **source citations** (README or FAQ heading) and, when relevant, **jump buttons** that open the matching screen or Settings tab (for example Settings → Integrations → Zephyr Scale). A context banner can show the current screen name (“You are on Review — ask about this screen”).
 
 **Answer engine**
-- **Use Generate provider** (default) — follows the Provider dropdown on Generate (`S.run.model`); no extra key.
+- **Use Generate provider** (default) — follows the provider saved on the current run after Generate. If the run has no saved provider (Repo or Excel open), it uses **Settings → Preferences → Default provider** (not a hardcoded Gemini). The badge shows *Generate provider · …* or *Settings default · …*.
 - A specific provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, or Ollama) — uses that provider’s key and model from Settings → AI Providers, via the same backend dispatch as Generate.
 - **No AI — docs search only** — no model is called. `GET /api/help/search` returns ranked README / FAQ sections with snippets.
 
@@ -411,6 +415,36 @@ Voice input and Help Assistant share a front-end window manager (`frontend/js/wi
 
 ---
 
+
+## Test data, coverage and Gherkin
+
+Additive Review and Settings features. Existing Generate, Excel, qTest, and Repo flows stay backward compatible.
+
+**Use Generate provider**
+- After **Generate**, the run stores the provider id (`run.model`) and the configured model name (`run.model_name`). Review shows a badge such as `Provider: Groq · openai/gpt-oss-120b`.
+- **Regenerate** and **AI Reviewer** use that provider. The AI Reviewer caret offers a **per-call override**; it is not saved on the run. The Regenerate popover names the resolved provider instead of always saying Gemini.
+- When a run has no saved provider (opened from the **Test Case Repo** or Excel), Review uses **Settings → Preferences → Default provider** instead of a hardcoded Gemini, and the badge links to that setting. New runs leave `model` empty until you Generate (the Generate dropdown still pre-selects the Settings default).
+
+**Test data generator**
+- **Generate test data** (all cases, or regenerate one step) proposes Valid / Invalid / Boundary values. Per-field **Source** can be AI-style samples, the **Edge value library**, or both.
+- Accept writes a **Test Data** column on each step (`step.test_data` plus a flattened `data` string). Edit, regenerate, or use **⚡** to insert a library value. Persist with the existing **Save changes** (`PUT /api/review/test_cases`).
+- `POST /api/review/testdata` is proposal-only. The default path is heuristic + library (no live model call, so no token row). Token action **Test data** is reserved if an AI path is added later.
+
+**Edge value library**
+- Built-in catalog in `backend/data/edge_values.json` (Bug Magnet-style categories such as emails, password length, unicode, whitespace, dates, URLs, and security payloads). These are our own values, not a copy of Bug Magnet’s exact list. Lookups are offline.
+- `GET /api/testdata/library` returns the catalog with Settings prefs applied (enable, category toggles, custom values).
+- **Settings → Preferences → Edge value library**: enable, toggle categories, add custom values, Import / Export JSON, Reset to built-in. Security payloads are flagged **testing only**.
+
+**Boost coverage**
+- **Boost coverage** (`POST /api/review/boost`) previews missing Negative, Boundary, and Security cases. Boundary and Security values come from the Edge library (offline — no extra AI call). Confirm appends the selected cases; they appear with a **NEW** badge. Coverage chips show Positive / Negative / Boundary / Security (legacy **Edge** types count as Boundary).
+- Token action **Boost coverage** is reserved if an optional AI path is added later; the default preview does not record usage.
+
+**Gherkin export**
+- **Export ▾ → Gherkin (.feature)** (`GET /api/export?fmt=feature`) builds a Feature with optional Background, `@jira-{story}` and type tags (`@negative`, `@boundary`, `@security`), one Scenario per test case, or a **Scenario Outline + Examples** table built from test data. Multiple stories in the same run download as a `.zip` (stdlib `zipfile`, no extra dependency).
+
+**Round-trip**
+- Excel import / export includes **Type** and **Test Data** columns. Repo save / load keeps `data` and `test_data`. qTest upload appends `[Test data: …]` to the step description without changing the existing six-column layout. Run history stores the provider on each entry (`model`, `model_name`); Alembic revision `003_provider_testdata` adds those columns and is applied automatically when the app starts (`alembic upgrade head` on uvicorn startup).
+
 ## Troubleshooting
 
 | Issue | What to try |
@@ -432,6 +466,7 @@ Offline mocks (process env only, **not** read from `.env`): `ATG_MOCK_GEMINI=1`,
 - Create data without live LLM calls via Excel import or `PUT /api/review/test_cases` after Local input; use **Preview payload** for qTest.
 - Useful: `GET /api/health`, `GET /api/setup/status`, `GET /api/history`, `GET|PUT /api/settings/history_limit`.
 - Help Assistant ranking is covered by mocked unit tests in `tests/test_help_search.py` (no network, no provider calls).
+- Test data, Edge library, Boost coverage, Gherkin export, sanitize preservation, and provider fallback are covered by mocked unit tests in `tests/test_testdata_library.py` (no network, no provider calls).
 
 ---
 

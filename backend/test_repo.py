@@ -97,6 +97,15 @@ def _steps(raw) -> List[Dict[str, str]]:
             continue
         st = {"step": _s(s.get("step", s.get("description", ""))), "expected": _s(s.get("expected")),
               "data": _s(s.get("data"))}
+        td = s.get("test_data")
+        if isinstance(td, dict):
+            st["test_data"] = td
+            if not st["data"]:
+                try:
+                    from .testdata import format_test_data
+                    st["data"] = format_test_data(td)
+                except Exception:
+                    pass
         if st["step"] or st["expected"] or st["data"]:
             out.append(st)
     return out
@@ -271,11 +280,26 @@ def _match(d, case) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _review_step(s: Dict[str, Any]) -> Dict[str, Any]:
+    td = s.get("test_data") if isinstance(s.get("test_data"), dict) else None
+    data = str(s.get("data") or "").strip()
+    if not data and td:
+        try:
+            from .testdata import format_test_data
+            data = format_test_data(td)
+        except Exception:
+            data = ""
+    out = {"step": s.get("description", ""), "expected": s.get("expected", ""), "data": data}
+    if td:
+        out["test_data"] = td
+    return out
+
+
 def from_review_case(tc: Dict[str, Any], story: str) -> Dict[str, Any]:
     return {"title": tc.get("name", ""), "description": tc.get("description", ""), "precondition": tc.get("precondition", ""),
             "priority": tc.get("priority") or "Medium", "type": tc.get("type", ""), "story": story,
             "acs": tc.get("acs") or [], "ref": tc.get("id", ""),
-            "steps": [{"step": s.get("description", ""), "expected": s.get("expected", "")} for s in tc.get("steps") or []]}
+            "steps": [_review_step(s) for s in tc.get("steps") or []]}
 
 
 def save_many(cases: List[Dict[str, Any]], *, story="", story_title="", folder_id="", status="Draft", tags=None,
@@ -783,7 +807,7 @@ def repo_save_back(data: Dict[str, Any] = Body(...)):
             c = next((x for x in d["cases"] if x["id"] == rid), None)
             if c:
                 rc["story"] = c.get("story") or story
-                for k, st in enumerate(rc["steps"]):      # Review has no test-data column: keep the repo's
+                for k, st in enumerate(rc["steps"]):      # keep the repo's data only when Review has none
                     if k < len(c.get("steps") or []) and not st.get("data"):
                         st["data"] = c["steps"][k].get("data", "")
                 (res["updated"] if _update_case(c, rc, "Saved back from Review") else res["unchanged"]).append(c["id"])
@@ -923,7 +947,10 @@ def repo_case_regenerate(cid: str, data: Dict[str, Any] = Body(default={})):
     old = c.get("steps") or []
     prop = {"title": p.get("name") or c["title"], "description": p.get("description", ""), "precondition": p.get("precondition", ""),
             "priority": p.get("priority") or c.get("priority", "Medium"),
-            "steps": [{"step": s["description"], "expected": s["expected"], "data": old[i].get("data", "") if i < len(old) else ""}
+            "steps": [{"step": s["description"], "expected": s["expected"],
+                       "data": (s.get("data") or (old[i].get("data", "") if i < len(old) else "")),
+                       **({"test_data": s.get("test_data") or (old[i].get("test_data") if i < len(old) else None)}
+                          if (s.get("test_data") or (i < len(old) and old[i].get("test_data"))) else {})}
                       for i, s in enumerate(p.get("steps") or [])]}
     try:
         token_usage.record(action="Regenerate (repo)", usage=res["usage"], run={"story_id": c.get("story") or "", "jira": {"summary": c.get("title")}, "source": "repo"}, mode="repo")
