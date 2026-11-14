@@ -336,6 +336,11 @@ del{background:#fdeaea;color:#a12020;text-decoration:line-through}ins{background
 .set-detail{flex:1;min-width:0;background:#fff;border:1px solid #e3e7f0;border-radius:12px;padding:18px 20px;min-height:280px}
 .set-detail h2{font-size:18px;margin:0 0 4px}.set-detail .lede{color:#6b7385;margin:0 0 14px;font-size:13px}
 .set-prov{display:none}.set-prov.a{display:block}
+.set-subtabs{display:flex;gap:4px;border-bottom:1px solid #e3e7f0;margin:0 0 14px}
+.set-subtabs button{border:0;background:none;padding:8px 12px;font-weight:600;color:#6b7385;cursor:pointer;border-bottom:2px solid transparent;font-size:13px;font-family:inherit}
+.set-subtabs button.a{color:#4361ee;border-bottom-color:#4361ee}
+.set-subpane{display:none}.set-subpane.a{display:block}
+
 .set-field{margin-bottom:14px}.set-field label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .set-field input{width:100%;max-width:560px}
 .set-field .hint{font-size:11px;color:#6b7385;margin-top:4px}

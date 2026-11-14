@@ -62,7 +62,7 @@ Free-tier keys also have per-minute and per-day limits. HTTP 429 is retried up t
 
 1. On **Generate**, tick **Also run AI Reviewer after generation**, or click **Run AI Reviewer** on the Review toolbar.
 2. When it finishes, Review shows the result so you can compare, apply, or dismiss the suggestions.
-3. It uses the same provider as **Generate** for that run (the Review badge shows the provider and model name). If the run has no saved provider (Repo or Excel), it uses **Settings → Preferences → Default provider**. The Review caret lets you override the **provider and model** for this call only. Before the call, an estimate strip shows estimated input/output tokens, example cost, and context fit (Open in calculator). Token usage is recorded in the ledger with estimated vs actual values.
+3. It defaults to the same provider as **Generate** for that run (the Review badge shows the provider and model name). If the run has no saved provider (Repo or Excel), it uses **Settings → Preferences → Default provider**. **Run AI Reviewer** opens a modal to search and pick a **provider and model** (grouped by provider, current/default marked), shows a pre-call estimate, and runs only after **Confirm**. The same modal is used from Repo edit (**Review with AI**) and Repo case regenerate. Token usage is recorded in the ledger with estimated vs actual values.
 
 This is separate from inline editing, AC mapping, duplicate detection (local, no AI call), and the local quality score / Improve with AI tools on the Review toolbar.
 
@@ -71,7 +71,7 @@ This is separate from inline editing, AC mapping, duplicate detection (local, no
 The **Review** step (step 3) is where you work with generated (or uploaded) cases before export or upload.
 
 - Edit names, descriptions, preconditions and steps inline. Set priority, AC tags and review status.
-- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (optional per-call provider), Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin).
+- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (opens the shared provider/model picker, then Confirm), Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin).
 - A provider badge shows the Generate provider, or the Settings default when the run has none. Coverage chips count Positive / Negative / Boundary / Security cases. Each step has a **Test Data** column (edit, regenerate, or ⚡ insert from the Edge library).
 - Additive tools also include Edit mode, AC coverage (List / Matrix), type tags, version history and a local quality score.
 - When you are happy, **Save to Test Case Repo** or **Execute now**, or continue to **qTest Upload**. Test data is appended into the qTest step description; the six-column layout is unchanged.
@@ -174,17 +174,18 @@ Excel, CSV, and qTest-import CSV exports still work as before.
 
 **Token Usage** has two tabs: the existing **Ledger** and a **Calculator** (`#tokens/calculator`).
 
-- The calculator counts the text you paste (or the current run’s requirements), shows coloured tokens and optional Token IDs, estimates cost and context fit for the selected model, compares all enabled models grouped by provider, and warns when the prompt plus expected output is over the context window.
+- The calculator counts the text you paste (or the current run’s requirements, or the full prompt passed from Generate / Review via Open in calculator), shows coloured tokens and optional Token IDs (high-contrast numbered badges; the toggle re-paints immediately without a new API call), estimates cost and context fit for the selected model, compares all enabled models grouped by provider, and warns when the prompt plus expected output is over the context window.
 - Counts use **characters ÷ 4** (or the model’s divisor) by default. **tiktoken** is optional and only used for OpenAI / Codex when the package is already installed and the pref is on. Provider count APIs are off by default because they use quota.
-- Example prices are labelled as such until you edit them in **Settings → Preferences → Model registry**. The Token Usage month-cost tile still uses the workspace-wide global `$ / 1M` rates on that page.
+- Example prices are labelled as such until you edit them in **Settings → AI Providers → Models**. The Token Usage month-cost tile still uses the workspace-wide global `$ / 1M` rates on that page.
 
 Generate, AI Review, Regenerate and Help show a live estimate before you call the model. **Generate test data** and **Boost coverage** show **No AI call · 0 tokens** when they use the library / heuristic path.
 
 ## Model registry and daily limits
 
-**Settings → Preferences** keeps the existing default provider and Edge library cards, and adds:
+**Settings → AI Providers** has **Connection**, **Models**, and **Limits** sub-tabs on each provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama). Connection keeps the API key and existing model ID fallback. **Settings → Preferences** keeps the existing default provider, Edge library, history, duplicate, and calculator-option cards.
 
-- **Model registry** — several models per provider, each with example input/output rates, a context limit, a default ★, and an enable toggle. Dropdowns on Generate, AI Review, Regenerate and Help list enabled models. The starred model is the default. Existing **Settings → AI Providers** model ID fields (and env) still work as a fallback. The registry is stored in the app settings database and is seeded from the model already configured for each provider; it does not change `.env`.
-- **Daily token & cost limits** per provider — leave a field blank for no warning. When you set a limit, the Dashboard and Token Usage show a banner at 80% of that day’s usage for that provider. Click the banner to open the ledger already filtered to that provider.
+- **Models** — several models for *that* provider, each with example input/output rates, a context limit, a default ★, and an enable toggle. Dropdowns on Generate, AI Review, Regenerate and Help list enabled models. The starred model is the default. Existing **Connection** model ID fields (and env) still work as a fallback. The registry is stored in the app settings database and is seeded from the model already configured for each provider; it does not change `.env`.
+- **Limits** — daily token & cost caps for *that* provider. Leave a field blank for no warning. When you set a limit, the Dashboard and Token Usage show a banner at 80% of that day’s usage for that provider. Click the banner to open the ledger already filtered to that provider.
+- Generate estimates count the **full prompt** (default or custom prompt, or each selected template, plus the story and the type-hint line), multiplied by the number of templates, plus the AI Reviewer if that toggle is on. **Open in calculator** passes the same composed text.
 
 New ledger rows store provider, model, estimated vs actual tokens, cost, and whether the rate came from the model registry or the legacy global rates. Older rows are unchanged. Export CSV includes the new columns and keeps the existing ones. The ledger still has its Mode column and filter.

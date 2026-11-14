@@ -19,7 +19,7 @@ function openRegen(btn, t) {
   const acOpts = (S.run.ac_list || []).map((a) => `<option value="${esc(a.id)}">${esc(a.id)}${a.title ? " · " + esc(a.title.slice(0, 40)) : ""}</option>`).join("");
   const keepDefault = !!(t._ed && t._ed.name);
   const p = openPop(btn, `<div class="rg-pop-in"><h4>↻ Regenerate ${esc(t.id)}</h4>
-    <div class="sub" style="margin:0 0 10px">Only this test case is rewritten. ID ${esc(t.id)} and its position stay the same.</div>
+    <div class="sub" style="margin:0 0 10px">Only this test case is rewritten. Provider is independent of the Generate page. ID ${esc(t.id)} and its position stay the same.</div>
     <div class="rg-ctx">Context sent: story <b>${esc(S.run.story_id || "—")}</b> · ${acs.length ? "linked <b>" + acs.map((a) => esc(a.id + (a.title ? " " + a.title.slice(0, 30) : ""))).join(", ") + "</b>" : "no linked AC"} · current ${esc(t.id)} (name, ${t.steps.length} steps)</div>
     <label class="rg-l" for="rgIns">Instruction (optional)</label>
     <textarea id="rgIns" maxlength="1000" placeholder="e.g. Add negative cases for invalid and empty email">${esc((RG.lastIns && RG.lastIns[t._k]) || "")}</textarea>
@@ -27,15 +27,29 @@ function openRegen(btn, t) {
     <label class="rg-row"><input type="checkbox" id="rgKeep" ${keepDefault ? "checked" : ""}> Keep my edits to title &amp; priority</label>
     <label class="rg-row"><input type="checkbox" id="rgNew"> Add as a new test case instead of replacing</label>
     <div id="rgEst"></div>
-    <div class="rg-foot"><label class="sub" style="margin:0;display:flex;align-items:center;gap:6px">Model <select id="rgModel">${typeof tcModelOpts === "function" ? tcModelOpts((window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "gemini", (S.run && S.run.model_name) || "") : ""}</select></label>
-      <span><button class="btn g sm" id="rgX">Cancel</button> <button class="btn sm" id="rgGo">↻ Regenerate</button></span></div></div>`, 520, true);
+    <div class="rg-foot" style="flex-wrap:wrap;align-items:end;gap:8px">
+      <label class="sub" style="margin:0;display:flex;flex-direction:column;gap:4px">Provider
+        <select id="rgProv">${((typeof tcRegistry === "function" ? tcRegistry() : []) || []).map((x) => `<option value="${esc(x.id)}" ${x.id === ((window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "") ? "selected" : ""}>${esc(x.name || x.id)}</option>`).join("") || `<option value="${esc((window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "gemini")}">${esc((window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "gemini")}</option>`}</select></label>
+      <label class="sub" style="margin:0;display:flex;flex-direction:column;gap:4px">Model
+        <select id="rgModel">${typeof tcModelOpts === "function" ? tcModelOpts((window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "gemini", (S.run && S.run.model_name) || "") : ""}</select></label>
+      <span style="margin-left:auto"><button class="btn g sm" id="rgX">Cancel</button> <button class="btn sm" id="rgGo">↻ Regenerate</button></span></div></div>`, 560, true);
   p.classList.add("rg-pop");
   const ta = $("#rgIns", p);
   if (window.bindLiveEstimate) {
-    const prov = (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "";
-    const textFn = () => ((S.run && S.run.feature_text) || "") + "\n" + ((ta && ta.value) || "");
-    const refresh = () => bindLiveEstimate({ el: $("#rgEst", p) || $("#rgEst"), kind: "regenerate", provider: () => prov, model: () => ($("#rgModel", p) && $("#rgModel", p).value) || "", text: textFn, expected: 400 });
+    const refresh = () => bindLiveEstimate({
+      el: $("#rgEst", p) || $("#rgEst"), kind: "regenerate", compose: true, expected: 400,
+      provider: () => ($("#rgProv", p) && $("#rgProv", p).value) || "",
+      model: () => ($("#rgModel", p) && $("#rgModel", p).value) || "",
+      instruction: () => (ta && ta.value) || "",
+      test_case: t,
+    });
     refresh();
+    const ps = $("#rgProv", p);
+    if (ps) ps.onchange = () => {
+      const mid = (typeof tcDefaultId === "function" ? tcDefaultId(ps.value) : "") || "";
+      if ($("#rgModel", p) && typeof tcModelOpts === "function") $("#rgModel", p).innerHTML = tcModelOpts(ps.value, mid);
+      refresh();
+    };
     const ms = $("#rgModel", p); if (ms) ms.onchange = refresh;
     if (ta) ta.addEventListener("change", refresh);
   }
@@ -45,6 +59,7 @@ function openRegen(btn, t) {
   $("#rgX", p).onclick = closePop;
   $("#rgGo", p).onclick = () => { const o = { k: t._k, instruction: ta.value.trim(), keep: $("#rgKeep", p).checked, asNew: $("#rgNew", p).checked };
     RG.lastIns = RG.lastIns || {}; RG.lastIns[t._k] = o.instruction;
+    RG.lastProvider = ($("#rgProv", p) && $("#rgProv", p).value) || "";
     RG.lastModel = ($("#rgModel", p) && $("#rgModel", p).value) || "";
     closePop(); runRegen(o); };
   setTimeout(() => ta.focus(), 0);
@@ -56,7 +71,7 @@ async function runRegen(o) {
   try {
     const r = await fetch("/api/review/regenerate", { method: "POST", credentials: "same-origin", signal: RG.ctrl.signal, headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ test_case: t, instruction: o.instruction, keep_title_priority: o.keep,
-        model: (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || undefined,
+        model: RG.lastProvider || (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || undefined,
         model_name: (RG.lastModel || (S.run && S.run.model_name) || undefined) }) });
     let j = {}; try { j = await r.json(); } catch { j = { ok: false, error: `HTTP ${r.status}` }; }
     if (r.status === 401) { window.location.href = "/welcome"; return; }

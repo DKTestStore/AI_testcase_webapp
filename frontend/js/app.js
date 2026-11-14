@@ -285,10 +285,17 @@ async function viewGenerate(v) {
   $("#model").onchange = (e) => { S.run.model = e.target.value; const gm = $("#genModel"); if (gm && window.tcModelOpts) { gm.innerHTML = tcModelOpts(e.target.value, ""); } if (window._genEstRefresh) _genEstRefresh(); };
   if ($("#genModel")) $("#genModel").onchange = () => { S.run.model_name = $("#genModel").value; if (window._genEstRefresh) _genEstRefresh(); };
   if (window.bindLiveEstimate) {
-    const textFn = () => (S.run && S.run.feature_text) || "";
-    bindLiveEstimate({ el: "#genEst", kind: "generate", provider: () => $("#model").value, model: () => ($("#genModel") && $("#genModel").value) || "", text: textFn, expected: 1800 }).then((fn) => { window._genEstRefresh = fn; });
+    bindLiveEstimate({
+      el: "#genEst", kind: "generate", compose: true, expected: 1800,
+      provider: () => $("#model").value,
+      model: () => ($("#genModel") && $("#genModel").value) || "",
+      prompt_mode: () => (S.run && S.run.prompt_mode) || "default",
+      custom_prompt: () => (S.run && S.run.custom_prompt) || "",
+      template_ids: () => (typeof genSrc === "function" && genSrc() === "templates" && typeof genTplIds === "function") ? genTplIds() : undefined,
+      run_reviewer: () => !!( $("#runRev") && $("#runRev").checked ),
+    }).then((fn) => { window._genEstRefresh = fn; });
   }
-  $("#runRev").onchange = (e) => (S.run.run_reviewer = e.target.checked);
+  $("#runRev").onchange = (e) => { S.run.run_reviewer = e.target.checked; if (window._genEstRefresh) _genEstRefresh(); };
   renderPromptArea(custom, src);
   loadTokens();
   $("#genBtn").onclick = () => {
@@ -355,7 +362,7 @@ async function renderPromptArea(custom, src) {
       <input type="file" id="promptFile" accept=".md,.txt,text/plain" class="hidden"></span><span class="sub" style="margin:0" id="pCount"></span></div>
     <div class="note">ℹ Test cases will be generated using your custom prompt. If it doesn't contain the “Test Case ID:” output template, the default template is appended automatically so results can be parsed.</div>`;
   const ta = $("#customPrompt"); const cnt = () => ($("#pCount").textContent = `${ta.value.length.toLocaleString()} / 50,000 chars`); cnt();
-  ta.oninput = () => { cnt(); S.run.custom_prompt = ta.value; };
+  ta.oninput = () => { cnt(); S.run.custom_prompt = ta.value; clearTimeout(viewGenerate._est); viewGenerate._est = setTimeout(() => { if (window._genEstRefresh) _genEstRefresh(); }, 400); };
   $("#loadFile").onclick = () => $("#promptFile").click();
   $("#promptFile").onchange = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { ta.value = rd.result; ta.oninput(); }; rd.readAsText(f); };
   $("#saveTpl").onclick = () => { const n = prompt("Template name:"); if (!n) return; tpls[n] = ta.value; localStorage.setItem("atg_prompt_templates", JSON.stringify(tpls)); toast("Template saved in this browser"); renderPromptArea(true); };
@@ -509,13 +516,13 @@ async function qRtm(el) {
    switches never discard edits or wipe secret fields. Blank secrets are omitted
    on save (server keeps the existing key). Explicit Clear still DELETEs a key. */
 const SET_AI = [
-  { group: "Gemini", sub: "Cloud", note: null },
-  { group: "Grok (xAI)", sub: "Cloud", note: null },
-  { group: "Groq", sub: "Cloud · free tier", note: "groq" },
-  { group: "Claude (Anthropic)", sub: "Cloud", note: null },
-  { group: "OpenAI", sub: "Cloud · key shared", note: "openai" },
-  { group: "Codex (OpenAI)", sub: "Uses OpenAI key", note: "codex" },
-  { group: "Ollama", sub: "Local", note: null },
+  { group: "Gemini", pid: "gemini", sub: "Cloud", note: null },
+  { group: "Grok (xAI)", pid: "grok", sub: "Cloud", note: null },
+  { group: "Groq", pid: "groq", sub: "Cloud · free tier", note: "groq" },
+  { group: "Claude (Anthropic)", pid: "claude", sub: "Cloud", note: null },
+  { group: "OpenAI", pid: "openai", sub: "Cloud · key shared", note: "openai" },
+  { group: "Codex (OpenAI)", pid: "codex", sub: "Uses OpenAI key", note: "codex" },
+  { group: "Ollama", pid: "ollama", sub: "Local", note: null },
 ];
 const SET_INT = [
   { group: "Jira", lede: "Story fetch for the Input step" },
@@ -525,7 +532,7 @@ const SET_INT = [
 const SET_PLACEHOLDERS = {
   ZEPHYR_BASE_URL: "https://api.zephyrscale.smartbear.com/v2/",
 };
-const SET_ST = { tab: "providers", provider: "Gemini", baseline: {}, prefs: { hist: "", dup: "" } };
+const SET_ST = { tab: "providers", provider: "Gemini", subtab: "connection", baseline: {}, prefs: { hist: "", dup: "" } };
 
 function setFieldHtml(f) {
   const id = `sf_${f.key}`;
@@ -596,6 +603,19 @@ function setShowProvider(name) {
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
   $$(".set-prov").forEach((p) => p.classList.toggle("a", p.dataset.provider === name));
+  setShowSubtab(SET_ST.subtab || "connection");
+}
+function setShowSubtab(sub) {
+  SET_ST.subtab = sub || "connection";
+  const pane = $$(".set-prov").find ? $$(".set-prov").filter((p) => p.classList.contains("a"))[0] : null;
+  const host = document.querySelector(".set-prov.a") || pane;
+  if (!host) return;
+  $$(".set-subtabs button", host).forEach((b) => b.classList.toggle("a", b.dataset.sub === SET_ST.subtab));
+  $$(".set-subpane", host).forEach((p) => {
+    const on = p.dataset.sub === SET_ST.subtab;
+    p.classList.toggle("a", on);
+    p.hidden = !on;
+  });
 }
 
 async function viewSettings(v) {
@@ -625,15 +645,30 @@ async function viewSettings(v) {
       note = `<div class="set-note"><b>Codex (OpenAI) note</b><br>Codex uses this same OpenAI API key. Set an optional Codex model ID under the <b>Codex (OpenAI)</b> provider in the list (falls back to OPENAI_MODEL, then the app’s legacy default).</div>`;
     } else if (p.note === "groq") {
       lede = "Cloud provider · fast hosted open models (Llama, etc.) via Groq’s OpenAI-compatible API.";
-      note = `<div class="set-note"><b>Groq free tier</b><br>Free keys from console.groq.com have per-minute and per-day request/token limits. Rate-limited calls are retried up to 2 times; Model ID defaults to <span class="mono">llama-3.3-70b-versatile</span> when blank.</div>`;
+      note = `<div class="set-note"><b>Groq free tier</b><br>Free keys from console.groq.com have per-minute and per-day request/token limits. Rate-limited calls are retried up to 2 times; Model ID defaults to <span class="mono">llama-3.3-70b-versatile</span> when blank. Configure additional models and rates on the <b>Models</b> tab; set a daily cap on <b>Limits</b>.</div>`;
     } else if (p.note === "codex") {
       lede = "OpenAI family profile — uses the OpenAI API key (not a separate vendor). Not ChatGPT Plus / CLI subscription.";
       note = `<div class="set-note"><b>Shared key</b><br>API key is configured under <b>OpenAI</b>. Only the Codex model ID is set here.</div>`;
     }
-    return `<div class="set-prov${a}" data-provider="${esc(p.group)}" ${a ? "" : 'hidden'}>
+    const sub = SET_ST.subtab || "connection";
+    return `<div class="set-prov${a}" data-provider="${esc(p.group)}" data-pid="${esc(p.pid)}" ${a ? "" : 'hidden'}>
       <h2>${esc(p.group)}</h2><p class="lede">${lede}</p>
-      ${fs.map(setFieldHtml).join("") || '<div class="sub">No fields for this provider.</div>'}
-      ${note}</div>`;
+      <div class="set-subtabs" role="tablist" aria-label="Provider sections">
+        <button type="button" data-sub="connection" class="${sub === "connection" ? "a" : ""}">Connection</button>
+        <button type="button" data-sub="models" class="${sub === "models" ? "a" : ""}">Models</button>
+        <button type="button" data-sub="limits" class="${sub === "limits" ? "a" : ""}">Limits</button>
+      </div>
+      <div class="set-subpane${sub === "connection" ? " a" : ""}" data-sub="connection" ${sub === "connection" ? "" : "hidden"}>
+        ${fs.map(setFieldHtml).join("") || '<div class="sub">No fields for this provider.</div>'}
+        ${note}
+      </div>
+      <div class="set-subpane${sub === "models" ? " a" : ""}" data-sub="models" ${sub === "models" ? "" : "hidden"}>
+        <div class="tc-prov-models" data-pid="${esc(p.pid)}"></div>
+      </div>
+      <div class="set-subpane${sub === "limits" ? " a" : ""}" data-sub="limits" ${sub === "limits" ? "" : "hidden"}>
+        <div class="tc-prov-limits" data-pid="${esc(p.pid)}"></div>
+      </div>
+    </div>`;
   }).join("");
 
   const intCards = SET_INT.map((g) => {
@@ -712,6 +747,7 @@ async function viewSettings(v) {
     $$(".set-prov").forEach((p) => { p.hidden = !p.classList.contains("a"); });
     setUpdateDirty();
   }));
+  $$(".set-subtabs button").forEach((b) => (b.onclick = () => setShowSubtab(b.dataset.sub)));
 
   $("#sbody").addEventListener("input", (e) => { if (e.target && e.target.matches("[data-key], #histLimit, #dupThr")) setUpdateDirty(); });
 
@@ -813,6 +849,7 @@ window.goSettings = function (tab, opts) {
   opts = opts || {};
   if (tab) SET_ST.tab = tab;
   if (opts.provider) SET_ST.provider = opts.provider;
+  if (opts.subtab) SET_ST.subtab = opts.subtab;
   SET_ST.jumpId = opts.jumpId || "";
   if (S.view === "settings") {
     setShowTab(SET_ST.tab);

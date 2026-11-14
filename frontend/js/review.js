@@ -94,23 +94,20 @@ function viewReview(v) {
       catch (e) { $("#reviewPanel").innerHTML = `<div class="error">${esc(e.message)}</div>`; throw e; }
       viewReview(v);
     });
-    if (typeof bindLiveEstimate !== "function") return runReview();
-    const prov = (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "";
-    const mid = (window.tcDefaultId && tcDefaultId(prov)) || (S.run && S.run.model_name) || "";
-    const host = $("#reviewPanel") || v;
-    host.innerHTML = `<div class="card" id="rvEstCard"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:end">
-      <div><b>AI Review estimate</b><div class="sub" style="margin:4px 0 0">Uses the run provider by default. Change the model for this call only.</div></div>
-      <label style="margin:0">Model <select id="rvEstModel">${typeof tcModelOpts === "function" ? tcModelOpts(prov, mid) : ""}</select></label>
-    </div>
-    <div id="rvEst"></div>
-    <div class="row" style="gap:8px;margin-top:10px;justify-content:flex-end">
-      <button type="button" class="btn g" id="rvEstNo">Cancel</button>
-      <button type="button" class="btn" id="rvEstGo">Run AI Reviewer</button>
-    </div></div>`;
-    bindLiveEstimate({ el: "#rvEst", kind: "review", provider: () => prov, model: () => ($("#rvEstModel") && $("#rvEstModel").value) || mid, text: () => (S.run && S.run.feature_text) || "", expected: 900 });
-    if ($("#rvEstModel")) $("#rvEstModel").onchange = () => bindLiveEstimate({ el: "#rvEst", kind: "review", provider: () => prov, model: () => $("#rvEstModel").value, text: () => (S.run && S.run.feature_text) || "", expected: 900 });
-    $("#rvEstNo").onclick = () => { host.innerHTML = ""; };
-    $("#rvEstGo").onclick = () => runReview(prov, ($("#rvEstModel") && $("#rvEstModel").value) || mid);
+    if (typeof openAiPicker === "function") {
+      const prov = (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "";
+      const mid = (window.tcDefaultId && tcDefaultId(prov)) || (S.run && S.run.model_name) || "";
+      return openAiPicker({
+        title: "Run AI Reviewer",
+        sub: "Choose a provider and model for this review only. Nothing is sent until you confirm.",
+        confirmLabel: "Confirm & run review",
+        kind: "review", expected: 900, compose: true,
+        provider: prov, model: mid,
+        test_cases: () => (typeof S !== "undefined" && (S.cases || (S.run && S.run.test_cases))) || [],
+        onConfirm: (p) => runReview(p.provider, p.model),
+      });
+    }
+    runReview();
   };
   $("#upExcel").onclick = () => { if (S.localDirty && !confirm("You have unsaved edits. Uploading may replace them. Continue?")) return; openUploadModal(); };
   $("#dlExcel").onclick = () => guarded($("#dlExcel"), async () => {

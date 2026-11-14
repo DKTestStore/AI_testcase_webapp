@@ -623,16 +623,17 @@ def _mock_review(case: Dict[str, Any], acs_text: str) -> Dict[str, Any]:
     return {"coverage": cov, "ac": ac, "summary": f"{len(sug)} suggestions (mock reviewer)", "suggestions": sug}
 
 
-def ai_review(case: Dict[str, Any], acs_text: str, model: str = "gemini") -> Dict[str, Any]:
+def ai_review(case: Dict[str, Any], acs_text: str, model: str = "gemini", model_name: str = None) -> Dict[str, Any]:
     from . import services
     case = _clean_case(case)
     content = (f"Acceptance criteria / story notes:\n{acs_text or '(none given – infer from the test case)'}\n\n"
                f"Test case (JSON):\n{json.dumps({k: case[k] for k in ('title', 'description', 'precondition', 'priority', 'steps')}, ensure_ascii=False)}")
     usage: Dict[str, Any] = {"model": "gemini"}
+    mid = (model_name or "").strip() or None
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
         out = _mock_review(case, acs_text)
         txt = json.dumps(out)
-        usage.update({"mock": True, "model_name": "mock", "input_tokens": len(content) // 4 + 300,
+        usage.update({"mock": True, "model_name": mid or "mock", "input_tokens": len(content) // 4 + 300,
                       "output_tokens": len(txt) // 4, "total_tokens": len(content) // 4 + 300 + len(txt) // 4})
     else:
         provider = services._norm_provider(model)
@@ -640,10 +641,11 @@ def ai_review(case: Dict[str, Any], acs_text: str, model: str = "gemini") -> Dic
         usage["provider"] = provider
         if provider == "gemini":
             g = services._gemini_module()
-            usage["model_name"] = g.gemini_model
+            gmodel = mid or g.gemini_model
+            usage["model_name"] = gmodel
             try:
                 resp = g.client.models.generate_content(
-                    model=g.gemini_model, contents=content,
+                    model=gmodel, contents=content,
                     config=g.types.GenerateContentConfig(system_instruction=AI_SYSTEM, temperature=0.3,
                                                          response_mime_type="application/json"))
             except Exception as ex:
@@ -661,7 +663,7 @@ def ai_review(case: Dict[str, Any], acs_text: str, model: str = "gemini") -> Dic
                 pass
             txt = getattr(resp, "text", "") or ""
         else:
-            out_c = services._complete(provider, AI_SYSTEM, content, temperature=0.3)
+            out_c = services._complete(provider, AI_SYSTEM, content, temperature=0.3, model_name=mid)
             txt, usage = out_c["text"], out_c["usage"]
         try:
             out = json.loads(re.sub(r"^```(json)?|```$", "", txt.strip()).strip())
@@ -685,7 +687,9 @@ def repo_ai_review(data: Dict[str, Any] = Body(...)):
     case = data.get("case") or {}
     if not _s(case.get("title")) and not case.get("steps"):
         raise ServiceError("Add a title or steps before asking the AI to review.")
-    return {"ok": True, "review": ai_review(case, _s(data.get("acs"), 8000), model=_s(data.get("model"), 32) or "gemini")}
+    return {"ok": True, "review": ai_review(case, _s(data.get("acs"), 8000),
+                                           model=_s(data.get("model"), 32) or "gemini",
+                                           model_name=_s(data.get("model_name"), 200) or None)}
 
 
 # ------------------------------------------------------------------ v4: usage check, folder management
@@ -942,7 +946,8 @@ def repo_case_regenerate(cid: str, data: Dict[str, Any] = Body(default={})):
           "steps": [{"description": s.get("step", ""), "expected": s.get("expected", "")} for s in c.get("steps") or []]}
     res = services.regenerate_one(c.get("story", ""), _s(data.get("feature_text"), 12000),
                                   [{"id": a, "title": ""} for a in c.get("acs") or []], tc, _s(data.get("instruction"), 1000),
-                                  model=_s(data.get("model"), 32) or "gemini")
+                                  model=_s(data.get("model"), 32) or "gemini",
+                                  model_name=_s(data.get("model_name"), 200) or None)
     p = res["test_case"]
     old = c.get("steps") or []
     prop = {"title": p.get("name") or c["title"], "description": p.get("description", ""), "precondition": p.get("precondition", ""),
