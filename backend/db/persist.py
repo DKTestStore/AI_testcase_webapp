@@ -497,6 +497,11 @@ def load_token_ledger(*, session: Optional[Session] = None) -> List[Dict[str, An
                 "output": int(e.output or 0),
                 "total": int(e.total or 0),
                 "provider": e.provider or "",
+                "est_input": int(getattr(e, "est_input", 0) or 0),
+                "est_output": int(getattr(e, "est_output", 0) or 0),
+                "est_cost": float(getattr(e, "est_cost", 0) or 0),
+                "actual_cost": float(getattr(e, "actual_cost", 0) or 0),
+                "rate_source": getattr(e, "rate_source", None) or "legacy_global",
             }
             if e.template:
                 rec["template"] = e.template
@@ -538,6 +543,11 @@ def save_token_ledger(data: List[Dict[str, Any]], *, session: Optional[Session] 
                 total=int(e.get("total") or 0),
                 provider=_s(e.get("provider")),
                 template=(_s(e.get("template"))[:80] or None) if e.get("template") else None,
+                est_input=int(e.get("est_input") or 0),
+                est_output=int(e.get("est_output") or 0),
+                est_cost=float(e.get("est_cost") or 0),
+                actual_cost=float(e.get("actual_cost") or 0),
+                rate_source=(_s(e.get("rate_source")) or "legacy_global")[:20],
             ))
         if commit or owns:
             session.commit()

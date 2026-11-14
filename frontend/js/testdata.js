@@ -137,11 +137,11 @@
     const menu = $("#aiRevMenu");
     if (menu) menu.onclick = (e) => {
       e.preventDefault(); e.stopPropagation();
-      openOverrideMenu(menu, async (model) => {
+      openOverrideMenu(menu, async (model, model_name) => {
         const v = $("#review") || document.body;
         if (S.localDirty) await saveCases();
         $("#reviewPanel").innerHTML = `<div class="card"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0">AI Reviewer is checking the test cases…</div></div>`;
-        try { await api("/api/review/ai", { method: "POST", body: { model: model } }); }
+        try { await api("/api/review/ai", { method: "POST", body: { model: model, model_name: model_name || undefined } }); }
         catch (err) { $("#reviewPanel").innerHTML = `<div class="error">${esc(err.message)}</div>`; throw err; }
         viewReview(document.getElementById("view") || document.body);
       });
@@ -152,12 +152,17 @@
   function openOverrideMenu(anchor, onPick) {
     if (typeof openPop !== "function") return;
     const cur = resolvedRunProvider();
-    const html = PROVIDERS.map(([id, lab]) =>
-      `<div class="pi" data-model="${id}">${lab}${id === cur ? " · current" : ""}</div>`).join("");
-    const p = openPop(anchor, `<div class="sub" style="margin:0 0 6px;padding:0 8px">Use for this call only</div>${html}`, 220, true);
+    const groups = PROVIDERS.map(([id, lab]) => {
+      const models = (typeof tcEnabled === "function" ? tcEnabled(id) : []);
+      const opts = models.length
+        ? models.map((m) => `<div class="pi" data-model="${id}" data-model-name="${esc(m.id)}">${esc(lab)} · ${esc(m.id)}${id === cur && m.default ? " · current" : ""}</div>`).join("")
+        : `<div class="pi" data-model="${id}">${lab}${id === cur ? " · current" : ""}</div>`;
+      return opts;
+    }).join("");
+    const p = openPop(anchor, `<div class="sub" style="margin:0 0 6px;padding:0 8px">Provider and model for this call only</div>${groups}`, 280, true);
     p.addEventListener("click", (e) => {
       const d = e.target.closest("[data-model]"); if (!d) return;
-      closePop(); guarded(anchor, () => onPick(d.dataset.model));
+      closePop(); guarded(anchor, () => onPick(d.dataset.model, d.dataset.modelName || ""));
     });
   }
 
@@ -251,7 +256,7 @@
       <button class="btn g sm" data-td="x">✕</button></div>
       <div class="td-bd" id="tdFields"></div>
       <div class="td-ft"><span class="sub" style="margin:0">Accept writes the Test Data column. You can edit or insert library values after.</span>
-      <span><button class="btn g" data-td="x">Cancel</button> <button class="btn" id="tdAccept">Accept &amp; insert</button></span></div></div>`);
+      <span class="sub" style="margin:0;margin-right:auto">No AI call · 0 tokens</span><span><button class="btn g" data-td="x">Cancel</button> <button class="btn" id="tdAccept">Accept &amp; insert</button></span></div></div>`);
     box.querySelector("[data-td=x]").onclick = closeOverlay;
     box.querySelectorAll("[data-td=x]").forEach((b) => (b.onclick = closeOverlay));
     const render = () => {
@@ -400,7 +405,7 @@
       <button class="btn g sm" data-td="x">✕</button></div>
       <div class="td-bd" id="tdBoostBd"></div>
       <div class="td-ft"><span class="sub" style="margin:0" id="tdBoostSum"></span>
-      <span><button class="btn g" data-td="x">Cancel</button> <button class="btn" id="tdBoostGo">Add selected</button></span></div></div>`);
+      <span class="sub" style="margin:0;margin-right:auto">No AI call · 0 tokens</span><span><button class="btn g" data-td="x">Cancel</button> <button class="btn" id="tdBoostGo">Add selected</button></span></div></div>`);
     box.querySelectorAll("[data-td=x]").forEach((b) => (b.onclick = closeOverlay));
     const render = () => {
       const n = sel.size;

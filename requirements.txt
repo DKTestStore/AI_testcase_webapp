@@ -27,3 +27,7 @@ jira>=3.8
 fastmcp>=2.0                     # Jira worker MCP tooling
 pandas>=2.0
 openpyxl>=3.1                    # Excel/CSV import-export (Review, Repo, RTM, qTest helpers)
+
+# Optional: tiktoken improves OpenAI/Codex token counts in the Token Calculator.
+# It is not required — the app falls back to characters ÷ 4 when it is not installed.
+# tiktoken

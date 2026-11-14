@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Float, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -196,6 +196,11 @@ class TokenLedger(Base):
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     provider: Mapped[str] = mapped_column(String(80), nullable=False, default="")
     template: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    est_input: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    est_output: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    est_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    actual_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    rate_source: Mapped[str] = mapped_column(String(20), nullable=False, default="legacy_global")
 
 
 class PromptTemplate(Base):

@@ -37,6 +37,84 @@ def dashboard(cycle: str = "", story: str = "", folder: str = "",
     return build(cycle, story, folder, (d_from or "")[:10], (d_to or "")[:10])
 
 
+def _token_summary(tu, d_from: str = "", d_to: str = "") -> Dict[str, Any]:
+    """Additive dashboard cards: per-model cost, usage by provider/model, near-limit banners.
+
+    Existing `tiles` and `ai.cost` stay on the workspace-wide global rates. Near-limit
+    warnings fire only when the user has set a daily token or cost cap in Settings
+    (blank = no warning). Costs here use recorded per-model rates when present.
+    """
+    from datetime import datetime, timedelta
+    from . import token_registry as reg
+    now = datetime.now()
+    today = now.date().isoformat()
+    start = d_from or (now.date() - timedelta(days=13)).isoformat()
+    end = d_to or today
+    window, today_rows = [], []
+    for e in tu or []:
+        day = (e.get("ts") or "")[:10]
+        if not day:
+            continue
+        if start <= day <= end:
+            window.append(e)
+        if day == today:
+            today_rows.append(e)
+
+    def _agg(rows):
+        by: Dict[str, Any] = {}
+        inp = out = tot = calls = 0
+        cost = 0.0
+        for e in rows:
+            i, o, n = int(e.get("input") or 0), int(e.get("output") or 0), int(e.get("total") or 0)
+            c = float(e.get("actual_cost") or 0)
+            inp += i; out += o; tot += n; cost += c; calls += 1
+            pid = (e.get("provider") or "") or "unknown"
+            mid = e.get("model") or ""
+            bp = by.setdefault(pid, {"provider": pid, "input": 0, "output": 0, "total": 0, "cost": 0.0, "calls": 0, "models": {}})
+            bp["input"] += i; bp["output"] += o; bp["total"] += n; bp["cost"] += c; bp["calls"] += 1
+            bm = bp["models"].setdefault(mid, {"model": mid, "input": 0, "output": 0, "total": 0, "cost": 0.0, "calls": 0})
+            bm["input"] += i; bm["output"] += o; bm["total"] += n; bm["cost"] += c; bm["calls"] += 1
+        share = tot or 0
+        providers = []
+        for pid, v in sorted(by.items(), key=lambda kv: -kv[1]["total"]):
+            models = []
+            for mid, m in sorted((v["models"] or {}).items(), key=lambda kv: -kv[1]["total"]):
+                models.append({**m, "cost": round(m["cost"], 6),
+                               "pct": round(m["total"] * 100 / share, 1) if share else 0})
+            providers.append({"provider": pid, "input": v["input"], "output": v["output"],
+                              "total": v["total"], "cost": round(v["cost"], 6), "calls": v["calls"],
+                              "pct": round(v["total"] * 100 / share, 1) if share else 0, "models": models})
+        return {"input": inp, "output": out, "total": tot, "cost": round(cost, 6), "calls": calls,
+                "providers": providers}
+
+    period = _agg(window)
+    today_agg = _agg(today_rows)
+    limits = reg.get_limits()
+    near = []
+    today_by = {p["provider"]: p for p in today_agg["providers"]}
+    for pid, lim in limits.items():
+        used = today_by.get(pid) or {"total": 0, "cost": 0.0}
+        if lim.get("daily_tokens"):
+            pct = used["total"] * 100 / lim["daily_tokens"] if lim["daily_tokens"] else 0
+            if pct >= 80:
+                near.append({"provider": pid, "metric": "tokens", "used": used["total"],
+                             "limit": lim["daily_tokens"], "pct": round(pct, 1),
+                             "href": f"#tokens?provider={pid}"})
+        if lim.get("daily_cost"):
+            pct = used["cost"] * 100 / lim["daily_cost"] if lim["daily_cost"] else 0
+            if pct >= 80:
+                near.append({"provider": pid, "metric": "cost", "used": round(used["cost"], 6),
+                             "limit": lim["daily_cost"], "pct": round(pct, 1),
+                             "href": f"#tokens?provider={pid}"})
+    return {
+        "from": start, "to": end, "today": today,
+        "period": period, "today_usage": today_agg,
+        "near_limit": near,
+        "example_prices": True,
+        "note": "Per-model costs use example prices from Settings until you edit them. Existing AI token totals still use the workspace-wide global rates.",
+    }
+
+
 def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", d_to: str = "") -> Dict[str, Any]:
     repo = test_repo._load()
     runs = test_runs._load()
@@ -151,6 +229,8 @@ def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", 
                        "cost": round(r["input"] / 1e6 * ri + r["output"] / 1e6 * ro, 4)})
     tokens.sort(key=lambda r: r["last"], reverse=True)
 
+    token_summary = _token_summary(tu, d_from, d_to)
+
     # tiles: pass rate across active cycles
     act = [p for p in progress if p.get("status") != "Archived"]
     ex_all = sum(p["executed"] for p in act)
@@ -169,4 +249,5 @@ def build(cycle: str = "", story: str = "", folder: str = "", d_from: str = "", 
             "failed": failed, "jira_base": jira,
             "testers": sorted(testers.values(), key=lambda t: -t["executed"]),
             "ai": {"sources": src, "tokens": tokens, "rates": {"input": ri, "output": ro},
-                   "total_tokens": sum(t["total"] for t in tokens), "cost": round(sum(t["cost"] for t in tokens), 4)}}
+                   "total_tokens": sum(t["total"] for t in tokens), "cost": round(sum(t["cost"] for t in tokens), 4)},
+            "token_summary": token_summary}
