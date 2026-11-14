@@ -285,6 +285,7 @@ def api_chat(data: Dict[str, Any] = Body(...), request: Request = None):
         }
 
     provider = _resolve_provider(raw_provider, run=run, run_model=run_model)
+    model_name = str((data or {}).get("model_name") or "").strip() or None
     screen = str((data or {}).get("screen") or "").strip()[:80]
     history = (data or {}).get("history") or []
     if not isinstance(history, list):
@@ -304,7 +305,7 @@ def api_chat(data: Dict[str, Any] = Body(...), request: Request = None):
     user_content = _build_user_content(question, screen, history, excerpts)
 
     try:
-        result = _complete(provider, SYSTEM_PROMPT, user_content, temperature=0.2)
+        result = _complete(provider, SYSTEM_PROMPT, user_content, temperature=0.2, model_name=model_name)
     except ServiceError:
         raise
     except Exception as ex:
@@ -316,7 +317,9 @@ def api_chat(data: Dict[str, Any] = Body(...), request: Request = None):
 
     try:
         from . import token_usage
-        token_usage.record(action="Help chat", usage=usage, run=None, mode="help")
+        from . import token_estimate
+        est = token_estimate.estimate(question, provider, usage.get("model_name") or model_name or "", 200)
+        token_usage.record(action="Help chat", usage=usage, run=None, mode="help", estimate=est)
     except Exception:
         pass
 

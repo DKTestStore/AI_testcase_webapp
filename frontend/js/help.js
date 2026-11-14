@@ -191,6 +191,7 @@
             <button type="button" class="hw-mic" id="helpMic" title="Dictate with Voice input" aria-label="Dictate with Voice input">${MIC}</button>
             <button type="button" class="hw-send" id="helpSend" title="Send" aria-label="Send">➤</button>
           </div>
+          <div id="helpEst" style="padding:0 10px 8px"></div>
         </div>
       </div>`;
     document.body.appendChild(win);
@@ -599,7 +600,8 @@
         const j = await api("/api/help/chat", {
           method: "POST",
           body: { question: question, history: historyPayload().slice(0, -1), screen: screen, provider: provider,
-            run_model: (typeof resolvedRunProvider === "function" ? (generateProviderSource() === "generate" ? generateProvider() : "") : (S && S.run && S.run.model) || "") }
+            run_model: (typeof resolvedRunProvider === "function" ? (generateProviderSource() === "generate" ? generateProvider() : "") : (S && S.run && S.run.model) || ""),
+            model_name: (typeof tcDefaultId === "function" && provider && provider !== "none") ? tcDefaultId(provider) : "" }
         });
         resp = j;
         sources = j.sources || [];
@@ -775,7 +777,16 @@
     q("#helpInput").addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(q("#helpInput").value); }
     });
-    q("#helpInput").addEventListener("input", () => autoSize(q("#helpInput")));
+    q("#helpInput").addEventListener("input", () => { autoSize(q("#helpInput")); if (window._helpEst) _helpEst(); });
+    if (window.bindLiveEstimate) {
+      const refresh = () => {
+        const prov = (typeof resolvedProvider === "function") ? resolvedProvider() : "";
+        if (prov === "none") { const el = q("#helpEst"); if (el) el.innerHTML = `<div class="tc-chip none"><span>No AI call · 0 tokens</span></div>`; return; }
+        bindLiveEstimate({ el: "#helpEst", kind: "help", provider: () => prov, model: () => (typeof tcDefaultId === "function" ? tcDefaultId(prov) : ""), text: () => (q("#helpInput") && q("#helpInput").value) || "", expected: 200 });
+      };
+      window._helpEst = refresh;
+      refresh();
+    }
     q("#helpChips").addEventListener("click", (e) => {
       const b = e.target.closest(".qchip"); if (b) sendQuestion(b.textContent);
     });

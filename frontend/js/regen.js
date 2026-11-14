@@ -26,15 +26,27 @@ function openRegen(btn, t) {
     <div class="rg-chips">${RG_CHIPS.map(([k, l]) => `<span class="rg-chip" data-c="${k}">${l}</span>`).join("")}${acOpts ? `<select class="rg-chip rg-acsel" id="rgAc"><option value="">Cover AC… ▾</option>${acOpts}</select>` : ""}</div>
     <label class="rg-row"><input type="checkbox" id="rgKeep" ${keepDefault ? "checked" : ""}> Keep my edits to title &amp; priority</label>
     <label class="rg-row"><input type="checkbox" id="rgNew"> Add as a new test case instead of replacing</label>
-    <div class="rg-foot"><span class="sub" style="margin:0">≈ 1 ${window.prettyProvider && window.resolvedRunProvider ? prettyProvider(resolvedRunProvider()) : "Gemini"} call</span><span><button class="btn g sm" id="rgX">Cancel</button> <button class="btn sm" id="rgGo">↻ Regenerate</button></span></div></div>`, 440, true);
+    <div id="rgEst"></div>
+    <div class="rg-foot"><label class="sub" style="margin:0;display:flex;align-items:center;gap:6px">Model <select id="rgModel">${typeof tcModelOpts === "function" ? tcModelOpts((window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "gemini", (S.run && S.run.model_name) || "") : ""}</select></label>
+      <span><button class="btn g sm" id="rgX">Cancel</button> <button class="btn sm" id="rgGo">↻ Regenerate</button></span></div></div>`, 520, true);
   p.classList.add("rg-pop");
   const ta = $("#rgIns", p);
+  if (window.bindLiveEstimate) {
+    const prov = (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "";
+    const textFn = () => ((S.run && S.run.feature_text) || "") + "\n" + ((ta && ta.value) || "");
+    const refresh = () => bindLiveEstimate({ el: $("#rgEst", p) || $("#rgEst"), kind: "regenerate", provider: () => prov, model: () => ($("#rgModel", p) && $("#rgModel", p).value) || "", text: textFn, expected: 400 });
+    refresh();
+    const ms = $("#rgModel", p); if (ms) ms.onchange = refresh;
+    if (ta) ta.addEventListener("change", refresh);
+  }
   const addLine = (txt) => { if (!ta.value.includes(txt)) ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + txt; };
   $$(".rg-chip[data-c]", p).forEach((c) => (c.onclick = () => { c.classList.add("on"); addLine(RG_CHIPS.find((x) => x[0] === c.dataset.c)[2]); }));
   const sel = $("#rgAc", p); if (sel) sel.onchange = () => { if (sel.value) { addLine(`Make sure it covers ${sel.value}.`); sel.classList.add("on"); } };
   $("#rgX", p).onclick = closePop;
   $("#rgGo", p).onclick = () => { const o = { k: t._k, instruction: ta.value.trim(), keep: $("#rgKeep", p).checked, asNew: $("#rgNew", p).checked };
-    RG.lastIns = RG.lastIns || {}; RG.lastIns[t._k] = o.instruction; closePop(); runRegen(o); };
+    RG.lastIns = RG.lastIns || {}; RG.lastIns[t._k] = o.instruction;
+    RG.lastModel = ($("#rgModel", p) && $("#rgModel", p).value) || "";
+    closePop(); runRegen(o); };
   setTimeout(() => ta.focus(), 0);
 }
 
@@ -44,7 +56,8 @@ async function runRegen(o) {
   try {
     const r = await fetch("/api/review/regenerate", { method: "POST", credentials: "same-origin", signal: RG.ctrl.signal, headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ test_case: t, instruction: o.instruction, keep_title_priority: o.keep,
-        model: (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || undefined }) });
+        model: (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || undefined,
+        model_name: (RG.lastModel || (S.run && S.run.model_name) || undefined) }) });
     let j = {}; try { j = await r.json(); } catch { j = { ok: false, error: `HTTP ${r.status}` }; }
     if (r.status === 401) { window.location.href = "/welcome"; return; }
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);

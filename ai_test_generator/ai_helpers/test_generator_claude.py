@@ -40,9 +40,9 @@ def _max_tokens() -> int:
 
 
 def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
-             max_output_tokens: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
+             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     key = _key()
-    model = _model()
+    model = (model_name or "").strip() or _model()
     if not key:
         raise ProviderError("ANTHROPIC_API_KEY is not set. Add it in Settings.")
     if not model:

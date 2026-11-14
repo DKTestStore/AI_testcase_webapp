@@ -62,7 +62,7 @@ function renderNav() {
   $$("#nav a").forEach((a) => {
     const v = a.dataset.view;
     const reqViews = ["requirements", "projects", "trace"];
-    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")) || (v === "requirements" && reqViews.includes(S.view)));
+    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")) || (v === "tokens" && String(S.view).split("?")[0].startsWith("tokens")) || (v === "requirements" && reqViews.includes(S.view)));
     a.classList.toggle("done", STEPS.includes(v) && stepDone(v));
     a.classList.toggle("locked", STEPS.includes(v) && !stepUnlocked(v));
   });
@@ -99,7 +99,8 @@ function render() {
     if (S.view === "requirements" && window.RQ && window.RQ.view === "projects") window.RQ.view = "list";
     return window.viewRequirements ? viewRequirements(v) : viewInput(v);
   }
-  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), requirements: (v) => viewRequirements(v), projects: (v) => viewProjects(v), trace: (v) => viewTraceability(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[S.view] || viewInput)(v);
+  const viewKey = String(S.view || "").split("?")[0].split("/")[0];
+  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), requirements: (v) => viewRequirements(v), projects: (v) => viewProjects(v), trace: (v) => viewTraceability(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[viewKey] || viewInput)(v);
 }
 
 
@@ -255,7 +256,9 @@ async function viewGenerate(v) {
         <option value="claude" ${selModel === "claude" ? "selected" : ""}>Claude</option>
         <option value="openai" ${selModel === "openai" ? "selected" : ""}>OpenAI</option>
         <option value="codex" ${selModel === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
-        <option value="ollama" ${selModel === "ollama" ? "selected" : ""}>Ollama (local)</option></select></div></div>
+        <option value="ollama" ${selModel === "ollama" ? "selected" : ""}>Ollama (local)</option></select></div>
+      <div><label style="margin-top:0">Model</label><select id="genModel">${typeof tcModelOpts === "function" ? tcModelOpts(selModel, r.model_name || "") : `<option value="">${esc(r.model_name || "Settings / env default")}</option>`}</select></div></div>
+    <div id="genEst"></div>
     <div id="promptArea"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid #edf0f5;gap:10px;flex-wrap:wrap">
       <label class="sw" style="margin:0;text-transform:none;font-size:13px;color:#1e2433;font-weight:400"><input type="checkbox" id="runRev" ${r.run_reviewer ? "checked" : ""}><span class="t"></span>Also run AI Reviewer after generation</label>
@@ -279,7 +282,12 @@ async function viewGenerate(v) {
     }
     viewGenerate(v);
   }));
-  $("#model").onchange = (e) => (S.run.model = e.target.value);
+  $("#model").onchange = (e) => { S.run.model = e.target.value; const gm = $("#genModel"); if (gm && window.tcModelOpts) { gm.innerHTML = tcModelOpts(e.target.value, ""); } if (window._genEstRefresh) _genEstRefresh(); };
+  if ($("#genModel")) $("#genModel").onchange = () => { S.run.model_name = $("#genModel").value; if (window._genEstRefresh) _genEstRefresh(); };
+  if (window.bindLiveEstimate) {
+    const textFn = () => (S.run && S.run.feature_text) || "";
+    bindLiveEstimate({ el: "#genEst", kind: "generate", provider: () => $("#model").value, model: () => ($("#genModel") && $("#genModel").value) || "", text: textFn, expected: 1800 }).then((fn) => { window._genEstRefresh = fn; });
+  }
   $("#runRev").onchange = (e) => (S.run.run_reviewer = e.target.checked);
   renderPromptArea(custom, src);
   loadTokens();
@@ -294,7 +302,7 @@ async function viewGenerate(v) {
     st.innerHTML = `<div style="margin-top:12px"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0" id="elapsed">Generating… 0s</div></div>`;
     const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${$("#model") && $("#model").value === "ollama" ? " with Ollama (local), this can take a few minutes" : ""}${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
     try {
-      const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
+      const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, model_name: ($("#genModel") && $("#genModel").value) || "", prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
       S.localDirty = false; S.cases = []; if (typeof RV !== "undefined") { RV.open.clear(); RV.sel.clear(); RV.page = 0; }
       let msg = `<div class="note">✅ Generated <b>${j.count}</b> test cases in ${Math.round((Date.now() - t0) / 1000)}s.${j.template_appended ? " (Required output template was appended to your custom prompt.)" : ""}</div>`;
       if (j.review) msg += j.review.error ? `<div class="warn">AI Reviewer failed: ${esc(j.review.error)}</div>` : `<div class="note">🤖 AI Reviewer produced ${j.review.test_cases.length} test cases — compare and apply them on the Review step.</div>`;
@@ -681,6 +689,7 @@ async function viewSettings(v) {
   if (window.helpRenderSettings) helpRenderSettings($('.set-pane[data-pane="preferences"]'));    // Help Assistant card (help.js, browser-only prefs)
   if (window.winmgrRenderSettings) winmgrRenderSettings($('.set-pane[data-pane="preferences"]')); // Floating windows card (winmgr.js)
   if (window.testdataRenderSettings) testdataRenderSettings($('.set-pane[data-pane="preferences"]')); // Default provider + Edge library
+  if (window.tokenCalcRenderSettings) tokenCalcRenderSettings($('.set-pane[data-pane="preferences"]')); // Model registry + daily limits
   if (SET_ST.tab && SET_ST.tab !== "providers") {
     setShowTab(SET_ST.tab);
     $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === SET_ST.tab ? "true" : "false"));
@@ -827,7 +836,8 @@ window.addEventListener("hashchange", () => { const h = location.hash.slice(1); 
   const h = location.hash.slice(1);
   if (st.mode === "batch") { await resumeBatch(h); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
   if (h.startsWith("repo/case/") && window.cpRoute) { window.cpRoute(h.slice(10)); if (window.refreshHistoryCount) refreshHistoryCount(); return; }
-  S.view = h && (STEPS.includes(h) ? stepUnlocked(h) : (h === "dashboard" || h.startsWith("dashboard/") || h === "settings" || h === "setup" || h === "history" || h === "tokens" || h === "prompts" || (h === "acs" && stepUnlocked("review")))) ? h : "input";
+  const h0 = (h || "").split("?")[0];
+  S.view = h && (STEPS.includes(h0) ? stepUnlocked(h0) : (h0 === "dashboard" || h0.startsWith("dashboard/") || h0 === "settings" || h0 === "setup" || h0 === "history" || h0 === "tokens" || h0.startsWith("tokens/") || h0 === "prompts" || (h0 === "acs" && stepUnlocked("review")))) ? h : "input";
   render();
   if (window.refreshHistoryCount) refreshHistoryCount();
 })();

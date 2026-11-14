@@ -22,7 +22,7 @@
 .tu-pg .btn{min-width:30px;justify-content:center}.tu-pg .btn.on{background:#4361ee;color:#fff}
 .tu-help{margin:8px 0 0;font-size:11.5px;color:#6b7385;line-height:1.45}
 .tu-del{border:0;background:transparent;color:#d33333;cursor:pointer;padding:2px 6px;border-radius:6px;font-size:14px}
-.tu-del:hover{background:#fdeaea}.tu-tbl tr.sel{background:#f4f6ff}`;
+.tu-del:hover{background:#fdeaea}.tu-tbl tr.sel{background:#f4f6ff}.tu-legacy{color:#6b7385;font-size:11px}`;
   document.head.appendChild(st);
 })();
 const TU = { f: null, open: {}, page: 1, size: 25, sel: new Set() };
@@ -34,7 +34,7 @@ function tuLoadSize() {
   return 25;
 }
 function tuSaveSize(n) { try { localStorage.setItem("tuPageSize", String(n)); } catch (e) {} }
-function tuFilterQS() { const f = TU.f; return new URLSearchParams({ from: f.from, to: f.to, mode: f.mode, model: f.model }).toString(); }
+function tuFilterQS() { const f = TU.f; return new URLSearchParams({ from: f.from, to: f.to, mode: f.mode, model: f.model, provider: f.provider || "", action: f.action || "" }).toString(); }
 function tuQS() { return tuFilterQS() + "&page=" + TU.page + "&page_size=" + TU.size; }
 function tuSrc(r) { const t = r.title ? " · " + esc(r.title.slice(0, 40)) : ""; return r.source === "local" && !r.story_id ? "Local" + t : esc(r.story_id || (r.source === "local" ? "Local" : "—")) + t; }
 const TU_MODE = { jira: "Single (Jira)", local: "Single (Local)", batch: "Batch" };
@@ -102,16 +102,50 @@ async function tuConfirmDelete({ ids, before, label }) {
     else resolve(false);
   });
 }
+function tuRoute() {
+  const raw = String((typeof S !== "undefined" && S.view) || location.hash.slice(1) || "tokens");
+  const [path, qs] = raw.split("?");
+  const tab = (path === "tokens/calculator" || /\/calculator$/.test(path)) ? "calculator" : "ledger";
+  return { tab, params: new URLSearchParams(qs || ""), path };
+}
+function tuApplyParams(params) {
+  if (!TU.f) TU.f = { from: tuDay(13), to: tuDay(0), mode: "all", model: "all", provider: "all", action: "all" };
+  if (params.get("provider")) TU.f.provider = params.get("provider");
+  if (params.get("model")) TU.f.model = params.get("model");
+  if (params.get("action")) TU.f.action = params.get("action");
+  if (params.get("mode")) TU.f.mode = params.get("mode");
+  if (params.get("from")) TU.f.from = params.get("from");
+  if (params.get("to")) TU.f.to = params.get("to");
+}
+function tuTabs(tab) {
+  return `<div class="tc-tabs"><a href="#tokens" class="${tab === "ledger" ? "a" : ""}">Ledger</a><a href="#tokens/calculator" class="${tab === "calculator" ? "a" : ""}">Calculator</a></div>`;
+}
 async function viewTokens(v) {
-  if (!TU.f) TU.f = { from: tuDay(13), to: tuDay(0), mode: "all", model: "all" };
+  const route = tuRoute();
+  tuApplyParams(route.params);
+  if (!TU.f) TU.f = { from: tuDay(13), to: tuDay(0), mode: "all", model: "all", provider: "all", action: "all" };
+  if (TU.f.provider == null) TU.f.provider = "all";
+  if (TU.f.action == null) TU.f.action = "all";
   TU.size = tuLoadSize();
-  v.innerHTML = `<h1>Token Usage</h1><p class="sub">Per-run, per-day and per-action token consumption (all providers recorded in the ledger).</p><div id="tuBody"><div class="muted">Loading…</div></div>`;
+  v.innerHTML = `<h1>Token Usage</h1><p class="sub">Per-run, per-day and per-action token consumption (all providers recorded in the ledger). New rows record estimated vs actual tokens and the rate source; older rows stay on the workspace-wide global rates.</p>${tuTabs(route.tab)}<div id="tuBody"><div class="muted">Loading…</div></div>`;
+  if (route.tab === "calculator") {
+    if (typeof viewTokenCalculator === "function") return viewTokenCalculator($("#tuBody"));
+    $("#tuBody").innerHTML = `<div class="warn">Calculator script did not load.</div>`;
+    return;
+  }
   let j; try { j = await api("/api/tokens?" + tuQS()); } catch (e) { $("#tuBody").innerHTML = `<div class="warn">${esc(e.message)}</div>`; return; }
-  if (S.view !== "tokens") return;
+  if (!String(S.view || "").startsWith("tokens")) return;
   const f = TU.f, s = j.settings, mx = Math.max(1, ...j.daily.map((d) => d.total)), today = tuDay(0);
   TU.page = j.page || TU.page;
   TU.size = j.page_size && [10, 25, 50, 100].includes(j.page_size) ? j.page_size : TU.size;
   const opt = (val, lbl, cur) => `<option value="${esc(val)}" ${val === cur ? "selected" : ""}>${esc(lbl)}</option>`;
+  const rateCell = (r) => {
+    const src = r.rate_source || "legacy_global";
+    if (src === "legacy_global") return `<span class="tu-legacy">legacy global rate</span>`;
+    const est = (r.est_input || 0) + (r.est_output || 0);
+    const delta = est ? Math.round(((r.total || 0) - est) * 100 / est) : null;
+    return `${fmt(r.est_input || 0)}/${fmt(r.est_output || 0)}${delta == null ? "" : ` · ${delta > 0 ? "+" : ""}${delta}%`}`;
+  };
   const rows = j.rows.map((r, i) => {
     const ids = tuRowIds(r);
     const idStr = ids.map((x) => esc(x)).join(",");
@@ -119,38 +153,44 @@ async function viewTokens(v) {
     const del = `<button type="button" class="tu-del" data-del="${idStr}" title="Delete">🗑</button>`;
     const cb = `<td class="tu-cb"><input type="checkbox" data-ids="${idStr}" ${checked} ${ids.length ? "" : "disabled"}></td>`;
     if (r.kind === "batch") {
-      return `<tr class="tu-row tu-batch" data-i="${i}" data-bid="${esc(r.batch_id)}" data-ids="${idStr}">${cb}<td class="tu-mono"><button class="tu-tog" data-i="${i}" title="Show per-item breakdown">${TU.open[r.batch_id] ? "▾" : "▸"}</button>${esc(r.rid)}</td><td>${esc(r.source_label)}</td><td><span class="tu-pill">Batch generate</span></td><td>${esc(r.model)}</td><td class="tu-r">${fmt(r.input)}</td><td class="tu-r">${fmt(r.output)}</td><td class="tu-r tu-b">${fmt(r.total)}</td><td>${tuT(r.ts)}</td><td>${del}</td></tr>`
+      return `<tr class="tu-row tu-batch" data-i="${i}" data-bid="${esc(r.batch_id)}" data-ids="${idStr}">${cb}<td class="tu-mono"><button class="tu-tog" data-i="${i}" title="Show per-item breakdown">${TU.open[r.batch_id] ? "▾" : "▸"}</button>${esc(r.rid)}</td><td>${esc(r.source_label)}</td><td><span class="tu-pill">Batch generate</span></td><td>${esc(r.provider || "")}</td><td>${esc(r.model)}</td><td class="tu-r">${fmt(r.input)}</td><td class="tu-r">${fmt(r.output)}</td><td class="tu-r tu-b">${fmt(r.total)}</td><td>${rateCell(r)}</td><td class="tu-r">${r.actual_cost ? (window.tcMoney ? tcMoney(r.actual_cost) : "$"+Number(r.actual_cost).toFixed(4)) : "—"}</td><td>${tuT(r.ts)}</td><td>${del}</td></tr>`
         + (TU.open[r.batch_id] ? r.items.map((it) => {
           const iid = it.id || "";
           const on = iid && TU.sel.has(iid) ? "checked" : "";
-          return `<tr class="tu-item" data-b="${esc(r.rid)}" data-bid="${esc(r.batch_id)}" data-ids="${esc(iid)}"><td class="tu-cb"><input type="checkbox" data-ids="${esc(iid)}" ${on} ${iid ? "" : "disabled"}></td><td class="tu-mono">↳ ${esc(it.rid || "—")}</td><td>${tuSrc(it)}</td><td><span class="tu-pill">${esc(it.action)}${it.template ? " · " + esc(it.template) : ""}</span></td><td>${esc(it.model)}</td><td class="tu-r">${fmt(it.input)}</td><td class="tu-r">${fmt(it.output)}</td><td class="tu-r tu-b">${fmt(it.total)}</td><td>${tuT(it.ts)}</td><td><button type="button" class="tu-del" data-del="${esc(iid)}" title="Delete" ${iid ? "" : "disabled"}>🗑</button></td></tr>`;
+          return `<tr class="tu-item" data-b="${esc(r.rid)}" data-bid="${esc(r.batch_id)}" data-ids="${esc(iid)}"><td class="tu-cb"><input type="checkbox" data-ids="${esc(iid)}" ${on} ${iid ? "" : "disabled"}></td><td class="tu-mono">↳ ${esc(it.rid || "—")}</td><td>${tuSrc(it)}</td><td><span class="tu-pill">${esc(it.action)}${it.template ? " · " + esc(it.template) : ""}</span></td><td>${esc(it.provider || "")}</td><td>${esc(it.model)}</td><td class="tu-r">${fmt(it.input)}</td><td class="tu-r">${fmt(it.output)}</td><td class="tu-r tu-b">${fmt(it.total)}</td><td>${rateCell(it)}</td><td class="tu-r">${it.actual_cost ? (window.tcMoney ? tcMoney(it.actual_cost) : "$"+Number(it.actual_cost).toFixed(4)) : "—"}</td><td>${tuT(it.ts)}</td><td><button type="button" class="tu-del" data-del="${esc(iid)}" title="Delete" ${iid ? "" : "disabled"}>🗑</button></td></tr>`;
         }).join("") : "");
     }
-    return `<tr class="tu-row tu-run" data-ids="${idStr}">${cb}<td class="tu-mono">${esc(r.rid || "(unsaved)")}</td><td>${tuSrc(r)}</td><td><span class="tu-pill">${esc(r.action)}${r.template ? " · " + esc(r.template) : ""}</span></td><td>${esc(r.model)}</td><td class="tu-r">${fmt(r.input)}</td><td class="tu-r">${fmt(r.output)}</td><td class="tu-r tu-b">${fmt(r.total)}</td><td>${tuT(r.ts)}</td><td>${del}</td></tr>`;
+    return `<tr class="tu-row tu-run" data-ids="${idStr}">${cb}<td class="tu-mono">${esc(r.rid || "(unsaved)")}</td><td>${tuSrc(r)}</td><td><span class="tu-pill">${esc(r.action)}${r.template ? " · " + esc(r.template) : ""}</span></td><td>${esc(r.provider || "")}</td><td>${esc(r.model)}</td><td class="tu-r">${fmt(r.input)}</td><td class="tu-r">${fmt(r.output)}</td><td class="tu-r tu-b">${fmt(r.total)}</td><td>${rateCell(r)}</td><td class="tu-r">${r.actual_cost ? (window.tcMoney ? tcMoney(r.actual_cost) : "$"+Number(r.actual_cost).toFixed(4)) : "—"}</td><td>${tuT(r.ts)}</td><td>${del}</td></tr>`;
   }).join("");
   const totalRows = j.total_rows != null ? j.total_rows : j.rows.length;
+  const provs = j.providers || [];
+  const acts = j.actions || [];
   $("#tuBody").innerHTML = `<div class="card tu-flt"><label>From<input type="date" id="tuFrom" value="${esc(f.from)}"></label><label>To<input type="date" id="tuTo" value="${esc(f.to)}"></label>
     <label>Mode<select id="tuMode">${opt("all", "All modes", f.mode)}${opt("jira", "Single (Jira)", f.mode)}${opt("local", "Single (Local)", f.mode)}${opt("batch", "Batch", f.mode)}</select></label>
+    <label>Provider<select id="tuProv">${opt("all", "All providers", f.provider || "all")}${provs.map((m) => opt(m, m, f.provider)).join("")}</select></label>
     <label>Model<select id="tuModel">${opt("all", "All models", f.model)}${j.models.map((m) => opt(m, m, f.model)).join("")}</select></label>
-    <button class="btn" id="tuApply">Apply</button><a class="btn" id="tuCsv" style="margin-left:auto" href="/api/tokens/export.csv?${tuFilterQS()}" download>⬇ Export CSV</a></div>
+    <label>Action<select id="tuAct">${opt("all", "All actions", f.action || "all")}${acts.map((m) => opt(m, m, f.action)).join("")}</select></label>
+    <span style="margin-left:auto;display:flex;gap:8px;align-items:end"><button class="btn" id="tuApply">Apply</button><a class="btn" id="tuCsv" href="/api/tokens/export.csv?${tuFilterQS()}" download>⬇ Export CSV</a></span></div>
   <div class="tu-cards">
     <div class="card" id="tuToday"><div class="tu-k">Today — total tokens</div><div class="tu-v">${fmt(j.today.total)}</div><div class="tu-s">Input ${fmt(j.today.input)} · Output ${fmt(j.today.output)}</div></div>
     <div class="card" id="tuMonth"><div class="tu-k">This month (${esc(j.month.label)})</div><div class="tu-v">${tuK(j.month.total)}</div><div class="tu-s">Input ${tuK(j.month.input)} · Output ${tuK(j.month.output)} · ${fmt(j.month.runs)} runs</div></div>
-    <div class="card" id="tuCost"><div class="tu-k">Estimated cost (month)</div><div class="tu-v">$${j.month.cost.toFixed(2)}</div><div class="tu-s">At $${s.token_rate_input}/1M input · $${s.token_rate_output}/1M output</div></div>
+    <div class="card" id="tuCost"><div class="tu-k">Estimated cost (month)</div><div class="tu-v">$${j.month.cost.toFixed(2)}</div><div class="tu-s">At $${s.token_rate_input}/1M input · $${s.token_rate_output}/1M output (workspace-wide rates)${j.month.cost_model != null ? " · per-model rates $"+Number(j.month.cost_model).toFixed(4) : ""}</div></div>
     <div class="card" id="tuQuota"><div class="tu-k">Daily quota (settings limit)</div><div class="tu-v">${Math.round(j.today.pct)}%</div><div class="tu-q ${j.today.pct > 100 ? "over" : ""}"><div style="width:${Math.min(100, j.today.pct)}%"></div></div><div class="tu-s">${tuK(j.today.total)} of ${tuK(s.token_daily_limit)}/day · <a href="#" id="tuEditLim">limit ✎</a></div>
       <p class="tu-help">This bar uses this page’s ledger vs the Token settings daily limit — it updates if you delete history. It does <b>not</b> reset the provider’s real Gemini quota file (<span class="mono">reports/gemini_usage.json</span>).</p></div></div>
   <div class="tu-two"><div class="card"><h3>Daily usage — last 14 days (total tokens)</h3><div class="tu-chart" id="tuChart">${j.daily.map((d) => `<div class="tu-bc ${d.date === today ? "today" : ""}" title="${d.date}: ${fmt(d.total)} tokens"><div class="tu-bv">${d.total ? tuK(d.total) : ""}</div><div class="tu-bar" data-v="${d.total}" style="height:${Math.round((d.total / mx) * 150)}px"></div><div class="tu-bl">${d.date.slice(8)}</div></div>`).join("")}</div></div>
     <div class="card" id="tuBreak"><h3>Breakdown by action (this range)</h3>${j.breakdown.map((b) => `<div class="tu-ar" data-a="${esc(b.action)}"><span>${esc(b.action)}</span><div class="tu-trk"><div style="width:${b.pct}%"></div></div><b>${b.pct}%</b></div>`).join("")}<p class="tu-s" style="margin-top:12px">Batch runs counted under their underlying actions.</p></div></div>
+  <div class="tu-two"><div class="card" id="tuProvBreak"><h3>Breakdown by provider / model</h3>${(j.breakdown_providers || []).map((b) => `<div class="tu-ar"><span>${esc(b.provider)}</span><div class="tu-trk"><div style="width:${b.pct}%"></div></div><b>${b.pct}%</b></div>${(b.models || []).map((m) => `<div class="tu-s" style="padding-left:8px">${esc(m.model || "—")} · ${m.pct}% · ${fmt(m.total)}</div>`).join("")}`).join("") || '<div class="muted">No usage in this range.</div>'}</div>
+    <div class="card" id="tuAcc"><h3>Estimate accuracy</h3>${(j.accuracy || []).map((a) => `<div class="tu-ar"><span>${esc(a.action || "—")}</span><div class="tu-s" style="flex:1;margin:0">est ${fmt(a.est)} → actual ${fmt(a.actual)}${a.variance_pct == null ? "" : " · " + (a.variance_pct > 0 ? "+" : "") + a.variance_pct + "%"}</div></div>`).join("") || '<div class="muted">New rows record a pre-call estimate. Older ledger rows have none.</div>'}</div></div>
   <div class="card" id="tuTbl"><h3>Per-run usage <span class="tu-s" style="font-weight:400">(${j.count} call${j.count === 1 ? "" : "s"}${f.mode !== "all" ? " · " + (TU_MODE[f.mode] || f.mode) : ""})</span></h3>
     <div class="tu-acts">
       <button type="button" class="btn g sm" id="tuDelSel" disabled>Delete selected</button>
       <label>Delete older than<input type="date" id="tuBefore" value=""></label>
       <button type="button" class="btn g sm" id="tuDelOlder">Delete older…</button>
     </div>
-    ${rows ? `<table class="tu-tbl"><tr><th class="tu-cb"><input type="checkbox" id="tuSelAll" title="Select all on this page"></th><th>Run ID</th><th>Ticket / source</th><th>Mode / action</th><th>Model</th><th class="tu-r">Input</th><th class="tu-r">Output</th><th class="tu-r">Total</th><th>Time</th><th></th></tr>${rows}</table>${tuPager(totalRows, TU.page, TU.size)}` : `<div class="muted" id="tuEmpty">No token usage recorded for these filters yet.</div>`}
+    ${rows ? `<table class="tu-tbl"><tr><th class="tu-cb"><input type="checkbox" id="tuSelAll" title="Select all on this page"></th><th>Run ID</th><th>Ticket / source</th><th>Mode / action</th><th>Provider</th><th>Model</th><th class="tu-r">Input</th><th class="tu-r">Output</th><th class="tu-r">Total</th><th>Est. in/out</th><th class="tu-r">Cost</th><th>Time</th><th></th></tr>${rows}</table>${tuPager(totalRows, TU.page, TU.size)}` : `<div class="muted" id="tuEmpty">No token usage recorded for these filters yet.</div>`}
     <p class="tu-help">Deleting history updates the tiles, chart, breakdown, and the Dashboard AI token totals (same ledger). CSV export still downloads every row in the current filter, not just this page. The provider’s real Gemini daily quota is unchanged.</p></div>
-  <div class="card" id="tuSettings"><h3>Token settings</h3><div class="tu-set tu-flt"><label>Daily token limit<input id="tuLim" type="number" min="1" step="1" value="${s.token_daily_limit}"></label><label>$ per 1M input tokens<input id="tuRin" type="number" min="0" step="0.01" value="${s.token_rate_input}"></label><label>$ per 1M output tokens<input id="tuRout" type="number" min="0" step="0.01" value="${s.token_rate_output}"></label><button class="btn" id="tuSave">Save</button></div><p class="tu-s" style="margin-top:8px">Stored in backend/app_settings.json. Used for the quota bar and cost estimate only.</p></div>`;
-  const read = () => { TU.f = { from: $("#tuFrom").value, to: $("#tuTo").value, mode: $("#tuMode").value, model: $("#tuModel").value }; };
+  <div class="card" id="tuSettings"><h3>Token settings</h3><div class="tu-set tu-flt"><label>Daily token limit<input id="tuLim" type="number" min="1" step="1" value="${s.token_daily_limit}"></label><label>$ per 1M input tokens<input id="tuRin" type="number" min="0" step="0.01" value="${s.token_rate_input}"></label><label>$ per 1M output tokens<input id="tuRout" type="number" min="0" step="0.01" value="${s.token_rate_output}"></label><button class="btn" id="tuSave">Save</button></div><p class="tu-s" style="margin-top:8px">Stored in the app settings store. Used for the quota bar and this page’s month-cost tile (workspace-wide rates). Per-model example prices and daily caps are in Settings → Preferences.</p></div>`;
+  const read = () => { TU.f = { from: $("#tuFrom").value, to: $("#tuTo").value, mode: $("#tuMode").value, model: $("#tuModel").value, provider: $("#tuProv").value, action: $("#tuAct").value }; };
   $("#tuApply").onclick = () => { read(); TU.page = 1; viewTokens(v); };
   $$("#tuTbl .tu-tog").forEach((b) => (b.onclick = () => { const r = j.rows[+b.dataset.i]; TU.open[r.batch_id] = !TU.open[r.batch_id]; viewTokens(v); }));
   $("#tuEditLim").onclick = (e) => { e.preventDefault(); $("#tuLim").focus(); $("#tuSettings").scrollIntoView({ block: "center" }); };

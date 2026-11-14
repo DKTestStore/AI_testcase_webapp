@@ -86,12 +86,32 @@ function viewReview(v) {
     const el = $(`.tc[data-k="${tc._k}"]`); if (el) el.scrollIntoView({ block: "center" });
   };
   $("#saveCases").onclick = () => guarded($("#saveCases"), async () => { await saveCases(); toast("Changes saved — you can continue to qTest Upload"); afterSave(); });
-  $("#aiRev").onclick = () => guarded($("#aiRev"), async () => {
-    if (S.localDirty) await saveCases();
-    $("#reviewPanel").innerHTML = `<div class="card"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0">AI Reviewer is checking the test cases…</div></div>`;
-    try { await api("/api/review/ai", { method: "POST" }); } catch (e) { $("#reviewPanel").innerHTML = `<div class="error">${esc(e.message)}</div>`; throw e; }
-    viewReview(v);
-  });
+  $("#aiRev").onclick = () => {
+    const runReview = (model, model_name) => guarded($("#aiRev"), async () => {
+      if (S.localDirty) await saveCases();
+      $("#reviewPanel").innerHTML = `<div class="card"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0">AI Reviewer is checking the test cases…</div></div>`;
+      try { await api("/api/review/ai", { method: "POST", body: { model: model || undefined, model_name: model_name || undefined } }); }
+      catch (e) { $("#reviewPanel").innerHTML = `<div class="error">${esc(e.message)}</div>`; throw e; }
+      viewReview(v);
+    });
+    if (typeof bindLiveEstimate !== "function") return runReview();
+    const prov = (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || "";
+    const mid = (window.tcDefaultId && tcDefaultId(prov)) || (S.run && S.run.model_name) || "";
+    const host = $("#reviewPanel") || v;
+    host.innerHTML = `<div class="card" id="rvEstCard"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:end">
+      <div><b>AI Review estimate</b><div class="sub" style="margin:4px 0 0">Uses the run provider by default. Change the model for this call only.</div></div>
+      <label style="margin:0">Model <select id="rvEstModel">${typeof tcModelOpts === "function" ? tcModelOpts(prov, mid) : ""}</select></label>
+    </div>
+    <div id="rvEst"></div>
+    <div class="row" style="gap:8px;margin-top:10px;justify-content:flex-end">
+      <button type="button" class="btn g" id="rvEstNo">Cancel</button>
+      <button type="button" class="btn" id="rvEstGo">Run AI Reviewer</button>
+    </div></div>`;
+    bindLiveEstimate({ el: "#rvEst", kind: "review", provider: () => prov, model: () => ($("#rvEstModel") && $("#rvEstModel").value) || mid, text: () => (S.run && S.run.feature_text) || "", expected: 900 });
+    if ($("#rvEstModel")) $("#rvEstModel").onchange = () => bindLiveEstimate({ el: "#rvEst", kind: "review", provider: () => prov, model: () => $("#rvEstModel").value, text: () => (S.run && S.run.feature_text) || "", expected: 900 });
+    $("#rvEstNo").onclick = () => { host.innerHTML = ""; };
+    $("#rvEstGo").onclick = () => runReview(prov, ($("#rvEstModel") && $("#rvEstModel").value) || mid);
+  };
   $("#upExcel").onclick = () => { if (S.localDirty && !confirm("You have unsaved edits. Uploading may replace them. Continue?")) return; openUploadModal(); };
   $("#dlExcel").onclick = () => guarded($("#dlExcel"), async () => {
     if (S.localDirty) await saveCases();

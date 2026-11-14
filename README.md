@@ -22,16 +22,17 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 10. [Test Case Repo & Test Runs](#test-case-repo--test-runs)
 11. [Projects & Requirement Repo](#projects--requirement-repo)
 12. [Dashboard](#dashboard)
-13. [Prompt templates](#prompt-templates-multi-select)
-14. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
-15. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
-16. [Voice input](#voice-input)
-17. [Help Assistant](#help-assistant)
-18. [Floating windows](#floating-windows)
-19. [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin)
-20. [Troubleshooting](#troubleshooting)
-21. [Testing notes](#6-testing-notes)
-22. [Original CLI](#original-cli-pipeline)
+13. [Token Usage & calculator](#token-usage)
+14. [Prompt templates](#prompt-templates-multi-select)
+15. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
+16. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
+17. [Voice input](#voice-input)
+18. [Help Assistant](#help-assistant)
+19. [Floating windows](#floating-windows)
+20. [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin)
+21. [Troubleshooting](#troubleshooting)
+22. [Testing notes](#6-testing-notes)
+23. [Original CLI](#original-cli-pipeline)
 
 ---
 
@@ -118,7 +119,7 @@ Model IDs are free-text — enter the exact ID from each provider console. Do no
 
 **Free-tier note:** Groq's free plan has per-model limits per minute and per day (requests and tokens; check the *Limits* page in your Groq console for current numbers). When Groq returns HTTP 429 the app waits for the `retry-after` header (capped at 30 s) and retries up to **2** times; if it is still rate-limited the UI shows a clear "rate limit reached" error (HTTP 429). Large stories with a high `GROQ_MAX_TOKENS` can hit the per-minute token cap — lower it or use a smaller model if that happens.
 
-Non-secret app settings (history limit, duplicate threshold, token rates/limit) live in the SQLite `app_settings` table in `backend/app.db`, not `.env`. A leftover `backend/app_settings.json` is imported once on first start and kept as a backup.
+Non-secret app settings (history limit, duplicate threshold, token rates/limit, model registry, calculator prefs, per-provider daily limits) live in the SQLite `app_settings` table in `backend/app.db`, not `.env`. A leftover `backend/app_settings.json` is imported once on first start and kept as a backup.
 
 ---
 
@@ -126,13 +127,13 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit) 
 
 | Area | What you get |
 |---|---|
-| Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose on **Generate**; configure on **Settings → AI Providers** |
-| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, **default Generate provider**, **Edge value library**, voice input, Help Assistant, floating windows) |
+| Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose provider **and model** on **Generate**; configure keys / a fallback model ID on **Settings → AI Providers**, and a per-provider model registry (multiple models, rates, context, default, enable) on **Settings → Preferences** |
+| Settings UI | Tabs: **AI Providers** / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, **default Generate provider**, **Edge value library**, **model registry**, **per-provider daily token/cost limits**, voice input, Help Assistant, floating windows) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
 | Test Runs | Cycles, step execution, attachments, results history |
-| Dashboard | Totals **exclude Archived** cases; charts; cycle / story filters |
-| Token usage | Per-provider ledger; Token Usage page with filters, pagination (10/25/50/100), delete / delete-older; Dashboard AI token totals use the same ledger. Gemini daily quota file is separate and is not reset by deletes. |
+| Dashboard | Totals **exclude Archived** cases; charts; cycle / story filters; token cards and usage-by-provider/model chart (click through to a pre-filtered ledger); near-limit banner at 80% of a user-set daily cap |
+| Token usage | Per-provider ledger (Mode, provider, model, action, date filters; pagination 10/25/50/100; delete / delete-older; Export CSV). **Calculator** tab (`#tokens/calculator`) counts tokens (coloured tokens, Token IDs, compare enabled models, over-limit). New rows store estimated vs actual tokens, cost, and `rate_source` (`model` or `legacy_global`); older rows stay on workspace-wide global rates. Dashboard AI token totals still use those global rates. Estimates appear on Generate, AI Review, Regenerate and Help; Test data / Boost show **No AI call**. Gemini daily quota file is separate and is not reset by deletes. |
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
@@ -181,7 +182,7 @@ Inline edits, priority / AC tags, reorder, review status, pagination, AI Reviewe
 ## 4. Setup checklist, Settings, logs
 
 - **Setup checklist:** Gemini key + model (required), Jira, qTest (optional), default prompt file.
-- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, **default Generate provider**, **Edge value library** enable / categories / custom values / import / export / reset, Voice input, Help Assistant, Floating windows). Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**. No new `.env` keys are required for these preferences.
+- **Settings:** AI Providers (one at a time) · Integrations (Jira, qTest, Zephyr Scale) · Preferences (history limit, duplicate threshold, **default Generate provider**, **Edge value library** enable / categories / custom values / import / export / reset, **model registry** (multiple models per provider, example rates, context window, default ★, enable), **per-provider daily token and cost limits** (warn at 80%; blank = no warning), calculator prefs (optional tiktoken; provider count APIs off by default), Voice input, Help Assistant, Floating windows). Existing AI Provider model ID fields still work as a fallback when the registry has no default. Blank secret fields keep the saved value. Zephyr Scale stores Base URL and API Key only — **test case upload is not implemented yet**. No new `.env` keys are required for these preferences; the registry is seeded from the already-configured model IDs in the settings store (not by reading `.env`).
 - **Logs:** `backend/logs/app.log` (rotating 5 MB × 3).
 
 Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*`, `backend/app.db` (and `-wal`/`-shm`), `backend/sessions/`, `backend/history/`, `backend/logs/`, `backend/app_settings.json`, `backend/test_repo/`, `backend/attachments/`, `backend/prompt_templates.json`, `backend/token_usage.json`.
@@ -203,7 +204,7 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 │   ├── test_repo.py / test_runs.py / requirements_repo.py / dashboard.py / recorder.py / help.py
 │   ├── testdata.py             # test data, Edge library, boost coverage, Gherkin export
 │   ├── data/edge_values.json   # built-in Bug Magnet-style catalog (our own values)
-│   ├── settings_store.py / history_store.py / session_store.py / token_usage.py
+│   ├── settings_store.py / history_store.py / session_store.py / token_usage.py / token_registry.py / token_estimate.py
 │   └── …
 ├── frontend/                   # welcome.html, app.html, css/ (incl. help.css, winmgr.css, testdata.css), js/ (incl. help.js, winmgr.js, testdata.js)
 ├── docs/
@@ -241,7 +242,7 @@ All `/api/*` routes (except health/session start as applicable) require the sess
 | Input / generate / review | `POST /api/input/jira\|local`, `POST /api/generate`, `POST /api/review/*` (incl. `testdata`, `boost`, `regenerate`, `ai`), `PUT /api/review/test_cases`, `GET /api/testdata/library` |
 | Excel / export | `POST /api/excel/import`, `GET /api/excel/template`, `GET /api/export` (`xlsx` / `csv` / `qtest` / `feature`; `outline`, `tags`, `background`, `stories`), `GET /api/review/excel` |
 | qTest | `POST /api/qtest/preview\|upload`, `GET /api/qtest/rtm`, `POST /api/qtest/retry_failed` |
-| Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/settings/prefs` (default provider + Edge library), `GET\|PUT /api/prompt/default`, `/api/templates*`, `GET /api/tokens` (paged), `GET /api/tokens/export.csv`, `POST /api/tokens/delete`, `/api/usage` |
+| Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/settings/prefs` (default provider, Edge library, model registry, calculator prefs, per-provider daily limits), `GET\|PUT /api/prompt/default`, `/api/templates*`, `GET /api/tokens` (paged; also `provider` + `action` filters), `GET /api/tokens/export.csv` (includes provider, estimate, cost, `rate_source`), `POST /api/tokens/delete`, `POST /api/tokens/estimate`, `POST /api/tokens/count`, `/api/usage` |
 | History / batch | `/api/history*`, `/api/batch*` |
 | Test Case Repo | `/api/repo*` |
 | Test Runs | `/api/runs*`, `/api/attachments*` |
@@ -285,15 +286,25 @@ Sidebar: project switcher + **Requirements** (Projects / Traceability reachable 
 
 ## Token Usage
 
-`#tokens` — ledger in SQLite (`token_ledger` in `backend/app.db`; leftover `backend/token_usage.json` is imported once and kept as a backup). `GET /api/tokens` accepts the existing From/To/Mode/Model filters plus server-side pagination (`page`, `page_size` of 10/25/50/100, default 25). The Per-run table shows “Showing X–Y of N”; page size is remembered in `localStorage`. `GET /api/tokens/export.csv` still exports **all** filtered rows (not just the current page).
+`#tokens` — ledger in SQLite (`token_ledger` in `backend/app.db`; leftover `backend/token_usage.json` is imported once and kept as a backup). `GET /api/tokens` accepts the existing From/To/**Mode**/Model filters plus **provider** and **action**, and server-side pagination (`page`, `page_size` of 10/25/50/100, default 25). The Per-run table shows “Showing X–Y of N”; page size is remembered in `localStorage`. The table also shows provider, pre-call estimate, recorded cost, and `rate_source`. `GET /api/tokens/export.csv` still exports **all** filtered rows (not just the current page) and **appends** those new columns without dropping the existing ones.
+
+New ledger rows record `est_input` / `est_output` / `est_cost`, `actual_cost`, and `rate_source` (`model` when a registry rate was used, otherwise `legacy_global`). Existing rows are left unchanged (migration `004_token_calculator` defaults them to `legacy_global` / 0). The month-cost tile on this page still uses the workspace-wide **Token settings** rates (`$ per 1M` input/output and the global daily limit). Per-model example prices and per-provider daily caps live in **Settings → Preferences**.
+
+**Calculator** tab (`#tokens/calculator`): paste or reuse the current run’s text, pick a provider/model from the registry, see token counts, a coloured token view, optional Token IDs, estimated cost and context fit, compare all enabled models grouped by provider, and an over-limit warning. Counting uses characters ÷ 4 (or the model’s divisor) by default. **tiktoken** is optional — used only if the package is already installed and the calculator pref is on (OpenAI / Codex). Provider count APIs (for example Gemini `countTokens`) are **opt-in and off by default** because they make a real API call.
+
+`POST /api/tokens/estimate` (and `/api/tokens/count`) is the shared pre-call API used by the calculator and by **Generate**, **AI Review**, **Regenerate**, and **Help**. Library / heuristic **Test data** and **Boost coverage** short-circuit to **No AI call · 0 tokens** and still do not write a ledger row.
+
+Alembic migration `004_token_calculator` adds the new ledger columns with safe defaults (no data loss). JSON backups (`token_ledger.bak.json`) continue to dump the list including the new keys once they are persisted.
 
 Delete: row icon, checkboxes (select-all on the current page), **Delete selected**, and **Delete older than** a date. `POST /api/tokens/delete` with `{ids:[…]}` or `{before:"YYYY-MM-DD"}`; `confirm: false` previews count + token total, `confirm: true` applies. Each entry has a stable `id` (`TU-` + 12 hex); older rows are backfilled on read/write. Before each delete the ledger is copied to `ai_test_generator/reports/token_ledger.bak.json` plus a timestamped file (last 5 kept).
 
-The ledger action list includes **Test data** and **Boost coverage** (recorded only when a model is actually called). Deletes refresh this page’s tiles, daily chart, breakdown and table, and the **Dashboard** AI token totals (same `token_usage._load()` data). They do **not** modify `ai_test_generator/reports/gemini_usage.json` (the provider’s real Gemini daily quota). The Daily quota tile on this page is ledger vs the Token settings daily limit, so it **does** change after a delete.
+The ledger action list includes **Test data** and **Boost coverage** (recorded only when a model is actually called). Deletes refresh this page’s tiles, daily chart, breakdowns (by action and by provider/model), estimate-accuracy, table, and the **Dashboard** AI token totals (same `token_usage._load()` data). They do **not** modify `ai_test_generator/reports/gemini_usage.json` (the provider’s real Gemini daily quota). The Daily quota tile on this page is ledger vs the Token settings daily limit, so it **does** change after a delete.
 
 ## Dashboard
 
 `#dashboard` — `GET /api/dashboard`. Tiles and section 1 **exclude Archived** cases (aligned with Repo default). Charts (Table / Donut / Bar) remembered in `localStorage`. Customize layout locally.
+
+Existing tiles and the **AI-generated cases and token usage** section (including `ai.cost` at the workspace-wide global rates) are unchanged. The response also includes an additive `token_summary`: period totals at per-model example rates, usage by provider/model, and `near_limit` entries when a **user-set** daily token or cost cap in Settings is at least 80% used today (blank limits never warn). Dashboard cards and the provider/model chart click through to `#tokens?provider=…` (and model) so the ledger opens pre-filtered.
 
 ---
 
@@ -467,6 +478,7 @@ Offline mocks (process env only, **not** read from `.env`): `ATG_MOCK_GEMINI=1`,
 - Useful: `GET /api/health`, `GET /api/setup/status`, `GET /api/history`, `GET|PUT /api/settings/history_limit`.
 - Help Assistant ranking is covered by mocked unit tests in `tests/test_help_search.py` (no network, no provider calls).
 - Test data, Edge library, Boost coverage, Gherkin export, sanitize preservation, and provider fallback are covered by mocked unit tests in `tests/test_testdata_library.py` (no network, no provider calls).
+- Token calculator counts (chars/4 fallback), per-model vs legacy-global rates, ledger provider/action filters, CSV column append, estimate-vs-actual recording, Dashboard near-limit banners, and migration `004_token_calculator` are covered by mocked unit tests in `tests/test_token_calculator.py` (no network, no provider calls).
 
 ---
 

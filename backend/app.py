@@ -103,7 +103,33 @@ def _save(sess, history=False):
     session_store.save(sess["sid"])
 
 
-def _tok(sess, action, usage, run=None, item=None):
+def _estimate_for(action, usage, run=None, extra=""):
+    """Best-effort pre-call estimate for the ledger. Never raises."""
+    try:
+        from . import token_estimate, parsing
+        run = run or {}
+        usage = usage or {}
+        provider = usage.get("provider") or run.get("model") or ""
+        mid = usage.get("model_name") or run.get("model_name") or ""
+        expected = {
+            "Generate": 1800, "AI review": 900, "Regenerate": 400, "Help chat": 200,
+            "AI review (repo)": 900, "Regenerate (repo)": 400,
+        }.get(action, 800)
+        parts = [str(run.get("feature_text") or ""), str(extra or "")]
+        if str(action).startswith("AI review"):
+            try:
+                parts.append(parsing.test_cases_to_markdown(run.get("test_cases") or []))
+            except Exception:
+                parts.append(str(run.get("markdown") or ""))
+        if str(action).startswith("Regenerate"):
+            parts.append(str((run.get("regen_instruction") or extra) or ""))
+        text = "\n\n".join(p for p in parts if p)
+        return token_estimate.estimate(text, provider, mid, expected)
+    except Exception:
+        return None
+
+
+def _tok(sess, action, usage, run=None, item=None, estimate=None):
     """Token Usage ledger (additive). Never raises."""
     try:
         run = run if run is not None else _run(sess)
@@ -111,8 +137,10 @@ def _tok(sess, action, usage, run=None, item=None):
         if batch and item is None:
             item = next((i for i in batch.get("items", []) if i.get("run") is run), None)
         mode = "batch" if batch and item is not None else (run.get("source") or "local")
+        if estimate is None:
+            estimate = _estimate_for(action, usage, run)
         token_usage.record(action=action, usage=usage, run=run, mode=mode,
-                           batch=batch if mode == "batch" else None, item=item)
+                           batch=batch if mode == "batch" else None, item=item, estimate=estimate)
     except Exception:
         log.exception("token usage hook failed (ignored)")
 
@@ -320,10 +348,11 @@ def usage(sess=Depends(current)):
 def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run = _run(sess)
     model = services.resolve_provider(run, data.get("model"))
+    model_name = str(data.get("model_name") or "").strip() or services.model_name_for(model)
     mode = "custom" if data.get("prompt_mode") == "custom" else "default"
     custom = str(data.get("custom_prompt", ""))[:50_000]
     run_reviewer = bool(data.get("run_reviewer"))
-    run.update({"model": model, "model_name": services.model_name_for(model),
+    run.update({"model": model, "model_name": model_name,
                 "prompt_mode": mode, "custom_prompt": custom, "run_reviewer": run_reviewer})
     _save(sess)
 
@@ -334,7 +363,7 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         result, cases, appended = tpl_res["result"], tpl_res["cases"], False
     else:
         prompt, appended = services.build_prompt(mode, custom)
-        result = services.generate(model, run["feature_text"], prompt)
+        result = services.generate(model, run["feature_text"], prompt, model_name=run.get("model_name") or "")
         cases = parsing.markdown_to_test_cases(result["markdown"])
         run["prompts_used"] = [{"id": ptpl.DEFAULT_ID if mode == "default" else "custom",
                                 "name": "Default" if mode == "default" else "Custom", "prompt": prompt}]
@@ -354,7 +383,7 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     review_info = None
     if run_reviewer:
         try:
-            rv = services.review(model, run["feature_text"], result["markdown"])
+            rv = services.review(model, run["feature_text"], result["markdown"], model_name=run.get("model_name") or "")
             rv_cases = parsing.markdown_to_test_cases(rv["markdown"])
             review_info = {"markdown": rv["markdown"], "test_cases": rv_cases, "usage": rv["usage"]}
         except ServiceError as ex:
@@ -457,7 +486,10 @@ def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     ac_list = run.get("ac_list") or _ac_list(run)
     linked = [a for a in ac_list if a["id"] in tc["acs"]]
     model = services.resolve_provider(run, data.get("model"))
-    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction, model=model)
+    model_name = str(data.get("model_name") or "").strip() or services.model_name_for(model)
+    run["model_name"] = model_name
+    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction,
+                                  model=model, model_name=model_name)
     prop = res["test_case"]
     if data.get("keep_title_priority"):
         prop["name"], prop["priority"] = tc["name"], tc["priority"]
@@ -478,8 +510,10 @@ async def run_reviewer(request: Request, sess=Depends(current)):
     except Exception:
         data = {}
     model = services.resolve_provider(run, (data or {}).get("model"))
+    model_name = str((data or {}).get("model_name") or "").strip() or services.model_name_for(model)
+    run["model_name"] = model_name
     md = parsing.test_cases_to_markdown(run["test_cases"])
-    rv = services.review(model, run["feature_text"], md)
+    rv = services.review(model, run["feature_text"], md, model_name=model_name)
     rv_cases = parsing.markdown_to_test_cases(rv["markdown"])
     run["review"] = {"markdown": rv["markdown"], "test_cases": rv_cases, "usage": rv["usage"]}
     _save(sess)
@@ -1139,10 +1173,11 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
     if it["gen"]["status"] == "generating":
         raise ServiceError("Already generating.")
     run = it["run"]
-    model = str(data.get("model", "gemini")).lower()
+    model = services.resolve_provider(run, data.get("model"))
+    model_name = str(data.get("model_name") or "").strip() or services.model_name_for(model)
     mode = "custom" if data.get("prompt_mode") == "custom" else "default"
     custom = str(data.get("custom_prompt", ""))[:50_000]
-    run.update({"model": model, "prompt_mode": mode, "custom_prompt": custom})
+    run.update({"model": model, "model_name": model_name, "prompt_mode": mode, "custom_prompt": custom})
     token = uuid.uuid4().hex
     it["gen"] = {"status": "generating", "error": "", "tokens": 0, "secs": 0, "token": token}
     _save(sess)
@@ -1155,7 +1190,7 @@ def batch_generate(key: str, data: Dict[str, Any] = Body(default={}), sess=Depen
             result, cases = tpl_res["result"], tpl_res["cases"]
         else:
             prompt, _ = services.build_prompt(mode, custom)
-            result = services.generate(model, run["feature_text"], prompt)
+            result = services.generate(model, run["feature_text"], prompt, model_name=run.get("model_name") or "")
             cases = parsing.markdown_to_test_cases(result["markdown"])
             if mode == "default" and cases:   # Default template implicitly used -> count it
                 ptpl.mark_used([ptpl.DEFAULT_ID])
@@ -1390,7 +1425,8 @@ def compare_excel(data: Dict[str, Any] = Body(...), sess=Depends(current)):
 # --------------------------------------------------------------------------- #
 def _tq(request: Request, paged: bool = False):
     q = request.query_params
-    out = dict(d_from=q.get("from", "")[:10], d_to=q.get("to", "")[:10], mode=q.get("mode", ""), model=q.get("model", ""))
+    out = dict(d_from=q.get("from", "")[:10], d_to=q.get("to", "")[:10], mode=q.get("mode", ""), model=q.get("model", ""),
+               provider=q.get("provider", ""), action=q.get("action", ""))
     if paged:
         try:
             out["page"] = int(q.get("page") or 1)
@@ -1441,6 +1477,67 @@ def put_token_settings(data: Dict[str, Any] = Body(...), sess=Depends(current)):
         return {"ok": True, "settings": token_usage.set_settings(data)}
     except ValueError as ex:
         raise ServiceError(str(ex))
+
+
+@app.post("/api/tokens/count")
+def tokens_count(data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
+    """Count tokens in text (chars/4 default; optional tiktoken / provider API per Settings)."""
+    from . import token_estimate
+    run = None
+    try:
+        run = _run(sess)
+    except Exception:
+        run = None
+    text = (data or {}).get("text")
+    if text is None and run:
+        text = run.get("feature_text") or ""
+    provider = str((data or {}).get("provider") or (data or {}).get("model") or (run or {}).get("model") or "")
+    mid = str((data or {}).get("model_name") or (data or {}).get("model_id") or (run or {}).get("model_name") or "")
+    return {"ok": True, **token_estimate.count_text(str(text or ""), provider, mid)}
+
+
+@app.post("/api/tokens/estimate")
+def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
+    """Pre-call estimate for Generate, AI Review, Regenerate, or Help (no provider call)."""
+    from . import token_estimate, parsing
+    data = data or {}
+    run = None
+    try:
+        run = _run(sess)
+    except Exception:
+        run = None
+    run = run or {}
+    kind = str(data.get("kind") or data.get("action") or "").strip().lower()
+    text = data.get("text")
+    if text is None:
+        parts = [str(run.get("feature_text") or data.get("feature_text") or ""),
+                 str(data.get("prompt") or data.get("instruction") or data.get("question") or "")]
+        if kind in ("review", "ai review", "ai-review"):
+            try:
+                parts.append(parsing.test_cases_to_markdown(data.get("test_cases") or run.get("test_cases") or []))
+            except Exception:
+                parts.append(str(run.get("markdown") or ""))
+        text = "\n\n".join(p for p in parts if p)
+    expected = data.get("expected_output")
+    if expected is None:
+        expected = {"generate": 1800, "review": 900, "ai review": 900, "ai-review": 900,
+                    "regenerate": 400, "regen": 400, "help": 200, "help chat": 200}.get(kind, 800)
+    provider = str(data.get("provider") or data.get("model") or run.get("model") or "")
+    mid = str(data.get("model_name") or data.get("model_id") or run.get("model_name") or "")
+    # Library / heuristic testdata and boost are not AI calls.
+    if kind in ("testdata", "test data", "boost") and str(data.get("source") or "library").lower() in (
+            "library", "lib", "heuristic", "both", ""):
+        mid_resolved = mid
+        try:
+            from . import token_registry as _reg
+            mid_resolved = _reg.resolved_model_id(provider, mid)
+        except Exception:
+            pass
+        return {"ok": True, "tokens": 0, "chars": len(text or ""), "words": 0, "method": "none",
+                "exact": True, "provider": provider, "model": mid_resolved or mid,
+                "est_input": 0, "est_output": 0, "est_cost": 0, "rate_source": "model",
+                "fit_pct": 0, "fits": True, "no_ai": True, "note": "No AI call"}
+    return {"ok": True, **token_estimate.estimate(str(text or ""), provider, mid, expected)}
 
 
 # --------------------------------------------------------------------------- #
@@ -1543,7 +1640,7 @@ def _tpl_generate(run, model, ids) -> Dict[str, Any]:
         prompt = ptpl.fill(t, ctx)
         prompts.append({"id": tid, "name": t["name"], "prompt": prompt})
         try:
-            res = services.generate(model, run["feature_text"], prompt, tag="" if tid == ptpl.DEFAULT_ID else t["name"])
+            res = services.generate(model, run["feature_text"], prompt, tag="" if tid == ptpl.DEFAULT_ID else t["name"], model_name=run.get("model_name") or "")
         except ServiceError as ex:
             raise ServiceError(f"Template '{t['name']}': {ex.message}", ex.status)
         cs = parsing.markdown_to_test_cases(res["markdown"])

@@ -114,9 +114,9 @@ def _text_from(resp) -> str:
 
 
 def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
-             max_output_tokens: Optional[int] = None,
+             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None,
              _sleep=time.sleep) -> Tuple[str, Dict[str, Any]]:
-    model = _model()
+    model = (model_name or "").strip() or _model()
     print(f"Generating with Groq (model={model}, host={GROQ_BASE})... please wait.\n")
     messages = []
     if system_prompt:

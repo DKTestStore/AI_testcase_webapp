@@ -264,11 +264,15 @@ def set_edge_library_prefs(value) -> dict:
 
 
 def get_prefs() -> dict:
+    from . import token_registry as _reg
     return {
         "default_provider": get_default_provider(),
         "edge_library": get_edge_library_prefs(),
         "history_limit": get_history_limit(),
         "dup_threshold": get_dup_threshold(),
+        "token_registry": _reg.get_registry(persist_seed=True),
+        "calc_prefs": _reg.get_calc_prefs(),
+        "token_limits": _reg.get_limits(),
     }
 
 
@@ -278,4 +282,11 @@ def update_prefs(data) -> dict:
         set_default_provider(data.get("default_provider"))
     if "edge_library" in data:
         set_edge_library_prefs(data.get("edge_library") or {})
+    from . import token_registry as _reg
+    if "token_registry" in data:
+        _reg.set_registry(data.get("token_registry"))
+    if "calc_prefs" in data:
+        _reg.set_calc_prefs(data.get("calc_prefs") or {})
+    if "token_limits" in data:
+        _reg.set_limits(data.get("token_limits") or {})
     return get_prefs()

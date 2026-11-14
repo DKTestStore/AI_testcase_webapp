@@ -187,9 +187,19 @@ def _codex_module():
 KNOWN_PROVIDERS = ("gemini", "grok", "groq", "claude", "openai", "codex", "ollama")
 
 
-def model_name_for(provider: str) -> str:
-    """Configured model id for a provider (from Settings / env). Empty if unset."""
+def model_name_for(provider: str, override: str = "") -> str:
+    """Configured model id for a provider (registry default, else Settings / env). Empty if unset."""
     p = _norm_provider(provider)
+    ov = (override or "").strip()
+    if ov:
+        return ov
+    try:
+        from . import token_registry as _reg
+        mid = _reg.resolved_model_id(p, "")
+        if mid:
+            return mid
+    except Exception:
+        pass
     from .config import env
     if p == "gemini":
         return (env("GEMINI_MODEL") or "").strip().strip("\"'")
@@ -254,13 +264,16 @@ def _provider_error(ex: Exception) -> ServiceError:
     return ServiceError(str(msg), status)
 
 
-def _complete(provider: str, system_prompt: str, user_content: str, *, temperature: float = 0.2) -> Dict[str, Any]:
+def _complete(provider: str, system_prompt: str, user_content: str, *, temperature: float = 0.2,
+              model_name: Optional[str] = None) -> Dict[str, Any]:
     """Single provider dispatch — one call, no Gemini fallback for other providers.
 
     Returns {"text": str, "usage": {model, model_name, provider, input_tokens, output_tokens, total_tokens}}.
+    Optional model_name overrides the Settings/env default for this call only.
     """
     provider = _norm_provider(provider)
     reload_env()
+    mid = (model_name or "").strip() or None
     if provider == "gemini":
         g = _gemini_module()
         _, today = g.get_today_quota()
@@ -270,21 +283,36 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
         captured: Dict[str, Any] = {}
         models = g.client.models
         orig = models.generate_content
-
-        def _capture(*a, **k):
-            r = orig(*a, **k)
-            captured["um"] = getattr(r, "usage_metadata", None)
-            return r
-        models.generate_content = _capture
-        try:
-            text = g.generate_test_cases(user_content, system_prompt)
-        finally:
+        text = None
+        if mid:
+            model_id = mid
             try:
-                del models.generate_content
-            except AttributeError:
-                models.generate_content = orig
+                resp = g.client.models.generate_content(
+                    model=model_id, contents=user_content,
+                    config=g.types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature))
+                text = getattr(resp, "text", None)
+                captured["um"] = getattr(resp, "usage_metadata", None)
+            except Exception as ex:
+                print(f"Gemini API error: {type(ex).__name__}: {ex}")
+                raise ServiceError(f"Gemini API error (model '{model_id}'): {type(ex).__name__}: {ex}", 502)
+            if not text:
+                fb = getattr(resp, "prompt_feedback", None)
+                raise ServiceError(f"Gemini returned an empty response (possibly blocked). Feedback: {fb}", 502)
+        else:
+            def _capture(*a, **k):
+                r = orig(*a, **k)
+                captured["um"] = getattr(r, "usage_metadata", None)
+                return r
+            models.generate_content = _capture
+            try:
+                text = g.generate_test_cases(user_content, system_prompt)
+            finally:
+                try:
+                    del models.generate_content
+                except AttributeError:
+                    models.generate_content = orig
         if not text:
-            model_id = (env("GEMINI_MODEL") or "").strip().strip("\"'")
+            model_id = mid or (env("GEMINI_MODEL") or "").strip().strip("\"'")
             try:
                 resp = g.client.models.generate_content(
                     model=model_id, contents=user_content,
@@ -301,7 +329,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
         usage = {
             "model": "gemini",
             "provider": "gemini",
-            "model_name": (env("GEMINI_MODEL") or "").strip().strip("\"'"),
+            "model_name": mid or (env("GEMINI_MODEL") or "").strip().strip("\"'"),
             "input_tokens": getattr(um, "prompt_token_count", None) or 0,
             "output_tokens": getattr(um, "candidates_token_count", None) or 0,
             "total_tokens": (getattr(um, "total_token_count", None) or 0) or max(_today_tokens() - before, 0),
@@ -311,7 +339,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
     if provider == "grok":
         try:
             mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_grok")
-            text, usage = mod.complete(system_prompt, user_content, temperature=temperature)
+            text, usage = mod.complete(system_prompt, user_content, temperature=temperature, model_name=mid)
         except Exception as ex:
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
@@ -319,7 +347,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
     if provider == "groq":
         try:
             mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_groq")
-            text, usage = mod.complete(system_prompt, user_content, temperature=temperature)
+            text, usage = mod.complete(system_prompt, user_content, temperature=temperature, model_name=mid)
         except Exception as ex:
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
@@ -327,7 +355,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
     if provider == "claude":
         try:
             mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_claude")
-            text, usage = mod.complete(system_prompt, user_content, temperature=temperature)
+            text, usage = mod.complete(system_prompt, user_content, temperature=temperature, model_name=mid)
         except Exception as ex:
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
@@ -335,7 +363,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
     if provider == "openai":
         try:
             mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_openai")
-            text, usage = mod.complete(system_prompt, user_content, temperature=temperature)
+            text, usage = mod.complete(system_prompt, user_content, temperature=temperature, model_name=mid)
         except Exception as ex:
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
@@ -343,25 +371,25 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
     if provider == "codex":
         try:
             c = _codex_module()
-            text, usage = c.complete(system_prompt, user_content, temperature=temperature)
+            text, usage = c.complete(system_prompt, user_content, temperature=temperature, model_name=mid)
         except Exception as ex:
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
 
     if provider == "ollama":
-        text = _ollama_chat(system_prompt, user_content)
+        text = _ollama_chat(system_prompt, user_content, model_name=mid)
         if not text:
             raise ServiceError("Ollama returned an empty response.", 502)
         return {"text": text, "usage": {
             "model": "ollama", "provider": "ollama",
-            "model_name": env("OLLAMA_MODEL", "gemma3:4b"),
+            "model_name": mid or env("OLLAMA_MODEL", "gemma3:4b"),
             "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
         }}
 
     raise ServiceError(f"Unknown provider '{provider}'. Choose Gemini, Grok, Groq, Claude, OpenAI, Codex (OpenAI), or Ollama.")
 
 
-def _ollama_chat(system_prompt: str, user_content: str) -> str:
+def _ollama_chat(system_prompt: str, user_content: str, model_name: Optional[str] = None) -> str:
     """test_generator_ollama.generate_test_cases() uses a hard-coded prompt and only
     prints the result (returns None), so call ollama.chat the same way here but with
     the selected prompt, and return the text."""
@@ -370,7 +398,7 @@ def _ollama_chat(system_prompt: str, user_content: str) -> str:
         import ollama
     except Exception as ex:
         raise ServiceError(f"ollama package not installed: {ex}", 500)
-    model = env("OLLAMA_MODEL", "gemma3:4b")
+    model = (model_name or "").strip() or env("OLLAMA_MODEL", "gemma3:4b")
     host = env("OLLAMA_HOST") or None
     try:
         timeout = float(env("OLLAMA_TIMEOUT") or 300)
@@ -430,7 +458,8 @@ TYPE_HINT = ("\n\nAdditionally, directly below each 'Test Case Name:' line add o
              "classifying that test case. Keep every other part of the required output template unchanged.")
 
 
-def generate(model: str, feature_text: str, prompt: str, tag: str = "") -> Dict[str, Any]:
+def generate(model: str, feature_text: str, prompt: str, tag: str = "",
+             model_name: Optional[str] = None) -> Dict[str, Any]:
     if not (feature_text or "").strip():
         raise ServiceError("No feature description. Complete the Input step first.")
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
@@ -438,12 +467,13 @@ def generate(model: str, feature_text: str, prompt: str, tag: str = "") -> Dict[
     if os.environ.get("ATG_TYPE_HINT", "1") != "0":
         prompt = (prompt or "") + TYPE_HINT   # additive: ask for Positive/Negative/Edge (parsing falls back to a heuristic)
     provider = _norm_provider(model)
+    mid = (model_name or "").strip() or None
     # One dispatch only — never silently call Gemini (or any other) for a different selection.
-    out = _complete(provider, prompt, feature_text, temperature=0.2)
+    out = _complete(provider, prompt, feature_text, temperature=0.2, model_name=mid)
     return {"markdown": out["text"], "usage": out["usage"]}
 
 
-def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
+def review(model: str, feature_text: str, markdown: str, model_name: Optional[str] = None) -> Dict[str, Any]:
     """AI Reviewer — same provider as Generate (no silent Gemini fallback)."""
     if not (markdown or "").strip():
         raise ServiceError("No test cases to review.")
@@ -453,18 +483,20 @@ def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
                "Review the draft against the acceptance criteria, fix gaps, duplicates and formatting, "
                "and return the COMPLETE corrected set using the Required Output Template.")
     provider = _norm_provider(model)
+    mid = (model_name or "").strip() or None
     if provider == "gemini":
         # Keep Gemini quota tracker accurate for reviewer (mirrors previous behaviour)
         g = _gemini_module()
+        gmodel = mid or g.gemini_model
         try:
             resp = g.client.models.generate_content(
-                model=g.gemini_model, contents=content,
+                model=gmodel, contents=content,
                 config=g.types.GenerateContentConfig(system_instruction=reviewer_prompt, temperature=0.0))
         except Exception as ex:
             raise ServiceError(f"Gemini reviewer error: {ex}", 502)
         um = getattr(resp, "usage_metadata", None)
         total = getattr(um, "total_token_count", 0) or 0
-        usage = {"model": "gemini", "provider": "gemini", "model_name": g.gemini_model,
+        usage = {"model": "gemini", "provider": "gemini", "model_name": gmodel,
                  "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
                  "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
                  "total_tokens": total}
@@ -479,7 +511,7 @@ def review(model: str, feature_text: str, markdown: str) -> Dict[str, Any]:
             pass
         text_out = getattr(resp, "text", "") or ""
     else:
-        out = _complete(provider, reviewer_prompt, content, temperature=0.0)
+        out = _complete(provider, reviewer_prompt, content, temperature=0.0, model_name=mid)
         text_out, usage = out["text"], out["usage"]
     if not text_out.strip():
         raise ServiceError("Reviewer returned no response.", 502)
@@ -542,7 +574,7 @@ def _mock_regen(tc: Dict[str, Any], instruction: str) -> str:
 
 
 def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], tc: Dict[str, Any],
-                   instruction: str, model: str = "gemini") -> Dict[str, Any]:
+                   instruction: str, model: str = "gemini", model_name: Optional[str] = None) -> Dict[str, Any]:
     ac_txt = "\n".join(f"- {a.get('id')}: {a.get('title', '')}" for a in acs) or "(none linked)"
     cur = {k: tc.get(k) for k in ("name", "description", "precondition", "priority")}
     cur["steps"] = [{"description": s.get("description", ""), "expected": s.get("expected", "")} for s in tc.get("steps") or []]
@@ -550,17 +582,19 @@ def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], 
                f"Linked acceptance criteria:\n{ac_txt}\n\nCurrent test case (JSON):\n{json.dumps(cur, ensure_ascii=False)}\n\n"
                f"Instruction: {instruction or 'Improve this test case: make steps concrete and complete.'}")
     provider = _norm_provider(model)
+    mid = (model_name or "").strip() or None
     usage: Dict[str, Any] = {"model": provider, "provider": provider}
     if os.environ.get("ATG_MOCK_GEMINI") == "1":
         text = _mock_regen(tc, instruction or "")
-        usage.update({"mock": True, "model_name": "mock", "input_tokens": len(content) // 4 + 400,
+        usage.update({"mock": True, "model_name": mid or "mock", "input_tokens": len(content) // 4 + 400,
                       "output_tokens": len(text) // 4 + 150, "total_tokens": len(content) // 4 + len(text) // 4 + 550})
     elif provider == "gemini":
         g = _gemini_module()
-        usage["model_name"] = g.gemini_model
+        gmodel = mid or g.gemini_model
+        usage["model_name"] = gmodel
         try:
             resp = g.client.models.generate_content(
-                model=g.gemini_model, contents=content,
+                model=gmodel, contents=content,
                 config=g.types.GenerateContentConfig(system_instruction=REGEN_SYSTEM, temperature=0.4,
                                                      response_mime_type="application/json"))
         except Exception as ex:
@@ -581,7 +615,7 @@ def regenerate_one(story_id: str, feature_text: str, acs: List[Dict[str, str]], 
         text = getattr(resp, "text", "") or ""
     else:
         # Ask for JSON only; providers that support response_mime are Gemini-only above.
-        out = _complete(provider, REGEN_SYSTEM, content, temperature=0.4)
+        out = _complete(provider, REGEN_SYSTEM, content, temperature=0.4, model_name=mid)
         text, usage = out["text"], out["usage"]
     return {"test_case": _parse_regen(text), "usage": usage}
 

@@ -16,7 +16,16 @@
   const LS = "atg_dashboard_v1";
   const D = { data: null, sub: "story" };
   const cfgDefault = () => ({ order: SECS.map((s) => s.id), hidden: {}, chart: {}, defChart: {}, cycle: "", range: "" });
-  function cfg() { try { return { ...cfgDefault(), ...JSON.parse(localStorage.getItem(LS) || "{}") }; } catch { return cfgDefault(); } }
+  function cfg() {
+    const d = cfgDefault();
+    try {
+      const s = { ...d, ...JSON.parse(localStorage.getItem(LS) || "{}") };
+      const order = Array.isArray(s.order) ? s.order.slice() : d.order.slice();
+      SECS.forEach((x) => { if (!order.includes(x.id)) order.push(x.id); });
+      s.order = order;
+      return s;
+    } catch { return d; }
+  }
   function saveCfg(c) { localStorage.setItem(LS, JSON.stringify(c)); }
   const chartOf = (id) => { const c = cfg(); return c.chart[id] || c.defChart[id] || "table"; };
   const n = (x) => fmt(x || 0);
@@ -180,7 +189,7 @@
       <div class="db-tb"><label>Default cycle <select id="dbCyc"><option value="">All active cycles</option>${d.options.cycles.map((x) => `<option value="${esc(x.id)}" ${x.id === c.cycle ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
       <label>Dates <select id="dbRange">${[["", "All time"], ["7", "Last 7 days"], ["14", "Last 14 days"], ["30", "Last 30 days"], ["90", "Last 90 days"]].map(([k, l]) => `<option value="${k}" ${String(c.range) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <button class="btn g sm" id="dbCust">✎ Customize</button></div></div>
-      ${tiles(d.tiles)}${ids.map((id) => section(id, false)).join("") || `<div class="card muted">All sections are hidden — use Customize to show them.</div>`}</div>`;
+      ${tiles(d.tiles)}${typeof tokenSummaryHtml === "function" ? tokenSummaryHtml(d.token_summary) : ""}${ids.map((id) => section(id, false)).join("") || `<div class="card muted">All sections are hidden — use Customize to show them.</div>`}</div>`;
     bindSec(v, false);
     $("#dbCyc").onchange = (e) => { const k = cfg(); k.cycle = e.target.value; saveCfg(k); overview(v); };
     $("#dbRange").onchange = (e) => { const k = cfg(); k.range = e.target.value; saveCfg(k); overview(v); };

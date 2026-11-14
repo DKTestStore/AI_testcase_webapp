@@ -62,7 +62,7 @@ Free-tier keys also have per-minute and per-day limits. HTTP 429 is retried up t
 
 1. On **Generate**, tick **Also run AI Reviewer after generation**, or click **Run AI Reviewer** on the Review toolbar.
 2. When it finishes, Review shows the result so you can compare, apply, or dismiss the suggestions.
-3. It uses the same provider as **Generate** for that run (the Review badge shows the provider and model name). If the run has no saved provider (Repo or Excel), it uses **Settings → Preferences → Default provider**. The Review caret lets you override the provider for this call only. Token usage is recorded in the ledger.
+3. It uses the same provider as **Generate** for that run (the Review badge shows the provider and model name). If the run has no saved provider (Repo or Excel), it uses **Settings → Preferences → Default provider**. The Review caret lets you override the **provider and model** for this call only. Before the call, an estimate strip shows estimated input/output tokens, example cost, and context fit (Open in calculator). Token usage is recorded in the ledger with estimated vs actual values.
 
 This is separate from inline editing, AC mapping, duplicate detection (local, no AI call), and the local quality score / Improve with AI tools on the Review toolbar.
 
@@ -96,7 +96,7 @@ Open it with the teal mic in the header (next to ＋ New run), or `Ctrl+Shift+Sp
 The **Help Assistant** is an in-app chat that answers how this app’s features work, using the README and this FAQ.
 
 - The header launcher (robot-headset icon, next to the Voice mic) opens a draggable window (minimize / maximize / close).
-- The default **Use Generate provider** engine follows the current run’s saved provider. If the run has none, it uses **Settings → Preferences → Default provider** (the badge says *Settings default*). You can also pick a specific provider, or **No AI — docs search only** (keyword search over the docs, no model call).
+- The default **Use Generate provider** engine follows the current run’s saved provider. If the run has none, it uses **Settings → Preferences → Default provider** (the badge says *Settings default*). You can also pick a specific provider, or **No AI — docs search only** (keyword search over the docs, no model call). A small estimate under the composer shows tokens for the current question (0 when **No AI** is selected).
 - Optional **Include current screen context** lets it know which page you are on (for example Review).
 - Quick-question chips, the answer engine, and the launcher visibility are set in **Settings → Preferences → Help Assistant** and are saved in this browser’s `localStorage` (not in `.env`).
 - The assistant does not change your data, run Generate, or upload anything. If a feature is not implemented, it should say so.
@@ -169,3 +169,22 @@ On Review, open **Export ▾** and choose **Gherkin (.feature)** (`GET /api/expo
 - If the run has more than one story, the download is a `.zip` of `.feature` files (no extra Python package — the app uses the standard library).
 
 Excel, CSV, and qTest-import CSV exports still work as before.
+
+## Token calculator
+
+**Token Usage** has two tabs: the existing **Ledger** and a **Calculator** (`#tokens/calculator`).
+
+- The calculator counts the text you paste (or the current run’s requirements), shows coloured tokens and optional Token IDs, estimates cost and context fit for the selected model, compares all enabled models grouped by provider, and warns when the prompt plus expected output is over the context window.
+- Counts use **characters ÷ 4** (or the model’s divisor) by default. **tiktoken** is optional and only used for OpenAI / Codex when the package is already installed and the pref is on. Provider count APIs are off by default because they use quota.
+- Example prices are labelled as such until you edit them in **Settings → Preferences → Model registry**. The Token Usage month-cost tile still uses the workspace-wide global `$ / 1M` rates on that page.
+
+Generate, AI Review, Regenerate and Help show a live estimate before you call the model. **Generate test data** and **Boost coverage** show **No AI call · 0 tokens** when they use the library / heuristic path.
+
+## Model registry and daily limits
+
+**Settings → Preferences** keeps the existing default provider and Edge library cards, and adds:
+
+- **Model registry** — several models per provider, each with example input/output rates, a context limit, a default ★, and an enable toggle. Dropdowns on Generate, AI Review, Regenerate and Help list enabled models. The starred model is the default. Existing **Settings → AI Providers** model ID fields (and env) still work as a fallback. The registry is stored in the app settings database and is seeded from the model already configured for each provider; it does not change `.env`.
+- **Daily token & cost limits** per provider — leave a field blank for no warning. When you set a limit, the Dashboard and Token Usage show a banner at 80% of that day’s usage for that provider. Click the banner to open the ledger already filtered to that provider.
+
+New ledger rows store provider, model, estimated vs actual tokens, cost, and whether the rate came from the model registry or the legacy global rates. Older rows are unchanged. Export CSV includes the new columns and keeps the existing ones. The ledger still has its Mode column and filter.

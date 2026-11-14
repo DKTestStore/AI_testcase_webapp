@@ -60,8 +60,8 @@ def _usage_from(resp) -> Dict[str, Any]:
 
 
 def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
-             max_output_tokens: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
-    model = resolve_model()
+             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    model = (model_name or "").strip() or resolve_model()
     print(f"Generating with Codex/OpenAI (model={model})... please wait.\n")
     kwargs: Dict[str, Any] = {
         "model": model,
