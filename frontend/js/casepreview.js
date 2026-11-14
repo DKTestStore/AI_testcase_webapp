@@ -258,25 +258,44 @@ function cpBindSteps(root) {
   $("#cpRegen", root).onclick = cpRegenModal;
 }
 function cpCopyFallback(txt, ok) { const t = document.createElement("textarea"); t.value = txt; t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); ok(); } catch (e) { toast("Copy failed", true); } t.remove(); }
-function cpRegenModal() {
-  const c = cpC();
+function cpRegenShowProposal(c, instruction, provider, model, prior) {
   const ov = trModal(`<div class="hd"><h3>✨ Regenerate ${esc(c.id)} with AI</h3><span class="tr-x">✕</span></div>
-    <label>Instruction (optional)</label><textarea class="w" rows="3" id="cpRgI" placeholder="e.g. Make steps more concrete and add a negative check"></textarea>
-    <div class="hint">Uses the same regenerate service as Review. Nothing is saved until you confirm — then it becomes a new version (restorable from Versions).</div>
-    <div id="cpRgOut"></div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn" id="cpRgGo">✨ Generate proposal</button><button class="btn s" id="cpRgSave" style="display:none">✓ Save as new version</button></div>`, 820);
-  let prop = null;
-  $("#cpRgGo", ov).onclick = () => guarded($("#cpRgGo"), async () => {
-    const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}/regenerate`, { method: "POST", body: { instruction: $("#cpRgI").value } });
+    <div class="hint">Proposal only — nothing is saved until you confirm, then it becomes a new version (restorable from Versions). ${provider ? esc((typeof prettyProvider === "function" ? prettyProvider(provider) : provider) + (model ? " · " + model : "")) : ""}</div>
+    <div id="cpRgOut"><div class="sub">Generating proposal…</div></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn g tr-x">Cancel</button><button class="btn" id="cpRgGo">↻ Try again</button><button class="btn s" id="cpRgSave" style="display:none">✓ Save as new version</button></div>`, 820);
+  let prop = prior || null;
+  const load = () => guarded($("#cpRgGo", ov), async () => {
+    $("#cpRgOut").innerHTML = `<div class="sub">Generating proposal…</div>`;
+    const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}/regenerate`, { method: "POST", body: { instruction: instruction || "", model: provider || undefined, model_name: model || undefined } });
     prop = r.proposal; const u = r.usage || {}; const d = cpDiffBlocks(c, prop, "inline");
     $("#cpRgOut").innerHTML = `<div class="cp-vh" style="margin-top:12px"><b>Proposed changes</b> <span class="cp-m">−${d.del}</span><span class="cp-p">+${d.ins}</span><small class="muted" style="margin-left:auto">${esc(u.model_name || "")} · ${fmt(u.total_tokens)} tokens</small></div><div style="max-height:45vh;overflow:auto">${d.html}</div>`;
-    $("#cpRgSave").style.display = ""; $("#cpRgGo").textContent = "↻ Try again";
+    $("#cpRgSave").style.display = "";
   });
+  $("#cpRgGo", ov).onclick = load;
+  if (!prior) load();
   $("#cpRgSave", ov).onclick = () => guarded($("#cpRgSave"), async () => {
     if (!prop || !confirm("Save the AI proposal as a new version of this case?")) return;
     const r = await api(`/api/repo/cases/${encodeURIComponent(c.id)}`, { method: "PUT", body: { ...prop, note: "Regenerated with AI", event_type: "regenerated", by: cpMe() } });
     trClose(); toast(r.new_version ? `Regenerated · new version v${r.case.version}` : "No changes"); await cpReload(true);
   });
+}
+function cpRegenModal() {
+  const c = cpC();
+  const defProv = (window.resolvedRunProvider && resolvedRunProvider()) || (typeof defaultProvider === "function" ? defaultProvider() : "gemini");
+  const defModel = (typeof tcDefaultId === "function" ? tcDefaultId(defProv) : "") || "";
+  const tc = { id: c.id, name: c.title, title: c.title, description: c.description, precondition: c.precondition, priority: c.priority, steps: c.steps };
+  if (typeof openAiPicker === "function") {
+    return openAiPicker({
+      title: "Regenerate with AI",
+      sub: "Proposal only — nothing is saved until you confirm. Same picker as Review.",
+      confirmLabel: "Confirm & generate proposal",
+      kind: "regenerate", expected: 400, compose: true, instruction: true,
+      provider: defProv, model: defModel, test_case: tc,
+      extra: { feature_text: c.story || "" },
+      onConfirm: (p) => cpRegenShowProposal(c, p.instruction, p.provider, p.model),
+    });
+  }
+  cpRegenShowProposal(c, "", defProv, defModel);
 }
 
 // ------------------------------------------------------------------ Versions tab (word diff per field / step)

@@ -1496,6 +1496,86 @@ def tokens_count(data: Dict[str, Any] = Body(default={}), sess=Depends(current))
     return {"ok": True, **token_estimate.count_text(str(text or ""), provider, mid)}
 
 
+def _type_hint_text() -> str:
+    """Same TYPE_HINT Generate appends, unless ATG_TYPE_HINT=0."""
+    import os
+    if os.environ.get("ATG_TYPE_HINT", "1") == "0":
+        return ""
+    return services.TYPE_HINT or ""
+
+
+def _compose_generate_texts(run: Dict[str, Any], data: Dict[str, Any]):
+    """Full Generate prompts (template or default/custom + TYPE_HINT + story), one string per call."""
+    feat = str(run.get("feature_text") or data.get("feature_text") or "")
+    hint = _type_hint_text()
+    mode = str(data.get("prompt_mode") or run.get("prompt_mode") or "default")
+    texts, labels = [], []
+
+    def _one(prompt, label):
+        body = (prompt or "") + hint
+        if feat:
+            body = body + "\n\n" + feat
+        texts.append(body)
+        labels.append(label)
+
+    if mode == "custom":
+        custom = str(data.get("custom_prompt") or run.get("custom_prompt") or "")
+        if custom.strip():
+            prompt, _ = services.build_prompt("custom", custom)
+        else:
+            prompt, _ = services.build_prompt("default", "")
+        _one(prompt, "custom" if custom.strip() else "default")
+        return texts, labels
+    src = data.get("template_ids") if data.get("template_ids") else run.get("template_ids")
+    try:
+        ids = ptpl.resolve_ids(src) if src else [ptpl.DEFAULT_ID]
+    except Exception:
+        ids = [ptpl.DEFAULT_ID]
+    if ids and ids != [ptpl.DEFAULT_ID]:
+        ctx = ptpl.context_from_run(run)
+        for tid in ids:
+            t = ptpl.get(tid)
+            if not t:
+                continue
+            _one(ptpl.fill(t, ctx), t.get("name") or tid)
+    if not texts:
+        prompt, _ = services.build_prompt("default", "")
+        _one(prompt, "default")
+    return texts, labels
+
+
+def _compose_review_text(run: Dict[str, Any], data: Dict[str, Any]) -> str:
+    from . import parsing
+    feat = str(run.get("feature_text") or data.get("feature_text") or "")
+    try:
+        md = parsing.test_cases_to_markdown(data.get("test_cases") or run.get("test_cases") or [])
+    except Exception:
+        md = str(run.get("markdown") or "")
+    try:
+        rev = services.read_reviewer_prompt() or ""
+    except Exception:
+        rev = ""
+    parts = [rev, ("Acceptance Criteria:\n" + feat) if feat else "",
+             ("Draft Test Cases To Review:\n" + md) if md else ""]
+    return "\n\n".join(p for p in parts if p)
+
+
+def _compose_regen_text(run: Dict[str, Any], data: Dict[str, Any]) -> str:
+    feat = str(run.get("feature_text") or data.get("feature_text") or "")[:12000]
+    ins = str(data.get("instruction") or data.get("prompt") or data.get("question") or "").strip()
+    tc = data.get("test_case") or {}
+    cur = ""
+    if isinstance(tc, dict) and (tc.get("name") or tc.get("title") or tc.get("steps")):
+        try:
+            cur = json.dumps({k: tc.get(k) for k in ("id", "name", "title", "description", "precondition", "priority", "steps") if k in tc or tc.get(k) is not None}, ensure_ascii=False)
+        except Exception:
+            cur = str(tc)
+    story = str(run.get("story_id") or data.get("story_id") or "")
+    return (f"Story: {story or '(none)'}\n\nRequirements / story text (truncated):\n{feat}\n\n"
+            f"Current test case (JSON):\n{cur}\n\n"
+            f"Instruction: {ins or 'Improve this test case: make steps concrete and complete.'}")
+
+
 @app.post("/api/tokens/estimate")
 def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
     """Pre-call estimate for Generate, AI Review, Regenerate, or Help (no provider call)."""
@@ -1508,8 +1588,23 @@ def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(curren
         run = None
     run = run or {}
     kind = str(data.get("kind") or data.get("action") or "").strip().lower()
+    compose = bool(data.get("compose"))
     text = data.get("text")
-    if text is None:
+    texts = None
+    labels = None
+    if compose and text is None:
+        if kind in ("generate", "gen"):
+            texts, labels = _compose_generate_texts(run, data)
+            text = texts[0] if texts else ""
+        elif kind in ("review", "ai review", "ai-review"):
+            text = _compose_review_text(run, data)
+        elif kind in ("regenerate", "regen"):
+            text = _compose_regen_text(run, data)
+        else:
+            parts = [str(run.get("feature_text") or data.get("feature_text") or ""),
+                     str(data.get("prompt") or data.get("instruction") or data.get("question") or "")]
+            text = "\n\n".join(p for p in parts if p)
+    elif text is None:
         parts = [str(run.get("feature_text") or data.get("feature_text") or ""),
                  str(data.get("prompt") or data.get("instruction") or data.get("question") or "")]
         if kind in ("review", "ai review", "ai-review"):
@@ -1537,7 +1632,48 @@ def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(curren
                 "exact": True, "provider": provider, "model": mid_resolved or mid,
                 "est_input": 0, "est_output": 0, "est_cost": 0, "rate_source": "model",
                 "fit_pct": 0, "fits": True, "no_ai": True, "note": "No AI call"}
-    return {"ok": True, **token_estimate.estimate(str(text or ""), provider, mid, expected)}
+    # One estimate per composed Generate call (each template is a separate model call).
+    if not texts:
+        texts, labels = [str(text or "")], ["input"]
+    parts = [token_estimate.estimate(str(tx or ""), provider, mid, expected) for tx in texts]
+    out = dict(parts[0])
+    if len(parts) > 1:
+        out["est_input"] = sum(p.get("est_input") or p.get("tokens") or 0 for p in parts)
+        out["est_output"] = sum(p.get("est_output") or 0 for p in parts)
+        out["est_cost"] = round(sum(float(p.get("est_cost") or 0) for p in parts), 6)
+        out["tokens"] = out["est_input"]
+        out["chars"] = sum(p.get("chars") or 0 for p in parts)
+        # Fit is per call (each template is its own request), not the summed total.
+        worst = max(parts, key=lambda p: (p.get("fit_pct") or 0))
+        out["fit_pct"] = worst.get("fit_pct") or 0
+        out["fits"] = all(p.get("fits", True) for p in parts)
+        out["ctx"] = worst.get("ctx") or out.get("ctx")
+    out["calls"] = len(parts)
+    out["text"] = texts[0] if texts else str(text or "")
+    if labels:
+        out["labels"] = labels
+    # Optional reviewer (Generate "Also run AI Reviewer") — a second call after generation.
+    want_rev = str(data.get("run_reviewer") or "").lower() in ("1", "true", "yes", "on")
+    if want_rev and kind in ("generate", "gen"):
+        feat = str(run.get("feature_text") or data.get("feature_text") or "")
+        try:
+            rev_p = services.read_reviewer_prompt() or ""
+        except Exception:
+            rev_p = ""
+        # Generated cases are not known yet; reserve the generate expected-output size as a stand-in.
+        standin = "x" * max(0, int(out.get("est_output") or expected or 0) * 4)
+        rev_text = "\n\n".join(x for x in (rev_p,
+            ("Acceptance Criteria:\n" + feat) if feat else "",
+            "Draft Test Cases To Review:\n" + standin) if x)
+        rev = token_estimate.estimate(rev_text, provider, mid, 900)
+        out["review"] = {k: rev[k] for k in ("est_input", "est_output", "est_cost", "fit_pct", "fits") if k in rev}
+        out["est_input"] = int(out.get("est_input") or 0) + int(rev.get("est_input") or 0)
+        out["est_output"] = int(out.get("est_output") or 0) + int(rev.get("est_output") or 0)
+        out["est_cost"] = round(float(out.get("est_cost") or 0) + float(rev.get("est_cost") or 0), 6)
+        out["tokens"] = out["est_input"]
+        out["review_included"] = True
+        out["calls"] = int(out.get("calls") or 1) + 1
+    return {"ok": True, **out}
 
 
 # --------------------------------------------------------------------------- #

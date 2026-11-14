@@ -475,11 +475,27 @@ function trEditor(v) {
   $("#trEdCancel").onclick = () => { RP.edit = null; RP.ai = null; render(); };
   $("#trEdDraft").onclick = () => trSaveEditor("Draft", $("#trEdDraft"));
   $("#trEdReady").onclick = () => trSaveEditor("Ready", $("#trEdReady"));
-  $("#trEdAi").onclick = () => guarded($("#trEdAi"), async () => {
+  $("#trEdAi").onclick = () => {
     trReadEditor();
-    const r = await api("/api/repo/ai_review", { method: "POST", body: { case: E, acs: E.acs_text || "" } });
-    RP.ai = { ...r.review, state: {} }; render();
-  });
+    const runAi = (provider, model) => guarded($("#trEdAi"), async () => {
+      const r = await api("/api/repo/ai_review", { method: "POST", body: { case: E, acs: E.acs_text || "", model: provider || undefined, model_name: model || undefined } });
+      RP.ai = { ...r.review, state: {} }; render();
+    });
+    if (typeof openAiPicker === "function") {
+      const defProv = (typeof defaultProvider === "function" ? defaultProvider() : "gemini");
+      const defModel = (typeof tcDefaultId === "function" ? tcDefaultId(defProv) : "") || "";
+      const text = [E.title, E.description, E.precondition, E.acs_text, ...(E.steps || []).map((s) => (s.step || "") + " " + (s.expected || ""))].join("\n");
+      return openAiPicker({
+        title: "Review this test case with AI",
+        sub: "Select a provider and model, review the estimate, then confirm. Suggestions are not applied until you accept.",
+        confirmLabel: "Confirm & run review",
+        kind: "review", expected: 900, compose: false, text: () => text,
+        provider: defProv, model: defModel,
+        onConfirm: (p) => runAi(p.provider, p.model),
+      });
+    }
+    runAi();
+  };
 }
 function trPaintSteps() {
   const E = RP.edit;

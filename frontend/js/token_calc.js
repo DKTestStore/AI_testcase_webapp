@@ -12,8 +12,9 @@
 .tc-chip.warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
 .tc-chip.none{background:#f3f4f6;border-color:#e5e7eb;color:#4b5563}
 .tc-tok{display:flex;flex-wrap:wrap;gap:3px;line-height:1.8;font-family:ui-monospace,Consolas,monospace;font-size:12px;max-height:280px;overflow:auto;padding:8px;background:#fafbff;border:1px solid #eef1f7;border-radius:8px}
-.tc-tok i{font-style:normal;padding:1px 4px;border-radius:4px;white-space:pre-wrap}
+.tc-tok i{font-style:normal;padding:1px 4px;border-radius:4px;white-space:pre-wrap;display:inline-flex;align-items:center;gap:3px}
 .tc-tok i .n{font-size:9px;opacity:.7;margin-right:2px}
+.tc-tok i .tid{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:14px;padding:0 3px;border-radius:3px;background:#1e293b;color:#fff;font-size:9px;font-weight:700;line-height:14px;opacity:1;margin-right:2px}
 .tc-cmp{width:100%;border-collapse:collapse;font-size:12.5px}
 .tc-cmp th,.tc-cmp td{padding:6px 8px;border-bottom:1px solid #eef1f7;text-align:left}
 .tc-cmp th{font-size:11px;color:#6b7385;background:#f7f9fc}
@@ -113,25 +114,46 @@
   function tcTokenHtml(text, tokens, showIds) {
     const parts = tcPieces(text, tokens);
     return `<div class="tc-tok">${parts.map((p, i) =>
-      `<i style="background:${PAL[i % PAL.length]}">${showIds ? `<span class="n">${p.i}</span>` : ""}${esc(p.t)}</i>`).join("")}</div>`;
+      `<i style="background:${PAL[i % PAL.length]}">${showIds ? `<span class="tid">${p.i}</span>` : ""}${esc(p.t)}</i>`).join("")}</div>`;
   }
   function tcCalcHref(q) {
     const qs = q ? "?" + new URLSearchParams(q).toString() : "";
     return "#tokens/calculator" + qs;
   }
 
+  function tcEval(v) { return typeof v === "function" ? v() : v; }
+  function tcSeedCalc(seed) {
+    try { sessionStorage.setItem("atg_calc_seed", JSON.stringify(seed || {})); } catch (e) {}
+  }
   async function bindLiveEstimate(opts) {
     const out = typeof opts.el === "string" ? document.querySelector(opts.el) : opts.el;
     if (!out) return;
     const run = async () => {
       try {
-        const provider = typeof opts.provider === "function" ? opts.provider() : opts.provider;
-        const model_name = typeof opts.model === "function" ? opts.model() : opts.model;
-        const text = typeof opts.text === "function" ? opts.text() : (opts.text || "");
-        const est = await tcEstimate({ kind: opts.kind || "generate", provider, model_name, text,
-          expected_output: opts.expected, source: opts.source });
-        const link = `<a href="${tcCalcHref({ provider: provider || "", model: model_name || "" })}" style="margin-left:auto">Open in calculator</a>`;
-        tcPaint(out, est, link);
+        const provider = tcEval(opts.provider);
+        const model_name = tcEval(opts.model);
+        const body = { kind: opts.kind || "generate", provider, model_name,
+          expected_output: opts.expected, source: tcEval(opts.source) };
+        if (opts.compose) body.compose = true;
+        if (opts.text !== undefined) body.text = tcEval(opts.text);
+        const extra = opts.extra || {};
+        Object.keys(extra).forEach((k) => {
+          const v = tcEval(extra[k]);
+          if (v !== undefined) body[k] = v;
+        });
+        ["prompt_mode", "custom_prompt", "template_ids", "run_reviewer", "instruction", "test_case", "test_cases", "feature_text"].forEach((k) => {
+          if (opts[k] !== undefined && body[k] === undefined) {
+            const v = tcEval(opts[k]);
+            if (v !== undefined) body[k] = v;
+          }
+        });
+        const est = await tcEstimate(body);
+        const seed = { provider: provider || "", model: model_name || "", text: est.text || body.text || "" };
+        const note = (est.calls > 1 ? ` · ${est.calls} calls` : "") + (est.review_included ? " + reviewer" : "");
+        const link = `<a class="tc-open-calc" href="${tcCalcHref({ provider: seed.provider, model: seed.model })}" style="margin-left:auto">Open in calculator</a>`;
+        tcPaint(out, est, link + (note ? `<span class="sub" style="margin:0">${esc(note.trim())}</span>` : ""));
+        const a = out.querySelector(".tc-open-calc");
+        if (a) a.addEventListener("click", () => tcSeedCalc(seed));
         return est;
       } catch (e) {
         out.innerHTML = `<div class="tc-chip"><span class="sub" style="margin:0">${esc(e.message || "Estimate unavailable")}</span></div>`;
@@ -149,7 +171,16 @@
     const params = new URLSearchParams(String(S.view || location.hash.slice(1)).split("?")[1] || "");
     let pid = params.get("provider") || run.model || (typeof defaultProvider === "function" ? defaultProvider() : "gemini");
     let mid = params.get("model") || run.model_name || tcDefaultId(pid);
-    const seed = params.get("text") || run.feature_text || "";
+    let seed = params.get("text") || run.feature_text || "";
+    try {
+      const st = JSON.parse(sessionStorage.getItem("atg_calc_seed") || "null");
+      if (st) {
+        if (!params.get("provider") && st.provider) pid = st.provider;
+        if (!params.get("model") && st.model) mid = st.model;
+        if (st.text && !params.get("text")) seed = st.text;
+        sessionStorage.removeItem("atg_calc_seed");
+      }
+    } catch (e) {}
     host.innerHTML = `<div class="card" id="tcCalc">
       <h3>Token calculator</h3>
       <p class="sub" style="margin:0 0 10px">Counts are characters ÷ 4 (or the model’s divisor) unless tiktoken is installed for OpenAI/Codex. Provider count APIs are off by default. Prices are examples until you edit them in Settings.</p>
@@ -172,20 +203,27 @@
     </div>`;
     const syncModels = () => { $("#tcModel").innerHTML = tcModelOpts($("#tcProv").value, ""); };
     $("#tcProv").onchange = syncModels;
+    let lastText = seed || "", lastTok = 0;
+    const paintIds = () => {
+      const text = lastText || ($("#tcText") && $("#tcText").value) || "";
+      if (!text) { $("#tcView").innerHTML = ""; return; }
+      $("#tcView").innerHTML = tcTokenHtml(text, lastTok || Math.max(1, Math.round(text.length / 4)), $("#tcIds").checked);
+    };
     const runCount = async () => {
       const provider = $("#tcProv").value, model_name = $("#tcModel").value;
       const text = $("#tcText").value, expected_output = +$("#tcOut").value || 0;
       let j;
       try { j = await tcEstimate({ kind: "generate", provider, model_name, text, expected_output }); }
       catch (e) { $("#tcEst").innerHTML = `<div class="warn">${esc(e.message)}</div>`; return; }
+      lastText = text; lastTok = j.est_input || j.tokens;
       tcPaint($("#tcEst"), j);
-      $("#tcView").innerHTML = tcTokenHtml(text, j.est_input || j.tokens, $("#tcIds").checked);
+      paintIds();
       $("#tcOver").innerHTML = j.fits === false
         ? `<div class="tc-over">This prompt + expected output is over the ${fmt(j.ctx)}-token context window (${j.fit_pct}%). Shorten the input or pick a larger-context model.</div>`
         : "";
     };
     $("#tcGo").onclick = runCount;
-    $("#tcIds").onchange = runCount;
+    $("#tcIds").onchange = paintIds;
     $("#tcText").addEventListener("change", runCount);
     $("#tcOut").addEventListener("change", runCount);
     $("#tcCmp").onclick = async () => {
@@ -214,124 +252,162 @@
     if (seed) runCount();
   }
 
-  // ---------- Settings cards ----------
-  function tokenCalcRenderSettings(pane) {
-    if (!pane || $("#tcRegCard")) return;
-    pane.insertAdjacentHTML("beforeend", `<div class="card" id="tcRegCard" style="margin-top:14px">
-      <h3>Model registry (per provider)</h3>
-      <p class="sub" style="margin:0 0 10px">One or more models per provider, with example rates and a context window. The starred model is the default in Generate, AI Review, Regenerate and Help. Disabled models stay in the registry but are hidden from dropdowns. Existing Settings provider model fields (and env) still work as a fallback. Seeded from the model already configured for each provider — this does not change <span class="mono">.env</span>.</p>
-      <div class="tc-reg" id="tcReg"></div>
-      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
-        <button type="button" class="btn" id="tcRegSave">Save registry</button>
-        <span class="sub" id="tcRegHint" style="margin:0"></span>
-      </div>
-      <div style="margin-top:12px;border-top:1px solid #eef1f7;padding-top:10px">
-        <label class="sw" style="margin:0 0 6px;text-transform:none;font-size:13px;font-weight:400"><input type="checkbox" id="tcTik"><span class="t"></span> Use tiktoken when installed (OpenAI / Codex only; optional package)</label>
-        <label class="sw" style="margin:0;text-transform:none;font-size:13px;font-weight:400"><input type="checkbox" id="tcApi"><span class="t"></span> Call provider count APIs (uses quota; off by default)</label>
-      </div>
-    </div>
-    <div class="card tc-lim" id="tcLimCard" style="margin-top:14px">
-      <h3>Daily token &amp; cost limits (per provider)</h3>
-      <p class="sub" style="margin:0 0 10px">Leave a field blank for no warning. When a limit is set, the Dashboard and Token Usage show a banner at 80% of that day’s usage. This is separate from the workspace-wide daily token limit and global $ / 1M rates on the Token Usage page.</p>
-      <div id="tcLimTbl"></div>
-      <div class="row" style="gap:8px;margin-top:10px;align-items:center">
-        <button type="button" class="btn" id="tcLimSave">Save limits</button>
-        <span class="sub" id="tcLimHint" style="margin:0"></span>
-      </div>
-    </div>`);
-    const draw = (prefs) => {
-      const providers = (prefs.token_registry && prefs.token_registry.providers) || [];
-      $("#tcReg").innerHTML = providers.map((p) => {
-        const models = p.models || [];
-        const rows = models.map((m, i) => `<tr data-p="${esc(p.id)}" data-i="${i}">
-          <td><input type="text" data-f="id" value="${esc(m.id)}"></td>
-          <td><input type="number" data-f="inn" min="0" step="0.01" value="${m.inn ?? ""}"></td>
-          <td><input type="number" data-f="out" min="0" step="0.01" value="${m.out ?? ""}"></td>
-          <td><input type="number" data-f="ctx" min="0" step="1" value="${m.ctx ?? ""}"></td>
-          <td style="text-align:center"><input type="radio" name="tcDef-${esc(p.id)}" data-f="default" ${m.default ? "checked" : ""}></td>
-          <td style="text-align:center"><input type="checkbox" data-f="enabled" ${m.enabled !== false ? "checked" : ""}></td>
-          <td><button type="button" class="btn g sm" data-act="rm">Remove</button></td>
-        </tr>`).join("");
-        return `<div class="prov" data-p="${esc(p.id)}"><div class="hd" data-act="tog"><b>${esc(p.name || p.id)}</b><span class="sub" style="margin:0">${models.length} model${models.length === 1 ? "" : "s"} · default ${esc((models.find((m) => m.default) || {}).id || "—")}</span><button type="button" class="btn g sm" data-act="add">Add model</button></div>
-          <div class="body"><table><tr><th>Model id</th><th>$ / 1M in</th><th>$ / 1M out</th><th>Context</th><th>Default</th><th>On</th><th></th></tr>${rows}</table></div></div>`;
-      }).join("");
-      const lim = prefs.token_limits || {};
-      $("#tcLimTbl").innerHTML = `<table><tr><th>Provider</th><th>Daily tokens</th><th>Daily cost (USD)</th></tr>${providers.map((p) => {
-        const L = lim[p.id] || {};
-        return `<tr data-p="${esc(p.id)}"><td>${esc(p.name || p.id)}</td>
-          <td><input type="number" data-f="daily_tokens" min="0" step="1" placeholder="no limit" value="${L.daily_tokens ?? ""}"></td>
-          <td><input type="number" data-f="daily_cost" min="0" step="0.0001" placeholder="no limit" value="${L.daily_cost ?? ""}"></td></tr>`;
-      }).join("")}</table>`;
-      const cp = prefs.calc_prefs || {};
-      $("#tcTik").checked = cp.tiktoken !== false;
-      $("#tcApi").checked = !!cp.provider_count_api;
-    };
-    const collectReg = () => {
-      const providers = [];
-      $$("#tcReg .prov").forEach((el) => {
-        const id = el.dataset.p;
-        const models = [];
-        $$("tr[data-i]", el).forEach((tr) => {
-          const idv = ($("[data-f=id]", tr).value || "").trim();
-          if (!idv) return;
-          models.push({
-            id: idv,
-            inn: +$("[data-f=inn]", tr).value || 0,
-            out: +$("[data-f=out]", tr).value || 0,
-            ctx: +$("[data-f=ctx]", tr).value || 0,
-            default: $("[data-f=default]", tr).checked,
-            enabled: $("[data-f=enabled]", tr).checked,
-          });
-        });
-        providers.push({ id, name: (tcProvider(id) || {}).name || id, models });
+  // ---------- Settings cards (per-provider Models / Limits + Preferences calc prefs) ----------
+  function tokenCalcPidFromGroup(name) {
+    const n = String(name || "").toLowerCase();
+    if (n.indexOf("gemini") >= 0) return "gemini";
+    if (n.indexOf("groq") >= 0) return "groq";
+    if (n.indexOf("grok") >= 0 || n.indexOf("xai") >= 0) return "grok";
+    if (n.indexOf("claude") >= 0) return "claude";
+    if (n.indexOf("codex") >= 0) return "codex";
+    if (n.indexOf("openai") >= 0) return "openai";
+    if (n.indexOf("ollama") >= 0) return "ollama";
+    return n.split(/\s+/)[0];
+  }
+  function tokenCalcCollectProvider(el, pid) {
+    const models = [];
+    if (!el) return models;
+    $$("tr[data-i]", el).forEach((tr) => {
+      const idv = (($("[data-f=id]", tr) || {}).value || "").trim();
+      if (!idv) return;
+      models.push({
+        id: idv,
+        inn: +$("[data-f=inn]", tr).value || 0,
+        out: +$("[data-f=out]", tr).value || 0,
+        ctx: +$("[data-f=ctx]", tr).value || 0,
+        default: $("[data-f=default]", tr).checked,
+        enabled: $("[data-f=enabled]", tr).checked,
       });
-      return { providers };
-    };
-    $("#tcReg").onclick = (e) => {
+    });
+    return models;
+  }
+  function tokenCalcModelRow(pid, m, i) {
+    m = m || {};
+    return `<tr data-p="${esc(pid)}" data-i="${i}">
+      <td><input type="text" data-f="id" value="${esc(m.id || "")}" placeholder="model-id"></td>
+      <td><input type="number" data-f="inn" min="0" step="0.01" value="${m.inn ?? ""}"></td>
+      <td><input type="number" data-f="out" min="0" step="0.01" value="${m.out ?? ""}"></td>
+      <td><input type="number" data-f="ctx" min="0" step="1" value="${m.ctx ?? ""}"></td>
+      <td style="text-align:center"><input type="radio" name="tcDef-${esc(pid)}" data-f="default" ${m.default ? "checked" : ""}></td>
+      <td style="text-align:center"><input type="checkbox" data-f="enabled" ${m.enabled !== false ? "checked" : ""}></td>
+      <td><button type="button" class="btn g sm" data-act="rm">Remove</button></td>
+    </tr>`;
+  }
+  function tokenCalcRenderProvider(pid, modelsHost, limitsHost, prefs) {
+    if (!pid || !modelsHost) return;
+    prefs = prefs || window._prefs || {};
+    const prov = ((prefs.token_registry && prefs.token_registry.providers) || []).find((p) => p.id === pid)
+      || { id: pid, name: pid, models: [] };
+    const models = prov.models || [];
+    modelsHost.innerHTML = `<p class="sub" style="margin:0 0 10px">Models for <b>${esc(prov.name || pid)}</b> only. The starred model is the default in Generate, Review, Regenerate and Help. Disabled models stay here but are hidden from dropdowns. Example prices — edit as needed. Seeded from the Connection model ID — does not change <span class="mono">.env</span>.</p>
+      <div class="tc-reg"><table><tr><th>Model id</th><th>$ / 1M in</th><th>$ / 1M out</th><th>Context</th><th>Default</th><th>On</th><th></th></tr>${models.map((m, i) => tokenCalcModelRow(pid, m, i)).join("")}</table></div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="btn g sm" data-act="add">+ Add model</button>
+        <button type="button" class="btn sm" data-act="save-models">Save models</button>
+        <span class="sub" data-role="hint" style="margin:0"></span>
+      </div>`;
+    modelsHost.onclick = (e) => {
       const act = e.target.dataset && e.target.dataset.act;
       if (act === "add") {
-        const prov = e.target.closest(".prov");
-        const tbl = $("table", prov);
-        const i = $$("tr[data-i]", prov).length;
-        const tr = document.createElement("tr");
-        tr.dataset.p = prov.dataset.p; tr.dataset.i = String(i);
-        tr.innerHTML = `<td><input type="text" data-f="id" placeholder="model-id"></td>
-          <td><input type="number" data-f="inn" min="0" step="0.01" value="0"></td>
-          <td><input type="number" data-f="out" min="0" step="0.01" value="0"></td>
-          <td><input type="number" data-f="ctx" min="0" step="1" value="0"></td>
-          <td style="text-align:center"><input type="radio" name="tcDef-${esc(prov.dataset.p)}" data-f="default"></td>
-          <td style="text-align:center"><input type="checkbox" data-f="enabled" checked></td>
-          <td><button type="button" class="btn g sm" data-act="rm">Remove</button></td>`;
-        tbl.appendChild(tr);
+        const tbl = $("table", modelsHost);
+        const i = $$("tr[data-i]", modelsHost).length;
+        tbl.insertAdjacentHTML("beforeend", tokenCalcModelRow(pid, { id: "", inn: 0, out: 0, ctx: 0, enabled: true }, i));
       }
       if (act === "rm") {
         const tr = e.target.closest("tr");
         if (tr) tr.remove();
       }
+      if (act === "save-models") {
+        guarded(e.target, async () => {
+          const current = JSON.parse(JSON.stringify(((window._prefs && _prefs.token_registry && _prefs.token_registry.providers) || [])));
+          const modelsNew = tokenCalcCollectProvider(modelsHost, pid);
+          const i = current.findIndex((p) => p.id === pid);
+          const row = { id: pid, name: (prov.name || (tcProvider(pid) || {}).name || pid), models: modelsNew };
+          if (i >= 0) current[i] = { ...current[i], ...row };
+          else current.push(row);
+          const j = await api("/api/settings/prefs", { method: "PUT", body: { token_registry: { providers: current } } });
+          window._prefs = j.prefs || _prefs;
+          const hint = $("[data-role=hint]", modelsHost);
+          if (hint) hint.textContent = "Saved.";
+        });
+      }
     };
-    $("#tcRegSave").onclick = () => guarded($("#tcRegSave"), async () => {
-      const j = await api("/api/settings/prefs", { method: "PUT", body: {
-        token_registry: collectReg(),
-        calc_prefs: { tiktoken: $("#tcTik").checked, provider_count_api: $("#tcApi").checked },
-      }});
-      window._prefs = j.prefs || _prefs;
-      draw(_prefs);
-      $("#tcRegHint").textContent = "Saved.";
-    });
-    $("#tcLimSave").onclick = () => guarded($("#tcLimSave"), async () => {
-      const token_limits = {};
-      $$("#tcLimTbl tr[data-p]").forEach((tr) => {
-        token_limits[tr.dataset.p] = {
-          daily_tokens: $("[data-f=daily_tokens]", tr).value,
-          daily_cost: $("[data-f=daily_cost]", tr).value,
+    if (!limitsHost) return;
+    const L = (prefs.token_limits || {})[pid] || {};
+    limitsHost.innerHTML = `<p class="sub" style="margin:0 0 10px">Daily caps for <b>${esc(prov.name || pid)}</b> only. Leave a field blank for no warning. The Dashboard banner appears at 80% of a limit you set. This is separate from the workspace-wide daily token limit on Token Usage.</p>
+      <div class="row" style="align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <label>Daily tokens <input type="number" data-f="daily_tokens" min="0" step="1" placeholder="no limit" value="${L.daily_tokens ?? ""}" style="width:160px"></label>
+        <label>Daily cost (USD) <input type="number" data-f="daily_cost" min="0" step="0.0001" placeholder="no limit" value="${L.daily_cost ?? ""}" style="width:160px"></label>
+        <button type="button" class="btn sm" data-act="save-limits">Save limits</button>
+        <span class="sub" data-role="hint" style="margin:0"></span>
+      </div>
+      <div class="sub" data-role="today" style="margin:0">Loading today’s usage…</div>`;
+    limitsHost.onclick = (e) => {
+      if (!(e.target.dataset && e.target.dataset.act === "save-limits")) return;
+      guarded(e.target, async () => {
+        const limits = Object.assign({}, (window._prefs && _prefs.token_limits) || {});
+        limits[pid] = {
+          daily_tokens: ($("[data-f=daily_tokens]", limitsHost) || {}).value,
+          daily_cost: ($("[data-f=daily_cost]", limitsHost) || {}).value,
         };
+        const j = await api("/api/settings/prefs", { method: "PUT", body: { token_limits: limits } });
+        window._prefs = j.prefs || _prefs;
+        const hint = $("[data-role=hint]", limitsHost);
+        if (hint) hint.textContent = "Saved.";
       });
-      const j = await api("/api/settings/prefs", { method: "PUT", body: { token_limits } });
-      window._prefs = j.prefs || _prefs;
-      draw(_prefs);
-      $("#tcLimHint").textContent = "Saved.";
+    };
+    const todayEl = $("[data-role=today]", limitsHost);
+    const today = new Date();
+    const iso = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+    api("/api/tokens?" + new URLSearchParams({ provider: pid, from: iso, to: iso, page: "1", page_size: "1" })).then((j) => {
+      if (!todayEl) return;
+      const tot = (j.today && j.today.total) || 0;
+      const cap = Number(L.daily_tokens) || 0;
+      const pct = cap ? Math.round(tot * 1000 / cap) / 10 : 0;
+      todayEl.textContent = cap
+        ? `Today so far: ${fmt(tot)} tokens · ${pct}% of ${fmt(cap)}${pct >= 80 ? " — warn at 80%." : "."}`
+        : `Today so far: ${fmt(tot)} tokens (no daily token cap set).`;
+    }).catch(() => { if (todayEl) todayEl.textContent = ""; });
+  }
+  function tokenCalcRenderAllProviders(root, prefs) {
+    if (!root) return;
+    $$(".tc-prov-models", root).forEach((el) => {
+      const pid = el.dataset.pid;
+      const lim = root.querySelector(`.tc-prov-limits[data-pid="${pid}"]`);
+      tokenCalcRenderProvider(pid, el, lim, prefs);
     });
-    tcPrefs().then((p) => draw(p || {}));
+  }
+  function tokenCalcRenderSettings(pane) {
+    if (!pane) return;
+    // Preferences: calculator prefs only (registry + limits moved under AI Providers).
+    if (pane.matches && pane.matches('[data-pane="preferences"]') && !$("#tcCalcPrefsCard")) {
+      pane.insertAdjacentHTML("beforeend", `<div class="card" id="tcCalcPrefsCard" style="margin-top:14px">
+        <h3>Token calculator options</h3>
+        <p class="sub" style="margin:0 0 10px">Model registry and daily token &amp; cost limits now live under <b>Settings → AI Providers</b> — open a provider and use the <b>Models</b> or <b>Limits</b> sub-tab. These two options still apply to every provider.</p>
+        <label class="sw" style="margin:0 0 6px;text-transform:none;font-size:13px;font-weight:400"><input type="checkbox" id="tcTik"><span class="t"></span> Use tiktoken when installed (OpenAI / Codex only; optional package)</label>
+        <label class="sw" style="margin:0;text-transform:none;font-size:13px;font-weight:400"><input type="checkbox" id="tcApi"><span class="t"></span> Call provider count APIs (uses quota; off by default)</label>
+        <div class="row" style="gap:8px;margin-top:10px;align-items:center">
+          <button type="button" class="btn sm" id="tcCalcPrefSave">Save options</button>
+          <span class="sub" id="tcCalcPrefHint" style="margin:0"></span>
+        </div>
+      </div>`);
+      tcPrefs().then((prefs) => {
+        const cp = (prefs && prefs.calc_prefs) || {};
+        if ($("#tcTik")) $("#tcTik").checked = cp.tiktoken !== false;
+        if ($("#tcApi")) $("#tcApi").checked = !!cp.provider_count_api;
+      });
+      if ($("#tcCalcPrefSave")) $("#tcCalcPrefSave").onclick = () => guarded($("#tcCalcPrefSave"), async () => {
+        const j = await api("/api/settings/prefs", { method: "PUT", body: {
+          calc_prefs: { tiktoken: $("#tcTik").checked, provider_count_api: $("#tcApi").checked },
+        }});
+        window._prefs = j.prefs || _prefs;
+        $("#tcCalcPrefHint").textContent = "Saved.";
+      });
+    }
+    const providersRoot = pane.closest ? (pane.closest("#sbody") || pane) : pane;
+    if (providersRoot && providersRoot.querySelector(".tc-prov-models")) {
+      tcPrefs().then((prefs) => tokenCalcRenderAllProviders(providersRoot, prefs || {}));
+    }
   }
 
   function tokenSummaryHtml(ts) {
@@ -352,12 +428,7 @@
       <div class="card"><div class="tu-k">By provider</div>${prov.slice(0, 4).map((p) =>
         `<div class="tu-s"><a href="#tokens?provider=${encodeURIComponent(p.provider)}">${esc(p.provider)}</a> ${p.pct}% · ${fmt(p.total)}</div>`).join("") || '<div class="tu-s">No usage in this range.</div>'}</div>
     </div>`;
-    const bar = prov.length ? `<div class="card" style="margin:0 0 14px"><h3>Usage by provider / model</h3>
-      <div class="db-tl-bar">${prov.map((p, i) => `<i style="flex:${Math.max(p.total, 1)} 0 0;background:${PAL[i % PAL.length].replace("ff", "aa")}" title="${esc(p.provider)}: ${p.pct}%"></i>`).join("")}</div>
-      ${prov.map((p) => `<div style="margin:8px 0 4px"><a href="#tokens?provider=${encodeURIComponent(p.provider)}"><b>${esc(p.provider)}</b></a> · ${p.pct}% · ${fmt(p.total)} · ${tcMoney(p.cost)}</div>
-        ${(p.models || []).map((m) => `<div class="tu-s" style="padding-left:12px"><a href="#tokens?provider=${encodeURIComponent(p.provider)}&model=${encodeURIComponent(m.model)}">${esc(m.model || "(no model)")}</a> · ${m.pct}% · ${fmt(m.total)}</div>`).join("")}`).join("")}
-      <p class="tu-s" style="margin-top:8px">${esc(ts.note || "Example prices — edit in Settings.")}</p></div>` : "";
-    return banner + cards + bar;
+    return banner + cards;
   }
 
   window.tcPrefs = tcPrefs;
@@ -371,7 +442,11 @@
   window.bindLiveEstimate = bindLiveEstimate;
   window.viewTokenCalculator = viewTokenCalculator;
   window.tokenCalcRenderSettings = tokenCalcRenderSettings;
+  window.tokenCalcRenderProvider = tokenCalcRenderProvider;
+  window.tokenCalcRenderAllProviders = tokenCalcRenderAllProviders;
+  window.tokenCalcPidFromGroup = tokenCalcPidFromGroup;
   window.tokenSummaryHtml = tokenSummaryHtml;
   window.tcCalcHref = tcCalcHref;
+  window.tcSeedCalc = tcSeedCalc;
   window.tcMoney = tcMoney;
 })();
