@@ -187,6 +187,43 @@ def _codex_module():
 KNOWN_PROVIDERS = ("gemini", "grok", "groq", "claude", "openai", "codex", "ollama")
 
 
+def model_name_for(provider: str) -> str:
+    """Configured model id for a provider (from Settings / env). Empty if unset."""
+    p = _norm_provider(provider)
+    from .config import env
+    if p == "gemini":
+        return (env("GEMINI_MODEL") or "").strip().strip("\"'")
+    if p == "grok":
+        return (env("GROK_MODEL") or "").strip().strip("\"'")
+    if p == "groq":
+        return (env("GROQ_MODEL") or "").strip().strip("\"'")
+    if p == "claude":
+        return (env("CLAUDE_MODEL") or "").strip().strip("\"'")
+    if p == "openai":
+        return (env("OPENAI_MODEL") or "").strip().strip("\"'")
+    if p == "codex":
+        return (env("CODEX_MODEL") or env("OPENAI_MODEL") or "").strip().strip("\"'")
+    if p == "ollama":
+        return (env("OLLAMA_MODEL") or "gemma3:4b").strip().strip("\"'")
+    return ""
+
+
+def resolve_provider(run=None, override=None) -> str:
+    """Per-call override, else the run's saved provider, else Settings default (not a hardcoded Gemini)."""
+    raw = (override or "").strip()
+    if raw:
+        n = _norm_provider(raw)
+        return n if n in KNOWN_PROVIDERS else "gemini"
+    if isinstance(run, dict) and str(run.get("model") or "").strip():
+        n = _norm_provider(run.get("model"))
+        return n if n in KNOWN_PROVIDERS else n
+    try:
+        from .settings_store import get_default_provider
+        return get_default_provider()
+    except Exception:
+        return "gemini"
+
+
 def _norm_provider(model: str) -> str:
     m = (model or "gemini").strip().lower()
     if m in ("openai", "gpt"):

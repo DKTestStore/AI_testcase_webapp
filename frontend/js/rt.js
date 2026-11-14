@@ -9,7 +9,7 @@ const RT = { view: "list", type: "", weak: false, sort: "", edit: new Set(), qc:
 const RT_TYPES = ["Positive", "Negative", "Edge"];
 const RT_EDGE = /\b(boundary|boundaries|edge|limit|limits|maximum|minimum|max|min|exactly|zero|overflow|concurrent|timeout|special characters|unicode|largest|smallest)\b/i;
 const RT_COLS = [["id", "ID"], ["name", "Name"], ["description", "Description"], ["precondition", "Precondition"], ["priority", "Priority"], ["acs", "AC mapping"], ["status", "Review status"], ["template", "Template"], ["type", "Type"]];
-const RT_FMTS = [["xlsx", "📗 Excel (.xlsx)", "default"], ["csv", "📄 CSV (.csv)", ""], ["qtest", "🧪 qTest-import CSV", "qTest"]];
+const RT_FMTS = [["xlsx", "📗 Excel (.xlsx)", "default"], ["csv", "📄 CSV (.csv)", ""], ["qtest", "🧪 qTest-import CSV", "qTest"], ["feature", "🥒 Gherkin (.feature)", "Gherkin"]];
 
 // ------------------------------------------------------------------ Type (Positive / Negative / Edge)
 function rtType(t) {
@@ -126,7 +126,7 @@ window.viewReview = function (v) {
 
 function rtInject(v) {
   const acts = $(".rv-actions", v), dl = $("#dlExcel", v);
-  if (dl && !$("#rtExport", v)) dl.insertAdjacentHTML("afterend", `<button class="btn" id="rtExport" title="Export as Excel, CSV or qTest-import CSV">⇩ Export ▾</button>`);
+  if (dl && !$("#rtExport", v)) dl.insertAdjacentHTML("afterend", `<button class="btn" id="rtExport" title="Export as Excel, CSV, qTest-import CSV or Gherkin .feature">⇩ Export ▾</button>`);
   const ub = $("#unsavedBar", v);
   if (ub && !$("#rtUnsaved", v)) ub.insertAdjacentHTML("beforeend", `<span id="rtUnsaved" class="rt-ubtns"><button class="btn g sm" id="rtDiscard">Discard</button><button class="btn s sm" id="rtSave">💾 Save</button></span>`);
   const tb = $("#rvToolbar", v);
@@ -259,7 +259,8 @@ function rtExportUrl(fmt, item) {
 }
 async function rtDoExport(fmt, item) {
   if (!item && S.localDirty) { await saveCases(); afterSave(); }
-  download(rtExportUrl(fmt, item)); toast(`Export started (${{ xlsx: "Excel", csv: "CSV", qtest: "qTest-import CSV" }[fmt]})`);
+  if (fmt === "feature" && window.tdGherkinPreview) return tdGherkinPreview({ item: item || "" });
+  download(rtExportUrl(fmt, item)); toast(`Export started (${{ xlsx: "Excel", csv: "CSV", qtest: "qTest-import CSV", feature: "Gherkin" }[fmt]})`);
 }
 function rtExportPanel(anchor, item, cases) {
   const e = RT.exp;
@@ -286,7 +287,8 @@ function rtBatchMenu(anchor, key) {
   const p = openPop(anchor, `${RT_FMTS.map(([k, l]) => `<div class="pi" data-bf="${k}">${l}</div>`).join("")}<div class="pi" data-bf="opt" style="border-top:1px solid #eef0f5">⚙ Options…</div>`, 200, true);
   $$("[data-bf]", p).forEach((d) => (d.onclick = () => {
     if (d.dataset.bf === "opt") { closePop(); const it = (BS.batch.items || []).find((i) => i.key === key); return rtExportPanel(anchor, key, it && it.run && it.run.test_cases ? it.run.test_cases : new Array(it ? it.count : 0).fill({ steps: [{}], status: "not" })); }
-    closePop(); download(rtExportUrl(d.dataset.bf, key)); toast("Export started");
+    closePop(); if (d.dataset.bf === "feature" && window.tdGherkinPreview) return tdGherkinPreview({ item: key || "" });
+    download(rtExportUrl(d.dataset.bf, key)); toast("Export started");
   }));
 }
 // batch Generate table: an Export menu on every item that has test cases

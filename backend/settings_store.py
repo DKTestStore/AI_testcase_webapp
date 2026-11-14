@@ -173,3 +173,109 @@ def set_dup_threshold(value) -> int:
     from .db import update_app_settings
     update_app_settings({"dup_threshold": n})
     return n
+
+
+# --------------------------------------------------------------------------- #
+# Preferences: default Generate provider + Edge value library (non-secret, SQLite)
+# --------------------------------------------------------------------------- #
+KNOWN_PREF_PROVIDERS = ("gemini", "grok", "groq", "claude", "openai", "codex", "ollama")
+
+
+def get_default_provider() -> str:
+    raw = str(_app().get("default_provider") or "").strip().lower()
+    if raw in ("openai", "gpt"):
+        raw = "openai"
+    if raw in ("codex", "gpt-codex"):
+        raw = "codex"
+    if raw in ("grok", "xai"):
+        raw = "grok"
+    if raw in ("claude", "anthropic"):
+        raw = "claude"
+    if raw in ("ollama", "local"):
+        raw = "ollama"
+    if raw in ("gemini", "google"):
+        raw = "gemini"
+    return raw if raw in KNOWN_PREF_PROVIDERS else "gemini"
+
+
+def set_default_provider(value) -> str:
+    raw = str(value or "").strip().lower()
+    if raw not in KNOWN_PREF_PROVIDERS:
+        raise ValueError("Default provider must be one of: " + ", ".join(KNOWN_PREF_PROVIDERS) + ".")
+    from .db import update_app_settings
+    update_app_settings({"default_provider": raw})
+    return raw
+
+
+def get_edge_library_prefs() -> dict:
+    raw = _app().get("edge_library") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    disabled = [str(x) for x in (raw.get("disabled") or []) if str(x).strip()]
+    custom = []
+    for it in raw.get("custom") or []:
+        if not isinstance(it, dict):
+            continue
+        v = str(it.get("value") or it.get("v") or "").strip()
+        if not v:
+            continue
+        custom.append({"value": v, "label": str(it.get("label") or it.get("lab") or "custom")[:80],
+                       "kind": str(it.get("kind") or "")[:20]})
+    custom_categories = []
+    for c in raw.get("custom_categories") or []:
+        if isinstance(c, dict) and (c.get("id") or c.get("name")):
+            custom_categories.append({"id": str(c.get("id") or c.get("name")), "name": str(c.get("name") or c.get("id")),
+                                      "match": list(c.get("match") or [])})
+    enabled = raw.get("enabled")
+    return {"enabled": True if enabled is None else bool(enabled), "disabled": disabled,
+            "custom": custom, "custom_categories": custom_categories}
+
+
+def set_edge_library_prefs(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Edge library preferences must be an object.")
+    cur = get_edge_library_prefs()
+    if "enabled" in value:
+        cur["enabled"] = bool(value.get("enabled"))
+    if "disabled" in value:
+        cur["disabled"] = [str(x) for x in (value.get("disabled") or []) if str(x).strip()]
+    if "custom" in value:
+        custom = []
+        for it in value.get("custom") or []:
+            if not isinstance(it, dict):
+                continue
+            v = str(it.get("value") or it.get("v") or "").strip()
+            if v:
+                custom.append({"value": v[:500], "label": str(it.get("label") or it.get("lab") or "custom")[:80],
+                               "kind": str(it.get("kind") or "")[:20]})
+        cur["custom"] = custom[:200]
+    if "custom_categories" in value:
+        cur["custom_categories"] = []
+        for c in value.get("custom_categories") or []:
+            if isinstance(c, dict) and (c.get("id") or c.get("name")):
+                cur["custom_categories"].append({
+                    "id": str(c.get("id") or c.get("name"))[:40],
+                    "name": str(c.get("name") or c.get("id"))[:80],
+                    "match": [str(m) for m in (c.get("match") or [])][:12],
+                })
+    from .db import update_app_settings
+    update_app_settings({"edge_library": cur})
+    return cur
+
+
+def get_prefs() -> dict:
+    return {
+        "default_provider": get_default_provider(),
+        "edge_library": get_edge_library_prefs(),
+        "history_limit": get_history_limit(),
+        "dup_threshold": get_dup_threshold(),
+    }
+
+
+def update_prefs(data) -> dict:
+    data = data or {}
+    if "default_provider" in data:
+        set_default_provider(data.get("default_provider"))
+    if "edge_library" in data:
+        set_edge_library_prefs(data.get("edge_library") or {})
+    return get_prefs()

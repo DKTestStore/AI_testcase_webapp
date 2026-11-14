@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, Query, Request
 
 from .config import ROOT_DIR
 from .services import KNOWN_PROVIDERS, ServiceError, _complete, _norm_provider, _provider_error
@@ -177,12 +177,21 @@ def search_docs(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     return _hits(query, load_docs(), limit=limit)
 
 
-def _resolve_provider(raw: str) -> str:
+def _resolve_provider(raw: str, run=None, run_model: str = "") -> str:
     p = (raw or "").strip().lower()
     if p in ("none", "no-ai", "noai", "search", "docs"):
         return "none"
     if p in ("generate", "default", ""):
-        return "gemini"
+        cand = (run_model or "").strip() or ((run or {}).get("model") or "").strip()
+        if cand:
+            n = _norm_provider(cand)
+            if n in KNOWN_PROVIDERS:
+                return n
+        try:
+            from .settings_store import get_default_provider
+            return get_default_provider()
+        except Exception:
+            return "gemini"
     n = _norm_provider(p)
     if n not in KNOWN_PROVIDERS:
         raise ServiceError(
@@ -244,7 +253,7 @@ def api_search(q: str = Query("", description="Keyword query")):
 
 
 @router.post("/api/help/chat")
-def api_chat(data: Dict[str, Any] = Body(...)):
+def api_chat(data: Dict[str, Any] = Body(...), request: Request = None):
     question = str((data or {}).get("question") or "").strip()
     if not question:
         raise ServiceError("Enter a question.", 400)
@@ -252,8 +261,18 @@ def api_chat(data: Dict[str, Any] = Body(...)):
         raise ServiceError("Question is too long.", 400)
 
     raw_provider = str((data or {}).get("provider") or "").strip()
+    run_model = str((data or {}).get("run_model") or "").strip()
+    run = None
+    try:
+        from . import session_store
+        sid = request.cookies.get("atg_session") if request is not None else ""
+        sess = session_store.get(sid) if sid else None
+        if sess:
+            run = sess.get("run") or {}
+    except Exception:
+        run = None
     # Frontend may send "none" for docs search; also allow an explicit search path.
-    if _resolve_provider(raw_provider) == "none" or str((data or {}).get("mode") or "").lower() in ("search", "none"):
+    if _resolve_provider(raw_provider, run=run, run_model=run_model) == "none" or str((data or {}).get("mode") or "").lower() in ("search", "none"):
         # If they posted chat with no-AI, just return ranked hits (no model call).
         hits = search_docs(question, limit=5)
         return {
@@ -265,7 +284,7 @@ def api_chat(data: Dict[str, Any] = Body(...)):
             "model": "",
         }
 
-    provider = _resolve_provider(raw_provider)
+    provider = _resolve_provider(raw_provider, run=run, run_model=run_model)
     screen = str((data or {}).get("screen") or "").strip()[:80]
     history = (data or {}).get("history") or []
     if not isinstance(history, list):

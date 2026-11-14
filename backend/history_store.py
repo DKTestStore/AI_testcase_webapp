@@ -35,7 +35,7 @@ _LOCK = threading.Lock()
 
 _ENTRY_COLS = (
     "run_id", "rid", "kind", "created", "updated", "story_id", "title",
-    "source", "count", "reviewed", "status",
+    "source", "count", "reviewed", "status", "model", "model_name",
 )
 
 
@@ -90,7 +90,8 @@ def _summary(run) -> Dict[str, Any]:
     up = run.get("upload") or {}
     status = "Uploaded to qTest" if up.get("created") else ("Reviewed" if cases and rv == len(cases) else "Draft")
     out = {"story_id": run.get("story_id") or "", "title": _title(run), "source": _source(run),
-           "count": len(cases), "reviewed": rv, "status": status}
+           "count": len(cases), "reviewed": rv, "status": status,
+           "model": run.get("model") or "", "model_name": run.get("model_name") or ""}
     rec = run.get("recording") if run.get("source") == "record" else None
     if rec:   # Record feature (additive): shown in Run history for recorded runs only
         su = rec.get("setup") or {}
@@ -112,6 +113,8 @@ def _entry_from_row(row: HistoryEntry) -> Dict[str, Any]:
         "reviewed": int(row.reviewed or 0),
         "status": row.status or "",
         "updated": row.updated or "",
+        "model": getattr(row, "model", None) or "",
+        "model_name": getattr(row, "model_name", None) or "",
     }
     if row.kind:
         # Insert kind after rid to match the previous JSON shape for batch entries.
@@ -137,6 +140,10 @@ def _apply_entry(row: HistoryEntry, ent: Dict[str, Any]) -> None:
     row.count = int(ent.get("count") or 0)
     row.reviewed = int(ent.get("reviewed") or 0)
     row.status = str(ent.get("status") or "")
+    if hasattr(row, "model"):
+        row.model = str(ent.get("model") or "")
+    if hasattr(row, "model_name"):
+        row.model_name = str(ent.get("model_name") or "")
     extra = {k: v for k, v in ent.items() if k not in _ENTRY_COLS}
     row.extra = _jsonable(extra) if extra else None
 

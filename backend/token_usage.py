@@ -22,7 +22,7 @@ _LOCK = threading.RLock()
 MAX_ENTRIES = 20000
 BACKUP_KEEP = 5
 PAGE_SIZES = (10, 25, 50, 100)
-ACTIONS = ["Generate", "Regenerate", "Coverage check", "AC generate", "AI review", "Help chat"]
+ACTIONS = ["Generate", "Regenerate", "Coverage check", "AC generate", "AI review", "Help chat", "Test data", "Boost coverage"]
 DEFAULTS = {"token_daily_limit": 1_000_000, "token_rate_input": 0.30, "token_rate_output": 2.50}
 
 

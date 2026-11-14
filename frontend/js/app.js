@@ -242,19 +242,20 @@ async function viewGenerate(v) {
   if (typeof ptLoad === "function" && !(PT && PT.d)) { try { await ptLoad(); } catch (e) { } }
   if (S.view !== "generate") return;
   const r = S.run; const src = genSrc(); const custom = src === "custom";
+  const selModel = r.model || (typeof defaultProvider === "function" ? defaultProvider() : "gemini");
   const L = genLabel(src); const lbl = custom ? "Custom" : "Default";
   v.innerHTML = `<h1>Generate Test Cases</h1><div class="sub">${r.story_id ? "Story " + esc(r.story_id) + " · " : ""}${r.source === "jira" ? "Jira input" : "Local input"} · ${r.feature_text.length.toLocaleString()} characters of requirements loaded</div>
   <div class="row"><div style="flex:1.5"><div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
       <div><label style="margin-top:0">Prompt source</label><div class="seg" id="promptSeg"><button data-p="default" class="${src === "default" ? "a" : ""}">Default prompt</button><button data-p="templates" class="${src === "templates" ? "a" : ""}">Templates</button><button data-p="custom" class="${custom ? "a" : ""}">Custom prompt</button></div></div>
       <div><label style="margin-top:0">Provider</label><select id="model">
-        <option value="gemini" ${r.model === "gemini" ? "selected" : ""}>Gemini</option>
-        <option value="grok" ${r.model === "grok" ? "selected" : ""}>Grok</option>
-        <option value="groq" ${r.model === "groq" ? "selected" : ""}>Groq</option>
-        <option value="claude" ${r.model === "claude" ? "selected" : ""}>Claude</option>
-        <option value="openai" ${r.model === "openai" ? "selected" : ""}>OpenAI</option>
-        <option value="codex" ${r.model === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
-        <option value="ollama" ${r.model === "ollama" ? "selected" : ""}>Ollama (local)</option></select></div></div>
+        <option value="gemini" ${selModel === "gemini" ? "selected" : ""}>Gemini</option>
+        <option value="grok" ${selModel === "grok" ? "selected" : ""}>Grok</option>
+        <option value="groq" ${selModel === "groq" ? "selected" : ""}>Groq</option>
+        <option value="claude" ${selModel === "claude" ? "selected" : ""}>Claude</option>
+        <option value="openai" ${selModel === "openai" ? "selected" : ""}>OpenAI</option>
+        <option value="codex" ${selModel === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
+        <option value="ollama" ${selModel === "ollama" ? "selected" : ""}>Ollama (local)</option></select></div></div>
     <div id="promptArea"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid #edf0f5;gap:10px;flex-wrap:wrap">
       <label class="sw" style="margin:0;text-transform:none;font-size:13px;color:#1e2433;font-weight:400"><input type="checkbox" id="runRev" ${r.run_reviewer ? "checked" : ""}><span class="t"></span>Also run AI Reviewer after generation</label>
@@ -263,7 +264,7 @@ async function viewGenerate(v) {
   </div></div>
   <div style="flex:.8"><div class="card" id="tokenCard"><h3>Token Usage</h3><div class="sub">Loading…</div></div>
     ${(r.test_cases || []).length ? `<div class="note" style="margin:0 0 14px">ℹ This run already has ${(r.test_cases || []).length} test cases. Edit the Input and click Generate again to regenerate them.</div>` : ""}
-    <div class="card"><h3>Run summary</h3><div class="sub" style="margin:0;line-height:1.8">Prompt: <b style="color:#1e2433" id="sumPrompt">${esc(L.sum)}</b><br>Model: ${esc(r.model)}<br>AI Reviewer: ${r.run_reviewer ? '<b style="color:#12a150">On</b>' : "Off"}<br>Test cases: <b style="color:#1e2433">${(r.test_cases || []).length}</b></div></div></div></div>
+    <div class="card"><h3>Run summary</h3><div class="sub" style="margin:0;line-height:1.8">Prompt: <b style="color:#1e2433" id="sumPrompt">${esc(L.sum)}</b><br>Model: ${esc(r.model ? r.model + (r.model_name ? " · " + r.model_name : "") : "Settings default (" + selModel + ")") }<br>AI Reviewer: ${r.run_reviewer ? '<b style="color:#12a150">On</b>' : "Off"}<br>Test cases: <b style="color:#1e2433">${(r.test_cases || []).length}</b></div></div></div></div>
   ${nextBar("generate", "review", "Continue to Review")}`;
   bindNext("review");
   $$("#promptSeg button").forEach((b) => (b.onclick = async () => {
@@ -679,6 +680,7 @@ async function viewSettings(v) {
   if (window.voiceRenderSettings) voiceRenderSettings($('.set-pane[data-pane="preferences"]'));  // Voice input card (voice.js, browser-only prefs)
   if (window.helpRenderSettings) helpRenderSettings($('.set-pane[data-pane="preferences"]'));    // Help Assistant card (help.js, browser-only prefs)
   if (window.winmgrRenderSettings) winmgrRenderSettings($('.set-pane[data-pane="preferences"]')); // Floating windows card (winmgr.js)
+  if (window.testdataRenderSettings) testdataRenderSettings($('.set-pane[data-pane="preferences"]')); // Default provider + Edge library
   if (SET_ST.tab && SET_ST.tab !== "providers") {
     setShowTab(SET_ST.tab);
     $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === SET_ST.tab ? "true" : "false"));

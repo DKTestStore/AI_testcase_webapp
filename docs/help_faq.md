@@ -8,7 +8,7 @@ Short answers for the in-app Help Assistant. These notes complement the README a
 2. Optionally pick prompt templates on Input, or use **Record** to capture steps.
 3. On **Generate**, choose a **Provider** (Gemini, Grok, Groq, Claude, OpenAI, Codex, or Ollama) and Default / Custom prompt.
 4. Optionally turn on **Also run AI Reviewer after generation**.
-5. When it finishes, continue to **Review** to edit, map acceptance criteria, and export.
+5. When it finishes, continue to **Review** to edit, map acceptance criteria, generate test data, boost coverage, and export (including Gherkin).
 
 A sidebar step unlocks once the previous one has data. Configure API keys on **Settings → AI Providers**.
 
@@ -62,7 +62,7 @@ Free-tier keys also have per-minute and per-day limits. HTTP 429 is retried up t
 
 1. On **Generate**, tick **Also run AI Reviewer after generation**, or click **Run AI Reviewer** on the Review toolbar.
 2. When it finishes, Review shows the result so you can compare, apply, or dismiss the suggestions.
-3. It uses the same configured AI provider as the run (keys on Settings → AI Providers). Token usage is recorded in the ledger.
+3. It uses the same provider as **Generate** for that run (the Review badge shows the provider and model name). If the run has no saved provider (Repo or Excel), it uses **Settings → Preferences → Default provider**. The Review caret lets you override the provider for this call only. Token usage is recorded in the ledger.
 
 This is separate from inline editing, AC mapping, duplicate detection (local, no AI call), and the local quality score / Improve with AI tools on the Review toolbar.
 
@@ -71,9 +71,10 @@ This is separate from inline editing, AC mapping, duplicate detection (local, no
 The **Review** step (step 3) is where you work with generated (or uploaded) cases before export or upload.
 
 - Edit names, descriptions, preconditions and steps inline. Set priority, AC tags and review status.
-- Toolbar: ＋ Test case, Save changes, Run AI Reviewer, Check duplicates, Upload Excel, Save & Download Excel.
-- Additive tools include Export, Edit mode, AC coverage (List / Matrix), type tags, version history and a local quality score.
-- When you are happy, **Save to Test Case Repo** or **Execute now**, or continue to **qTest Upload**.
+- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (optional per-call provider), Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin).
+- A provider badge shows the Generate provider, or the Settings default when the run has none. Coverage chips count Positive / Negative / Boundary / Security cases. Each step has a **Test Data** column (edit, regenerate, or ⚡ insert from the Edge library).
+- Additive tools also include Edit mode, AC coverage (List / Matrix), type tags, version history and a local quality score.
+- When you are happy, **Save to Test Case Repo** or **Execute now**, or continue to **qTest Upload**. Test data is appended into the qTest step description; the six-column layout is unchanged.
 
 Unsaved edits are guarded. A step unlocks once the previous one has data.
 
@@ -95,7 +96,7 @@ Open it with the teal mic in the header (next to ＋ New run), or `Ctrl+Shift+Sp
 The **Help Assistant** is an in-app chat that answers how this app’s features work, using the README and this FAQ.
 
 - The header launcher (robot-headset icon, next to the Voice mic) opens a draggable window (minimize / maximize / close).
-- Answers can use your configured AI provider, or **No AI — docs search only** (keyword search over the docs, no model call).
+- The default **Use Generate provider** engine follows the current run’s saved provider. If the run has none, it uses **Settings → Preferences → Default provider** (the badge says *Settings default*). You can also pick a specific provider, or **No AI — docs search only** (keyword search over the docs, no model call).
 - Optional **Include current screen context** lets it know which page you are on (for example Review).
 - Quick-question chips, the answer engine, and the launcher visibility are set in **Settings → Preferences → Help Assistant** and are saved in this browser’s `localStorage` (not in `.env`).
 - The assistant does not change your data, run Generate, or upload anything. If a feature is not implemented, it should say so.
@@ -119,3 +120,52 @@ They should not, once you hard-refresh after this update. Voice input and Help A
 - Click or drag a window to bring it to the front. If you drop one on top of the other, it snaps apart.
 
 If they still stack (for example after using an older saved position), open **Settings → Preferences → Floating windows** and click **Reset layout** (or **Dock both (side by side)**). **Reset window position** on the Voice or Help card moves only that window. These settings stay in this browser only (not in `.env`).
+
+## Default Generate provider
+
+**Settings → Preferences → Default provider** is used when a run has no saved provider — typically after you open cases from the **Test Case Repo** or Excel, before you click Generate.
+
+- After Generate, the run keeps the provider you picked. Review, Regenerate, and Help “Use Generate provider” follow that saved value.
+- The default is **not** a new `.env` key; it is stored with the other app preferences (SQLite).
+- Changing the default does not rewrite an existing run’s provider.
+
+## Generate test data
+
+On **Review**, click **Generate test data** (or regenerate a single step from the Test Data column).
+
+1. The panel lists inferred fields (for example Email, New password, Confirm password) with Valid / Invalid / Boundary values.
+2. Choose the source per field: **AI** (heuristic samples), **Edge library** (offline catalog), or **Both**.
+3. **Accept & insert** writes the Test Data column. You can still **Edit** a cell or use **⚡** to insert a library value.
+4. Click **Save changes** to persist (`PUT /api/review/test_cases`). `POST /api/review/testdata` is a proposal only.
+
+Excel import/export includes a Test Data column. Repo save/load keeps the values.
+
+## Edge value library
+
+A built-in Bug Magnet-style catalog (`backend/data/edge_values.json`) of standard edge values — our own list, not a copy of Bug Magnet’s exact values. Lookups work **offline** (no AI call).
+
+- Open it from a Test Data cell with **⚡**, or use it as the source in Generate test data / Boost coverage (Boundary and Security).
+- **Settings → Preferences → Edge value library**: enable or disable the library, toggle categories, add custom values, Import / Export JSON, or Reset to built-in.
+- Security payloads (SQL injection, XSS, and similar) are flagged **for testing only**.
+
+`GET /api/testdata/library` returns the catalog with your Settings preferences applied.
+
+## Boost coverage
+
+**Boost coverage** on Review suggests missing **Negative**, **Boundary**, and **Security** cases for the current run.
+
+1. The preview shows coverage chips (current counts and how they would change) and a why-note for each suggestion.
+2. Boundary and Security values come from the **Edge value library** (offline — no extra AI call).
+3. Tick the cases you want and **Add selected**. New cases appear with a **NEW** badge. Save changes to keep them.
+
+`POST /api/review/boost` previews first (`confirm` omitted) and appends only when you confirm.
+
+## Export Gherkin
+
+On Review, open **Export ▾** and choose **Gherkin (.feature)** (`GET /api/export?fmt=feature`).
+
+- The file is a Feature with optional Background, `@jira-{story}` and type tags such as `@negative`, `@boundary`, `@security`, and one Scenario per test case.
+- **Scenario Outline + Examples** builds an Examples table from test data (for example password values and accepted/rejected).
+- If the run has more than one story, the download is a `.zip` of `.feature` files (no extra Python package — the app uses the standard library).
+
+Excel, CSV, and qTest-import CSV exports still work as before.

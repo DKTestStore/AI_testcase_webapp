@@ -240,6 +240,8 @@ class HistoryEntry(Base):
     count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reviewed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     extra: Mapped[Any] = mapped_column(JSON, nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

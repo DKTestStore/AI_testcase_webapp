@@ -23,12 +23,25 @@ from .config import RUNS_DIR
 EXPORT_COLS = {  # key -> header
     "id": "Test case Id", "name": "Test Case Name", "description": "Test Case Description",
     "precondition": "Precondition", "priority": "Priority", "acs": "AC Tags", "status": "Review Status",
-    "template": "Template", "type": "Type",
+    "template": "Template", "type": "Type", "testdata": "Test Data",
 }
 DEFAULT_COLS = ["id", "name", "description", "precondition", "priority", "acs"]
 BASE6 = ["id", "name", "description", "precondition"]
 STATUS_LABEL = {"not": "Not reviewed", "reviewed": "Reviewed", "changes": "Needs changes"}
-FORMATS = ("xlsx", "csv", "qtest")
+FORMATS = ("xlsx", "csv", "qtest", "feature")
+
+
+
+def _step_td(s: Dict[str, Any]) -> str:
+    if not isinstance(s, dict):
+        return ""
+    if s.get("data"):
+        return str(s.get("data") or "")
+    try:
+        from .testdata import format_test_data
+        return format_test_data(s.get("test_data"))
+    except Exception:
+        return ""
 
 
 def case_type(tc: Dict[str, Any]) -> str:
@@ -58,18 +71,19 @@ def select_cases(cases: List[Dict[str, Any]], only_reviewed: bool) -> List[Dict[
 
 def table(cases: List[Dict[str, Any]], cols: List[str], steps: bool) -> List[List[str]]:
     """Header + rows. steps=True -> one row per step (TC fields repeated); else one row per TC."""
-    head = [EXPORT_COLS[c] for c in cols] + (["Step #", "Step Description", "Expected Result"] if steps
-                                              else ["Steps", "Expected Results"])
+    head = [EXPORT_COLS[c] for c in cols] + (["Step #", "Step Description", "Expected Result", "Test Data"] if steps
+                                              else ["Steps", "Expected Results", "Test Data"])
     rows = [head]
     for tc in cases:
         base = [_val(tc, c) for c in cols]
         st = tc.get("steps") or [{"description": "", "expected": ""}]
         if steps:
             for i, s in enumerate(st, 1):
-                rows.append(base + [str(i), s.get("description", ""), s.get("expected", "")])
+                rows.append(base + [str(i), s.get("description", ""), s.get("expected", ""), _step_td(s)])
         else:
             rows.append(base + ["\n".join(f"{i}. {s.get('description', '')}" for i, s in enumerate(st, 1)),
-                                "\n".join(f"{i}. {s.get('expected', '')}" for i, s in enumerate(st, 1))])
+                                "\n".join(f"{i}. {s.get('expected', '')}" for i, s in enumerate(st, 1)),
+                                "\n".join(f"{i}. {_step_td(s)}" for i, s in enumerate(st, 1) if _step_td(s))])
     return rows
 
 
@@ -86,10 +100,14 @@ def qtest_table(cases: List[Dict[str, Any]]) -> List[List[str]]:
         tags = ", ".join((tc.get("acs") or []) + [case_type(tc)])
         for i, s in enumerate(st, 1):
             first = i == 1
+            desc = s.get("description", "") or ""
+            td = _step_td(s)
+            if td:
+                desc = (desc + ("\n" if desc else "")) + "[Test data: " + td + "]"
             rows.append([
                 tc.get("name", "") if first else "",
                 tc.get("description", "") if first else "", tc.get("precondition", "") if first else "",
-                str(i), s.get("description", ""), s.get("expected", ""),
+                str(i), desc, s.get("expected", ""),
                 (tc.get("priority") or "Medium") if first else "", "Manual" if first else "",
                 "New" if first else "", tags if first else "",
             ])

@@ -26,7 +26,7 @@ function openRegen(btn, t) {
     <div class="rg-chips">${RG_CHIPS.map(([k, l]) => `<span class="rg-chip" data-c="${k}">${l}</span>`).join("")}${acOpts ? `<select class="rg-chip rg-acsel" id="rgAc"><option value="">Cover AC… ▾</option>${acOpts}</select>` : ""}</div>
     <label class="rg-row"><input type="checkbox" id="rgKeep" ${keepDefault ? "checked" : ""}> Keep my edits to title &amp; priority</label>
     <label class="rg-row"><input type="checkbox" id="rgNew"> Add as a new test case instead of replacing</label>
-    <div class="rg-foot"><span class="sub" style="margin:0">≈ 1 Gemini call</span><span><button class="btn g sm" id="rgX">Cancel</button> <button class="btn sm" id="rgGo">↻ Regenerate</button></span></div></div>`, 440, true);
+    <div class="rg-foot"><span class="sub" style="margin:0">≈ 1 ${window.prettyProvider && window.resolvedRunProvider ? prettyProvider(resolvedRunProvider()) : "Gemini"} call</span><span><button class="btn g sm" id="rgX">Cancel</button> <button class="btn sm" id="rgGo">↻ Regenerate</button></span></div></div>`, 440, true);
   p.classList.add("rg-pop");
   const ta = $("#rgIns", p);
   const addLine = (txt) => { if (!ta.value.includes(txt)) ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + txt; };
@@ -43,7 +43,8 @@ async function runRegen(o) {
   RG.last = o; RG.loading = o.k; RG.ctrl = new AbortController(); renderList();
   try {
     const r = await fetch("/api/review/regenerate", { method: "POST", credentials: "same-origin", signal: RG.ctrl.signal, headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ test_case: t, instruction: o.instruction, keep_title_priority: o.keep }) });
+      body: JSON.stringify({ test_case: t, instruction: o.instruction, keep_title_priority: o.keep,
+        model: (window.resolvedRunProvider && resolvedRunProvider()) || (S.run && S.run.model) || undefined }) });
     let j = {}; try { j = await r.json(); } catch { j = { ok: false, error: `HTTP ${r.status}` }; }
     if (r.status === 401) { window.location.href = "/welcome"; return; }
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);

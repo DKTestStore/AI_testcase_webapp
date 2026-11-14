@@ -60,6 +60,11 @@ def read_test_cases_from_excel(
         tc_id = _clean(row.get(column_map["id"]))
         step_desc = _clean(row.get(column_map["step_description"]))
         step_expected = _clean(row.get(column_map["step_expected"]))
+        step_data = ""
+        for hdr in ("Test Data", "test data", "Data"):
+            if hdr in df.columns:
+                step_data = _clean(row.get(hdr)) or ""
+                break
 
         # Skip fully blank rows
         if not tc_id and not step_desc and not step_expected:
@@ -78,10 +83,11 @@ def read_test_cases_from_excel(
                 "steps": [],
             }
 
-        if current_tc is not None and (step_desc or step_expected):
-            current_tc["steps"].append(
-                {"description": step_desc or "", "expected": step_expected or ""}
-            )
+        if current_tc is not None and (step_desc or step_expected or step_data):
+            st = {"description": step_desc or "", "expected": step_expected or ""}
+            if step_data:
+                st["data"] = step_data
+            current_tc["steps"].append(st)
 
     if current_tc:
         test_cases.append(current_tc)
@@ -157,6 +163,29 @@ def save_qtest_results_to_excel(excel_path, payloads, results):
 # --------------------------------------------------------------------------- #
 # 3. BUILD A SINGLE qTest PAYLOAD FROM ONE TEST-CASE DICT
 # --------------------------------------------------------------------------- #
+def _qtest_step(step: Dict[str, Any]) -> Dict[str, str]:
+    """Append test data into the step description when present (existing 6-column layout unchanged)."""
+    desc = step.get("description") or ""
+    data = step.get("data") or ""
+    if not data:
+        td = step.get("test_data")
+        if isinstance(td, dict):
+            parts = []
+            for label, key in (("Valid", "valid"), ("Invalid", "invalid"), ("Boundary", "boundary")):
+                items = td.get(key) or []
+                if items:
+                    first = items[0]
+                    val = first.get("v") if isinstance(first, dict) else first
+                    if val:
+                        parts.append(f"{label}: {val}")
+            data = " · ".join(parts)
+        elif td:
+            data = str(td)
+    if data and "[Test data:" not in desc:
+        desc = (desc + ("\n" if desc else "")) + "[Test data: " + data + "]"
+    return {"description": desc, "expected": step.get("expected") or ""}
+
+
 def build_payload(test_case: Dict[str, Any], parent_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Convert one parsed test-case dict (from read_test_cases_from_excel) into
@@ -168,7 +197,7 @@ def build_payload(test_case: Dict[str, Any], parent_id: Optional[int] = None) ->
         "description": test_case.get("description", ""),
         "precondition": test_case.get("precondition", ""),
         "test_steps": [
-            {"description": step["description"], "expected": step["expected"]}
+            _qtest_step(step)
             for step in test_case.get("steps", [])
         ],
     }

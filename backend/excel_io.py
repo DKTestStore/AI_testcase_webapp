@@ -1,8 +1,8 @@
 """Excel export extras (review-only columns) and Excel import (upload) for the Review/Input steps.
 
 The extra columns (AC Tags, Priority, Review Status) and the 'AC List' sheet are display/round-trip
-only. qTest payloads are built by qtest_helpers.read_test_cases_from_excel, which reads only the six
-standard columns, so these extras never reach qTest.
+plus Type and Test Data. qTest payloads are built by qtest_helpers.read_test_cases_from_excel from the six
+standard columns; Test Data is also appended into each step description so it reaches qTest without a new column.
 """
 import base64
 import io
@@ -21,7 +21,7 @@ STATUS_LABEL = {"not": "Not reviewed", "reviewed": "Reviewed", "changes": "Needs
 _STATUS_IN = {"not reviewed": "not", "not": "not", "notreviewed": "not", "": "not", "pending": "not",
               "reviewed": "reviewed", "done": "reviewed", "approved": "reviewed",
               "needs changes": "changes", "needs change": "changes", "changes": "changes", "needschanges": "changes"}
-EXTRA_HEADERS = ["AC Tags", "Priority", "Review Status"]
+EXTRA_HEADERS = ["AC Tags", "Priority", "Review Status", "Type", "Test Data"]
 STD_HEADERS = ["Test Case ID", "Test Case Name", "Test Case Description", "Precondition",
                "Step Description", "Expected Result"]
 # normalized header -> field
@@ -35,14 +35,30 @@ _HEAD = {
     "actags": "acs", "ac": "acs", "acceptancecriteria": "acs", "acs": "acs",
     "priority": "priority",
     "reviewstatus": "status", "status": "status",
+    "type": "type", "casetype": "type", "testcasetype": "type",
+    "testdata": "data", "data": "data", "testdatavalues": "data",
 }
 REQUIRED = ["name", "step", "expected"]
 LABELS = {"id": "Test Case ID", "name": "Test Case Name", "description": "Test Case Description",
           "precondition": "Precondition", "step": "Step Description", "expected": "Expected Result",
-          "acs": "AC Tags", "priority": "Priority", "status": "Review Status"}
+          "acs": "AC Tags", "priority": "Priority", "status": "Review Status",
+          "type": "Type", "data": "Test Data"}
 
 
 # --------------------------------------------------------------------------- export
+def _step_data(s: Dict[str, Any]) -> str:
+    if not isinstance(s, dict):
+        return ""
+    raw = s.get("data") or ""
+    if raw:
+        return str(raw)
+    try:
+        from .testdata import format_test_data
+        return format_test_data(s.get("test_data"))
+    except Exception:
+        return ""
+
+
 def add_review_columns(path: Path, cases: List[Dict[str, Any]], ac_list: Optional[List[Dict[str, str]]] = None) -> None:
     """Append AC Tags / Priority / Review Status columns (first row of each TC) and an 'AC List' sheet."""
     wb = openpyxl.load_workbook(path)
@@ -55,6 +71,7 @@ def add_review_columns(path: Path, cases: List[Dict[str, Any]], ac_list: Optiona
         c.fill = fill
         ws.column_dimensions[openpyxl.utils.get_column_letter(col + k)].width = 16
     ti = -1
+    _td_idx = [0]
     for r in range(2, ws.max_row + 1):
         if str(ws.cell(row=r, column=1).value or "").strip():
             ti += 1
@@ -63,6 +80,20 @@ def add_review_columns(path: Path, cases: List[Dict[str, Any]], ac_list: Optiona
                 ws.cell(row=r, column=col, value=", ".join(tc.get("acs") or []))
                 ws.cell(row=r, column=col + 1, value=tc.get("priority") or "Medium")
                 ws.cell(row=r, column=col + 2, value=STATUS_LABEL.get(tc.get("status") or "not", "Not reviewed"))
+                typ = tc.get("type") or ""
+                ws.cell(row=r, column=col + 3, value=typ)
+                # first step of this case
+                steps = tc.get("steps") or []
+                td = _step_data(steps[0] if steps else {})
+                ws.cell(row=r, column=col + 4, value=td)
+                _td_idx[0] = 1
+        elif ti >= 0 and ti < len(cases):
+            # subsequent step rows: Test Data only
+            steps = cases[ti].get("steps") or []
+            k = _td_idx[0]
+            if k < len(steps):
+                ws.cell(row=r, column=col + 4, value=_step_data(steps[k]))
+            _td_idx[0] = k + 1
     if ac_list:
         al = wb.create_sheet("AC List")
         al.append(["AC ID", "Title"])
@@ -84,9 +115,9 @@ def template_bytes() -> bytes:
         c.font = Font(bold=True)
     ws.append(["TC001", "Example: Verify Generate Scenario Docs button", "Describe what is verified",
                "Required system state", "1. Click 'Generate Scenario Docs'", "Generate Scenario Documents page opens",
-               "AC-01", "High", "Not reviewed"])
-    ws.append(["", "", "", "", "2. Verify the page header", "Header reads 'Generate Scenario Documents'", "", "", ""])
-    for col, w in zip("ABCDEFGHI", (12, 40, 40, 30, 40, 40, 14, 10, 16)):
+               "AC-01", "High", "Not reviewed", "Positive", "Valid: sample input"])
+    ws.append(["", "", "", "", "2. Verify the page header", "Header reads 'Generate Scenario Documents'", "", "", "", "", ""])
+    for col, w in zip("ABCDEFGHIJK", (12, 40, 40, 30, 40, 40, 14, 10, 16, 12, 28)):
         ws.column_dimensions[col].width = w
     al = wb.create_sheet("AC List")
     al.append(["AC ID", "Title"])
@@ -95,7 +126,8 @@ def template_bytes() -> bytes:
     for line in ["One row per step. Fill Test Case ID / Name / Description / Precondition only on the first step row.",
                  "Required columns: Test Case Name, Step Description, Expected Result (Test Case ID recommended).",
                  "Optional: AC Tags (comma separated, e.g. AC-01, AC-04), Priority (High/Medium/Low),",
-                 "Review Status (Not reviewed / Reviewed / Needs changes). Optional columns are not sent to qTest."]:
+                 "Review Status (Not reviewed / Reviewed / Needs changes), Type (Positive / Negative / Edge / Boundary / Security),",
+                 "Test Data (per step). Type and Test Data are included in Excel. qTest upload appends Test Data into the step description; the six standard columns are unchanged."]:
         notes.append([line])
     buf = io.BytesIO()
     wb.save(buf)
@@ -185,11 +217,25 @@ def parse_workbook(raw: bytes) -> Dict[str, Any]:
             if not vals["name"]:
                 warnings.append({"row": i, "tc": vals["id"], "field": "Test Case Name", "message": "Test case has no name."})
                 bad.append("name")
-            cases.append({"id": vals["id"], "name": vals["name"], "description": vals["description"],
-                          "precondition": vals["precondition"], "steps": [], "priority": pr or "Medium",
-                          "status": st or "not", "acs": acs})
-        if vals["step"] or vals["expected"]:
-            cases[-1]["steps"].append({"description": vals["step"], "expected": vals["expected"]})
+            typ = vals.get("type") or ""
+            typ_ok = typ if typ in ("Positive", "Negative", "Edge", "Boundary", "Security") else (
+                typ.capitalize() if typ.capitalize() in ("Positive", "Negative", "Edge", "Boundary", "Security") else "")
+            if typ and not typ_ok:
+                warnings.append({"row": i, "tc": vals["id"], "field": "Type",
+                                 "message": f"Type “{typ}” is not valid (Positive / Negative / Edge / Boundary / Security) — will import without a type."})
+                bad.append("type")
+            rec = {"id": vals["id"], "name": vals["name"], "description": vals["description"],
+                   "precondition": vals["precondition"], "steps": [], "priority": pr or "Medium",
+                   "status": st or "not", "acs": acs}
+            if typ_ok:
+                rec["type"] = typ_ok
+            cases.append(rec)
+        if vals["step"] or vals["expected"] or vals.get("data"):
+            step = {"description": vals["step"], "expected": vals["expected"]}
+            if vals.get("data"):
+                step["data"] = vals["data"]
+                step["test_data"] = {"valid": [{"v": vals["data"], "src": ""}], "invalid": [], "boundary": []}
+            cases[-1]["steps"].append(step)
             if not vals["expected"] or not vals["step"]:
                 warnings.append({"row": i, "tc": cases[-1]["id"], "field": "Step",
                                  "message": "Step has an empty " + ("Expected Result." if not vals["expected"] else "Step Description.")})

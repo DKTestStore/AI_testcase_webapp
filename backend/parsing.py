@@ -32,13 +32,15 @@ def markdown_to_test_cases(markdown: str) -> List[Dict[str, Any]]:
     return cases
 
 
-TYPES = ("Positive", "Negative", "Edge")
-_TYPE_LINE = re.compile(r"(?im)^[\s*_#>-]*Test\s*Case\s*Type[*_\s]*:[*_\s]*(positive|negative|edge)")
+TYPES = ("Positive", "Negative", "Edge", "Boundary", "Security")
+_TYPE_LINE = re.compile(r"(?im)^[\s*_#>-]*Test\s*Case\s*Type[*_\s]*:[*_\s]*(positive|negative|edge|boundary|security)")
 _NEG_RE = re.compile(r"\b(invalid|error|errors|reject|rejected|rejects|expired|expire|expires|empty|blank|missing|wrong|"
                      r"fail|fails|failed|failure|unregistered|unknown|not allowed|denied|locked|negative|incorrect|"
                      r"exceed|exceeds|too long|too short|without)\b", re.I)
 _EDGE_RE = re.compile(r"\b(boundary|boundaries|edge|limit|limits|maximum|minimum|max|min|exactly|zero|overflow|"
                       r"concurrent|timeout|special characters|unicode|largest|smallest)\b", re.I)
+_SEC_RE = re.compile(r"\b(sql\s*injection|sqli|xss|cross-site|script injection|security payload|"
+                     r"brute.?force|lockout|injection attack)\b", re.I)
 
 
 def extract_types(markdown: str) -> Dict[str, str]:
@@ -57,6 +59,8 @@ def extract_types(markdown: str) -> Dict[str, str]:
 
 def guess_type(tc: Dict[str, Any]) -> str:
     blob = f"{tc.get('name', '')} {tc.get('description', '')}"
+    if _SEC_RE.search(blob):
+        return "Security"
     return "Edge" if _EDGE_RE.search(blob) else "Negative" if _NEG_RE.search(blob) else "Positive"
 
 
@@ -92,6 +96,36 @@ PRIORITIES = ("High", "Medium", "Low")
 STATUSES = ("not", "reviewed", "changes")
 
 
+
+def _sanitize_step(s: Dict[str, Any]) -> Dict[str, Any]:
+    st = {"description": str(s.get("description", s.get("step", ""))).strip(),
+          "expected": str(s.get("expected", "")).strip()}
+    td = s.get("test_data")
+    if isinstance(td, dict) and any(k in td for k in ("valid", "invalid", "boundary")):
+        clean = {}
+        for k in ("valid", "invalid", "boundary"):
+            col = []
+            for it in td.get(k) or []:
+                if isinstance(it, dict):
+                    v = str(it.get("v") or it.get("value") or "").strip()
+                    if v:
+                        col.append({"v": v[:500], "src": str(it.get("src") or "")[:12]})
+                elif str(it).strip():
+                    col.append({"v": str(it).strip()[:500], "src": ""})
+            clean[k] = col
+        st["test_data"] = clean
+    data = str(s.get("data") or "").strip()
+    if not data and st.get("test_data"):
+        try:
+            from .testdata import format_test_data
+            data = format_test_data(st["test_data"])
+        except Exception:
+            data = ""
+    if data:
+        st["data"] = data[:2000]
+    return st
+
+
 def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
     out = []
     for tc in cases or []:
@@ -102,20 +136,21 @@ def sanitize_cases(cases: Any) -> List[Dict[str, Any]]:
             "name": str(tc.get("name", "")).strip(),
             "description": str(tc.get("description", "")).strip(),
             "precondition": str(tc.get("precondition", "")).strip(),
-            "steps": [{"description": str(s.get("description", "")).strip(),
-                       "expected": str(s.get("expected", "")).strip()}
-                      for s in (tc.get("steps") or []) if isinstance(s, dict)],
-            # Review-only metadata (display only, never written to Excel / qTest payload)
+            "steps": [_sanitize_step(s) for s in (tc.get("steps") or []) if isinstance(s, dict)],
+            # Review metadata. Type and test data are also written to Excel extras / qTest step text.
             "priority": tc.get("priority") if tc.get("priority") in PRIORITIES else "Medium",
             "acs": [str(a)[:20] for a in (tc.get("acs") or []) if str(a).strip()][:30],
             "status": tc.get("status") if tc.get("status") in STATUSES else "not",
             "regenerated": bool(tc.get("regenerated")),  # display-only badge
             "merged": str(tc.get("merged") or "")[:80],   # display-only badge: "TC002 + TC005"
+            "added": bool(tc.get("added")),  # NEW badge after Boost coverage
         })
-        if tc.get("type") in TYPES:   # Positive / Negative / Edge tag (display + export only)
+        if tc.get("type") in TYPES:   # Positive / Negative / Edge / Boundary / Security
             out[-1]["type"] = tc["type"]
         if tc.get("template"):   # prompt templates: display-only source tag (only present on template runs)
             out[-1]["template"] = str(tc["template"])[:80]
+        if tc.get("story"):
+            out[-1]["story"] = str(tc.get("story") or "")[:60]
     return out
 
 

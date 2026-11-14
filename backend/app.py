@@ -193,12 +193,20 @@ def repo_review(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     stories = sorted({c.get("story") or "" for c in picked if c.get("story")})
     cases = []
     for n, c in enumerate(picked, 1):
+        steps = []
+        for s in c.get("steps") or []:
+            st = {"description": s.get("step", ""), "expected": s.get("expected", ""),
+                  "data": s.get("data", "")}
+            if s.get("test_data"):
+                st["test_data"] = s.get("test_data")
+            steps.append(st)
         cases.append({"id": f"TC{n:03d}", "name": c["title"], "description": c.get("description", ""),
                       "precondition": c.get("precondition", ""), "priority": c.get("priority") or "Medium",
                       "type": c.get("type", ""), "acs": c.get("acs") or [], "status": "not",
-                      "steps": [{"description": s.get("step", ""),
-                                 "expected": s.get("expected", "")} for s in c.get("steps") or []] or [{"description": "", "expected": ""}]})
+                      "story": c.get("story") or "",
+                      "steps": steps or [{"description": "", "expected": ""}]})
     run.update({"source": "repo", "story_id": stories[0] if len(stories) == 1 else "",
+                "model": "", "model_name": "",
                 "feature_text": "Test cases opened from the Test Case Repo:\n" + "\n".join(f"- {c['id']} v{c.get('version', 1)}: {c['title']}" for c in picked),
                 "test_cases": parsing.sanitize_cases(cases), "dirty": True,
                 "repo_links": [c["id"] for c in picked], "repo_versions": [c.get("version", 1) for c in picked]})
@@ -311,11 +319,12 @@ def usage(sess=Depends(current)):
 @app.post("/api/generate")
 def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run = _run(sess)
-    model = str(data.get("model", "gemini")).lower()
+    model = services.resolve_provider(run, data.get("model"))
     mode = "custom" if data.get("prompt_mode") == "custom" else "default"
     custom = str(data.get("custom_prompt", ""))[:50_000]
     run_reviewer = bool(data.get("run_reviewer"))
-    run.update({"model": model, "prompt_mode": mode, "custom_prompt": custom, "run_reviewer": run_reviewer})
+    run.update({"model": model, "model_name": services.model_name_for(model),
+                "prompt_mode": mode, "custom_prompt": custom, "run_reviewer": run_reviewer})
     _save(sess)
 
     tpl_ids = _tpl_ids_for(run, data) if mode == "default" else None
@@ -340,7 +349,8 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     parsing.suggest_acs(cases, run["ac_list"])
     cases = parsing.sanitize_cases(cases)
     run.update({"imported": False, "markdown": result["markdown"], "test_cases": cases, "dirty": True, "excel_path": "",
-                "review": None, "upload": None, "rtm": [], "last_usage": result["usage"]})
+                "review": None, "upload": None, "rtm": [], "last_usage": result["usage"],
+                "model_name": (result.get("usage") or {}).get("model_name") or services.model_name_for(model)})
     review_info = None
     if run_reviewer:
         try:
@@ -384,6 +394,56 @@ def save_cases(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     return {"ok": True, "run": _public_run(run)}
 
 
+@app.get("/api/testdata/library")
+def testdata_library(sess=Depends(current)):
+    from . import testdata
+    return {"ok": True, "library": testdata.library_public()}
+
+
+@app.post("/api/review/testdata")
+def review_testdata(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    """Propose test data for Review steps. Proposal only — accept with PUT /api/review/test_cases."""
+    from . import testdata
+    run = _run(sess)
+    cases = parsing.sanitize_cases(data.get("test_cases") or run.get("test_cases"))
+    cid = str(data.get("case_id") or "").strip()
+    if cid:
+        cases = [c for c in cases if c.get("id") == cid]
+        if not cases:
+            raise ServiceError("Test case not found.", 404)
+    source = str(data.get("source") or "both").lower()
+    if source not in ("ai", "library", "lib", "both"):
+        source = "both"
+    sources = data.get("sources") if isinstance(data.get("sources"), dict) else None
+    out = testdata.generate(cases, source=source, sources=sources,
+                            feature_text=run.get("feature_text") or "")
+    # Heuristic / library only — no AI call, so no token ledger row.
+    return {"ok": True, "fields": out["fields"], "test_cases": out["test_cases"],
+            "library_enabled": out.get("library_enabled", True)}
+
+
+@app.post("/api/review/boost")
+def review_boost(data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
+    """Preview missing coverage cases (heuristic + Edge library, no AI). Confirm returns cases to append."""
+    from . import testdata
+    run = _run(sess)
+    cases = parsing.sanitize_cases(data.get("test_cases") or run.get("test_cases"))
+    preview = testdata.boost_preview(cases, feature_text=run.get("feature_text") or "",
+                                     story_id=run.get("story_id") or "")
+    if not data.get("confirm"):
+        return {"ok": True, "preview": True, **{k: preview[k] for k in
+                ("current", "add", "next", "groups", "suggestions")}}
+    wanted = set(str(x) for x in (data.get("ids") or []))
+    sug = preview["suggestions"]
+    if wanted:
+        sug = [s for s in sug if s.get("id") in wanted]
+    start = len(run.get("test_cases") or []) + 1
+    # If the client sent a filtered case list, still number after the live run
+    added = testdata.suggestions_to_cases(sug, start_n=start)
+    added = parsing.sanitize_cases(added)
+    return {"ok": True, "preview": False, "test_cases": added, "count": len(added)}
+
+
 @app.post("/api/review/regenerate")
 def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     """Regenerate ONE test case. Returns a proposal only; accept / add-as-new / undo happen in the
@@ -396,7 +456,8 @@ def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     instruction = str(data.get("instruction") or "").strip()[:1000]
     ac_list = run.get("ac_list") or _ac_list(run)
     linked = [a for a in ac_list if a["id"] in tc["acs"]]
-    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction, model=run.get("model", "gemini"))
+    model = services.resolve_provider(run, data.get("model"))
+    res = services.regenerate_one(run.get("story_id", ""), run.get("feature_text", ""), linked, tc, instruction, model=model)
     prop = res["test_case"]
     if data.get("keep_title_priority"):
         prop["name"], prop["priority"] = tc["name"], tc["priority"]
@@ -408,10 +469,17 @@ def regenerate_one(data: Dict[str, Any] = Body(...), sess=Depends(current)):
 
 
 @app.post("/api/review/ai")
-def run_reviewer(sess=Depends(current)):
+async def run_reviewer(request: Request, sess=Depends(current)):
     run = _run(sess)
+    data = {}
+    try:
+        if (request.headers.get("content-type") or "").startswith("application/json"):
+            data = await request.json() or {}
+    except Exception:
+        data = {}
+    model = services.resolve_provider(run, (data or {}).get("model"))
     md = parsing.test_cases_to_markdown(run["test_cases"])
-    rv = services.review(run.get("model", "gemini"), run["feature_text"], md)
+    rv = services.review(model, run["feature_text"], md)
     rv_cases = parsing.markdown_to_test_cases(rv["markdown"])
     run["review"] = {"markdown": rv["markdown"], "test_cases": rv_cases, "usage": rv["usage"]}
     _save(sess)
@@ -726,6 +794,20 @@ def put_history_limit(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     removed = history_store.prune_all(n, sess.get("hid"))
     log.info("history limit set to %d (pruned %d oldest)", n, removed)
     return {"ok": True, "value": n, "pruned": removed}
+
+
+@app.get("/api/settings/prefs")
+def get_prefs(sess=Depends(current)):
+    return {"ok": True, "prefs": settings_store.get_prefs()}
+
+
+@app.put("/api/settings/prefs")
+def put_prefs(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    try:
+        prefs = settings_store.update_prefs(data.get("prefs") or data or {})
+    except ValueError as e:
+        raise ServiceError(str(e))
+    return {"ok": True, "prefs": prefs}
 
 
 @app.post("/api/history/{run_id}/open")
@@ -1636,6 +1718,7 @@ def _rt_target_run(sess, item: str = "") -> Dict[str, Any]:
 
 @app.get("/api/export")
 def rt_export(fmt: str = "xlsx", cols: str = "", steps: int = 1, reviewed: int = 0, item: str = "",
+              outline: int = 0, tags: int = 1, background: int = 1, stories: str = "",
               sess=Depends(current)):
     """Download the run's (or a batch item's) test cases. Does not change run['excel_path'] / dirty."""
     run = _rt_target_run(sess, item)
@@ -1646,6 +1729,29 @@ def rt_export(fmt: str = "xlsx", cols: str = "", steps: int = 1, reviewed: int =
     if not cases:
         raise ServiceError("No test cases to export" + (" (none are marked Reviewed)." if reviewed else "."))
     name = (run.get("story_id") or "LOCAL").replace("/", "_")
+    if fmt == "feature":
+        from . import testdata
+        opts = dict(outline=bool(outline), tags=bool(tags), background=bool(background))
+        wanted = [s.strip() for s in (stories or "").split(",") if s.strip()]
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for c in cases:
+            sid = (c.get("story") or run.get("story_id") or "LOCAL") or "LOCAL"
+            groups.setdefault(sid, []).append(c)
+        if wanted:
+            # keep only requested stories; if a story is missing from the run, skip it
+            groups = {k: v for k, v in groups.items() if k in set(wanted)} or groups
+        files = []
+        for sid, tcs in groups.items():
+            r = dict(run)
+            r["story_id"] = sid
+            r["test_cases"] = tcs
+            files.append((testdata.gherkin_filename(r), testdata.gherkin_for_run(r, **opts, cases=tcs)))
+        if len(files) == 1:
+            fname, text = files[0]
+            return Response(text.encode("utf-8"), media_type="text/plain; charset=utf-8",
+                            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        return Response(testdata.zip_features(files), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}_features.zip"'})
     if fmt == "qtest":
         data = rtools.csv_bytes(rtools.qtest_table(cases))
         return Response(data, media_type="text/csv; charset=utf-8",

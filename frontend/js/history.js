@@ -21,7 +21,7 @@ function hRows(j, compact) {
     return `<tr data-id="${esc(e.run_id)}" class="${old ? "old" : ""}">
       <td class="rid"><div class="rl"><b>${esc(e.rid)}</b>${cur ? ' <span class="pill b">current</span>' : ""}</div><div class="muted">${esc(hDate(e.created))}</div>${old ? '<span class="pill y oldtag">⟳ will be replaced next</span>' : ""}</td>
       <td><span class="pill b spill">${esc(e.story_id || "—")}</span><div class="ttl">${esc(e.title)}</div></td>
-      <td><span class="pill ${H_SRC[e.source] || "gr"}">${esc(e.source)}</span></td>
+      <td><span class="pill ${H_SRC[e.source] || "gr"}">${esc(e.source)}</span>${e.model ? `<div class="muted">${esc((window.prettyProvider ? prettyProvider(e.model) : e.model) + (e.model_name ? " · " + e.model_name : ""))}</div>` : ""}</td>
       <td class="c">${e.count}</td>
       <td><div class="rvb"><span>${e.reviewed}/${e.count}</span><i><s style="width:${pct}%"></s></i></div></td>
       <td><span class="pill ${H_ST[e.status] ?? "gr"}">${e.status !== "Draft" ? "✓ " : ""}${esc(e.status)}</span></td>
@@ -41,7 +41,7 @@ function hBatchRows(e, i, j, compact, full) {
       <td class="acts"><button class="btn sm h-open">▶ Open batch</button>${compact ? "" : '<button class="btn g sm h-xl">⬇ Excel (zip)</button><button class="btn g sm h-del" title="Delete this batch" style="color:#d33;border-color:#f3b4b4">🗑</button>'}</td></tr>`;
   if (open) h += kids.map((c) => `<tr class="bchild" data-bid="${esc(e.run_id)}" data-cid="${esc(c.run_id)}" data-key="${esc(c.key)}">
       <td><b>${esc(c.rid)}</b></td><td><span class="pill b spill">${esc(c.story_id || "—")}</span><div class="ttl">${esc(c.title)}</div></td>
-      <td><span class="pill ${H_SRC[c.source] || "gr"}">${esc(c.source)}</span></td><td class="c">${c.count}</td><td>${c.reviewed}/${c.count}</td>
+      <td><span class="pill ${H_SRC[c.source] || "gr"}">${esc(c.source)}</span>${c.model ? `<div class="muted">${esc((window.prettyProvider ? prettyProvider(c.model) : c.model) + (c.model_name ? " · " + c.model_name : ""))}</div>` : ""}</td><td class="c">${c.count}</td><td>${c.reviewed}/${c.count}</td>
       <td><span class="pill ${H_ST[c.status] ?? "gr"}">${esc(c.status)}</span></td>
       <td class="acts"><button class="btn g sm hc-open">▶ Open</button>${compact ? "" : '<button class="btn g sm hc-xl">⬇ Excel</button>'}</td></tr>`).join("");
   return h;

@@ -26,7 +26,8 @@ def _new_run() -> Dict[str, Any]:
         "local_filename": "",
         "feature_text": "",        # what will be sent to the generator
         # Generate
-        "model": "gemini",
+        "model": "",
+        "model_name": "",
         "prompt_mode": "default",  # "default" | "custom"
         "custom_prompt": "",
         "run_reviewer": False,
