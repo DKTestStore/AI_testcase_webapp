@@ -64,6 +64,14 @@ Free-tier keys also have per-minute and per-day limits. HTTP 429 is retried up t
 2. When it finishes, Review shows the result so you can compare, apply, or dismiss the suggestions.
 3. It defaults to the same provider as **Generate** for that run (the Review badge shows the provider and model name). If the run has no saved provider (Repo or Excel), it uses **Settings → Preferences → Default provider**. **Run AI Reviewer** opens a modal to search and pick a **provider and model** (grouped by provider, current/default marked), shows a pre-call estimate, and runs only after **Confirm**. The same modal is used from Repo edit (**Review with AI**) and Repo case regenerate. Token usage is recorded in the ledger with estimated vs actual values.
 
+The Review row button is labelled **Regenerate** (the provider name is inside the popover, not on the button). The popover stays in the viewport — it flips upward near the bottom of the list and scrolls internally, so it does not extend the page.
+
+**Regenerate** windows share the same options: quick chips (Add negative cases, Add boundary values, More detailed steps, Simplify), **Cover AC…**, **Keep my edits to title & priority**, and **Add as a new test case instead of replacing**. In the Test Case Repo, “add as new” creates a new case and leaves the current one unchanged; otherwise the proposal is saved as a new version of the current case. Keep title & priority is honoured on the proposal and when you confirm.
+
+### Auto Save
+
+**Settings → Preferences → Auto Save** is on by default. Edits in the Review step, Requirements, and the Test Case Repo editor are saved automatically about 1.5 seconds after you stop typing, using the existing save endpoints. The indicator reads **Saving…**, **All changes saved**, or **Save failed – retry** (click to retry). Manual Save buttons still work. Autosave waits when a title is empty or a Jira key is only partly typed, and it flushes when you leave the page. In the Repo editor, autosave updates the live case in place and does not create a new version on every save; use **Save draft** or **Save as Ready** when you want a new version.
+
 This is separate from inline editing, AC mapping, duplicate detection (local, no AI call), and the local quality score / Improve with AI tools on the Review toolbar.
 
 ## Review screen
@@ -182,7 +190,7 @@ Generate, AI Review, Regenerate and Help show a live estimate before you call th
 
 ## Model registry and daily limits
 
-**Settings → AI Providers** has **Connection**, **Models**, and **Limits** sub-tabs on each provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama). Connection keeps the API key and existing model ID fallback. **Settings → Preferences** keeps the existing default provider, Edge library, history, duplicate, and calculator-option cards.
+**Settings → AI Providers** has **Connection**, **Models**, and **Limits** sub-tabs on each provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama). Connection keeps the API key and existing model ID fallback. **Settings → Preferences** keeps the existing default provider, Edge library, history, duplicate, **Auto Save** (default on), and calculator-option cards.
 
 - **Models** — several models for *that* provider, each with example input/output rates, a context limit, a default ★, and an enable toggle. Dropdowns on Generate, AI Review, Regenerate and Help list enabled models. The starred model is the default. Existing **Connection** model ID fields (and env) still work as a fallback. The registry is stored in the app settings database and is seeded from the model already configured for each provider; it does not change `.env`.
 - **Limits** — daily token & cost caps for *that* provider. Leave a field blank for no warning. When you set a limit, the Dashboard and Token Usage show a banner at 80% of that day’s usage for that provider. Click the banner to open the ledger already filtered to that provider.

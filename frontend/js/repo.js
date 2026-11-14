@@ -160,7 +160,7 @@ async function viewRepo(v) {
     <div class="fl"><button class="btn g" id="trImp">⬆ Import (Excel / CSV / JSON)</button><span style="position:relative;display:inline-flex"><button class="btn g" id="trExp">⬇ Export ▾</button></span><button class="btn" id="trNew">＋ New test case</button></div></div><div id="trRepoBody" class="sub">Loading…</div></div>`;
   $("#trImp").onclick = trImportModal;
   $("#trExp").onclick = (e) => { e.stopPropagation(); trExportMenu(e.currentTarget); };
-  $("#trNew").onclick = () => { RP.edit = { title: "", description: "", precondition: "", priority: "Medium", story: "", tags: [], type: "", steps: [{ step: "", expected: "", data: "" }], folder_path: trFolderPath(RP.folder) }; render(); };
+  $("#trNew").onclick = () => { RP.edit = { title: "", description: "", precondition: "", priority: "Medium", story: "", tags: [], type: "", steps: [{ step: "", expected: "", data: "" }], folder_path: trFolderPath(RP.folder) }; RP.editSnap = JSON.stringify(trSnap(RP.edit)); render(); };
   try { RP.data = await api("/api/repo"); } catch (e) { $("#trRepoBody").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
   trRepoRender();
 }
@@ -460,8 +460,8 @@ function trEditor(v) {
   const E = RP.edit; const isNew = !E.id;
   if (RP.ai) return trAiView(v);
   const tags = Array.isArray(E.tags) ? E.tags.join(", ") : E.tags || "";
-  v.innerHTML = `<div class="trv" id="trEd"><div class="hd"><div><small class="muted">Test Case Repo › ${esc(E.folder_path || "")} ›</small><h1>${isNew ? "New test case" : `Edit ${esc(E.id)} <span class="pill gr">v${E.version}</span>`}</h1><div class="sub">Manual authoring · all fields are text${isNew ? "" : " · saving content changes creates a new version"}</div></div>
-    <div class="fl"><button class="btn g" id="trEdCancel">Cancel</button><button class="btn g" id="trEdAi">🤖 Review with AI</button><button class="btn g" id="trEdDraft">Save draft</button><button class="btn s" id="trEdReady">✓ Save as Ready</button></div></div>
+  v.innerHTML = `<div class="trv" id="trEd"><div class="hd"><div><small class="muted">Test Case Repo › ${esc(E.folder_path || "")} ›</small><h1>${isNew ? "New test case" : `Edit ${esc(E.id)} <span class="pill gr">v${E.version}</span>`}</h1><div class="sub">Manual authoring · all fields are text${isNew ? "" : " · Save draft / Save as Ready creates a new version; Auto Save updates the live case in place"}</div></div>
+    <div class="fl"><button class="btn g" id="trEdCancel">Cancel</button><button class="btn g" id="trEdAi">🤖 Review with AI</button><button class="btn g" id="trEdDraft">Save draft</button><button class="btn s" id="trEdReady">✓ Save as Ready</button><span class="as-ind" data-as="repo" hidden></span></div></div>
     <div class="g2" style="grid-template-columns:1.4fr 1fr;align-items:start"><div class="card" style="margin:0"><label>Title <span class="req">*</span></label><input class="w" id="trTitle" value="${esc(E.title)}" placeholder="Verify …">
       <label>Description</label><textarea class="w" rows="2" id="trDesc" placeholder="What is being verified">${esc(E.description)}</textarea><label>Precondition</label><textarea class="w" rows="2" id="trPre" placeholder="State before step 1">${esc(E.precondition)}</textarea></div>
     <div class="card" style="margin:0"><div class="g2"><div><label>Priority</label><input class="w" id="trPrio" value="${esc(E.priority)}" placeholder="High / Medium / Low"></div><div><label>Linked story</label><input class="w" id="trStory" value="${esc(E.story)}" placeholder="e.g. CX-197"></div></div>
@@ -472,9 +472,23 @@ function trEditor(v) {
     <button class="btn g sm" style="margin-top:8px" id="trAddStep">＋ Add step</button></div></div>`;
   trPaintSteps();
   $("#trAddStep").onclick = () => { trReadEditor(); E.steps.push({ step: "", expected: "", data: "" }); trPaintSteps(); $$("#trSteps textarea").slice(-2)[0].focus(); };
-  $("#trEdCancel").onclick = () => { RP.edit = null; RP.ai = null; render(); };
+  RP.editSnap = RP.editSnap || JSON.stringify(trSnap(E));
+  $("#trEdCancel").onclick = async () => {
+    if (typeof autosaveFlush === "function" && typeof autosaveHasPending === "function" && autosaveHasPending()) {
+      const rflush = await autosaveFlush({ reason: "navigate" });
+      if (rflush === "cancel") return;
+    }
+    if (trIsDirty() && !confirm("You have unsaved changes. Leave without saving?")) return;
+    RP.edit = null; RP.ai = null; RP.editSnap = ""; render();
+  };
   $("#trEdDraft").onclick = () => trSaveEditor("Draft", $("#trEdDraft"));
   $("#trEdReady").onclick = () => trSaveEditor("Ready", $("#trEdReady"));
+  const kickAs = () => {
+    if (typeof autosaveSchedule !== "function") return;
+    autosaveSchedule("repo", () => trAutosaveEditor(), { valid: () => { const e = trReadEditor(); return !!(e && e.title && e.title.trim()); } });
+  };
+  const ed = $("#trEd");
+  if (ed) { ed.addEventListener("input", kickAs); ed.addEventListener("change", kickAs); }
   $("#trEdAi").onclick = () => {
     trReadEditor();
     const runAi = (provider, model) => guarded($("#trEdAi"), async () => {
@@ -517,6 +531,42 @@ function trPaintSteps() {
     row.ondrop = (e) => { e.preventDefault(); if (drag === null || drag === i) return; trReadEditor(); const [m] = E.steps.splice(drag, 1); E.steps.splice(i, 0, m); drag = null; trPaintSteps(); };
   });
 }
+function trSnap(E) {
+  if (!E) return {};
+  return { title: E.title, description: E.description, precondition: E.precondition, priority: E.priority, story: E.story,
+    folder_path: E.folder_path, tags: E.tags, type: E.type, acs_text: E.acs_text, steps: E.steps, status: E.status, id: E.id };
+}
+function trIsDirty() {
+  if (!RP.edit) return false;
+  try { return JSON.stringify(trSnap(trReadEditor() || RP.edit)) !== (RP.editSnap || ""); } catch (e) { return !!RP.edit; }
+}
+function trNavGuard() {
+  if (RP.edit && trIsDirty() && !confirm("You have unsaved changes in the test case editor. Leave without saving?")) return false;
+  return true;
+}
+window.trIsDirty = trIsDirty;
+window.trNavGuard = trNavGuard;
+
+async function trAutosaveEditor() {
+  const E = trReadEditor();
+  if (!E || !E.title.trim()) return;
+  const body = { ...E, folder_id: "" };
+  if (!((E.folder_path || "").trim())) delete body.folder_path;
+  if (E.id) {
+    body.autosave = true;
+    const r = await api(`/api/repo/cases/${E.id}`, { method: "PUT", body });
+    if (r && r.case) Object.assign(E, { id: r.case.id, version: r.case.version, status: r.case.status || E.status });
+  } else {
+    const r = await api("/api/repo/cases", { method: "POST", body: { ...body, source: "Manual", status: E.status || "Draft" } });
+    if (r && r.case) {
+      E.id = r.case.id; E.version = r.case.version; E.status = r.case.status || "Draft";
+      const h = document.querySelector("#trEd h1");
+      if (h) h.innerHTML = `Edit ${esc(E.id)} <span class="pill gr">v${E.version}</span>`;
+    }
+  }
+  RP.editSnap = JSON.stringify(trSnap(E));
+}
+
 function trReadEditor() {
   const E = RP.edit; if (!$("#trTitle")) return E;
   Object.assign(E, { title: $("#trTitle").value, description: $("#trDesc").value, precondition: $("#trPre").value, priority: $("#trPrio").value, story: $("#trStory").value,
@@ -532,7 +582,7 @@ async function trSaveEditor(status, btn) {
     if (!E.folder_path.trim()) delete body.folder_path;
     const r = E.id ? await api(`/api/repo/cases/${E.id}`, { method: "PUT", body }) : await api("/api/repo/cases", { method: "POST", body: { ...body, source: "Manual" } });
     toast(`${r.case.id} saved as ${status}${r.new_version ? ` · new version v${r.case.version}` : ""}`);
-    RP.edit = null; RP.ai = null; render();
+    RP.edit = null; RP.ai = null; RP.editSnap = ""; render();
   });
 }
 function trAiView(v) {

@@ -50,12 +50,22 @@ function stepUnlocked(s) {
   if (i <= 0) return true;
   return STEPS.slice(0, i).every((p) => stepDone(p));
 }
-function go(view) {
+async function go(view) {
   if (typeof view === "string" && view.startsWith("repo/case/")) { if (window.cpRoute) return window.cpRoute(view.slice(10)); view = "repo"; }
   if (S.mode === "batch") return batchGo(view);
   if (STEPS.includes(view) && !stepUnlocked(view)) { toast("Complete the previous step first.", true); return; }
+  if (typeof autosaveFlush === "function" && typeof autosaveHasPending === "function" && autosaveHasPending()) {
+    const r = await autosaveFlush({ reason: "navigate" });
+    if (r === "cancel") return;
+  }
   if (S.view === "review" && view !== "review" && S.localDirty && !confirm("You have unsaved edits in the Review table. Leave without saving?")) return;
   if (S.view === "review" && view !== "review") S.localDirty = false;
+  if (typeof window.rqNavGuard === "function" && S.view === "requirements" && view !== "requirements") {
+    if (window.rqNavGuard() === false) return;
+  }
+  if (typeof window.trNavGuard === "function" && (S.view === "repo" || String(S.view).startsWith("repo/")) && !(view === "repo" || String(view).startsWith("repo/"))) {
+    if (window.trNavGuard() === false) return;
+  }
   S.view = view; location.hash = view; render();
 }
 function renderNav() {
@@ -711,6 +721,10 @@ async function viewSettings(v) {
         <label for="dupThr">Similarity threshold (%)</label>
         <div class="row" style="align-items:center;gap:10px"><input id="dupThr" type="number" min="50" max="99" step="1" style="width:120px;flex:none"><button type="button" class="btn" id="saveDup" style="flex:none">Save threshold</button><span class="sub" id="dupHint" style="margin:0;flex:none"></span></div>
         <div class="sub" style="margin:8px 0 0">Test cases at or above this similarity are flagged as possible duplicates (50–99, default 80; 90%+ shown in red). Checked locally — no AI call.</div></div>
+      <div class="card" id="asCard" style="margin-top:14px"><h3>💾 Auto Save</h3>
+        <label class="row" style="align-items:center;gap:10px;font-weight:600"><input id="asToggle" type="checkbox" style="width:auto"> Enable Auto Save</label>
+        <div class="sub" style="margin:8px 0 0">When on (the default), edits in the Review step, Requirements, and the Test Case Repo editor are saved automatically about 1.5 seconds after you stop typing. Manual Save buttons still work. Repo autosave updates the live case in place and does not create a new version on each tick — use Save draft / Save as Ready for that. Mid-typing invalid states (empty title, incomplete Jira key) are skipped until the form is valid.</div>
+        <div class="sub" id="asHint" style="margin:8px 0 0"></div></div>
     </div>
     <div class="set-foot">
       <span id="setDirty" class="clean">All changes saved</span>
@@ -781,6 +795,26 @@ async function viewSettings(v) {
     $("#dupHint").textContent = `Current: ${r.value}%`; toast(`Duplicate threshold set to ${r.value}%`);
     setUpdateDirty();
   });
+  (async () => {
+    const el = $("#asToggle"), hint = $("#asHint");
+    if (!el) return;
+    let on = true;
+    try {
+      const j = await api("/api/settings/prefs");
+      if (j.prefs && Object.prototype.hasOwnProperty.call(j.prefs, "autosave")) on = !!j.prefs.autosave;
+      window._prefs = Object.assign(window._prefs || {}, j.prefs || {});
+    } catch (e) { if (window._prefs && Object.prototype.hasOwnProperty.call(_prefs, "autosave")) on = !!_prefs.autosave; }
+    el.checked = on;
+    if (hint) hint.textContent = on ? "Currently on" : "Currently off";
+    el.onchange = () => guarded(el, async () => {
+      const r = await api("/api/settings/prefs", { method: "PUT", body: { autosave: el.checked } });
+      const next = !!(r.prefs ? r.prefs.autosave : el.checked);
+      el.checked = next;
+      window._prefs = Object.assign(window._prefs || {}, (r.prefs || { autosave: next }));
+      if (hint) hint.textContent = next ? "Currently on" : "Currently off";
+      toast(next ? "Auto Save is on" : "Auto Save is off — use the manual Save buttons");
+    });
+  })();
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
     const values = setCollectEnvValues();
     const r = await api("/api/settings", { method: "PUT", body: { values } });
@@ -837,7 +871,15 @@ function newRunDialog() {
 }
 
 // ------------------------------------------------------------------ boot
-window.addEventListener("beforeunload", (e) => { if (S.localDirty) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", (e) => {
+  if (typeof autosaveFlush === "function" && typeof autosaveHasPending === "function" && autosaveHasPending()) {
+    try { autosaveFlush({ reason: "unload" }); } catch (err) { /* can't await unload */ }
+    e.preventDefault(); e.returnValue = ""; return;
+  }
+  const rqDirty = typeof window.rqIsDirty === "function" && window.rqIsDirty();
+  const trDirty = typeof window.trIsDirty === "function" && window.trIsDirty();
+  if (S.localDirty || rqDirty || trDirty) { e.preventDefault(); e.returnValue = ""; }
+});
 document.addEventListener("click", (e) => { if (!e.target.closest("#userBtn") && !e.target.closest("#userMenu")) $("#userMenu").classList.remove("open"); });
 $("#userBtn").onclick = () => $("#userMenu").classList.toggle("open");
 $("#logoutItem").onclick = logoutDialog;

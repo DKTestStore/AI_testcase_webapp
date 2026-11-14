@@ -263,6 +263,24 @@ def set_edge_library_prefs(value) -> dict:
     return cur
 
 
+def get_autosave() -> bool:
+    """Default ON when the key has never been set."""
+    v = _app().get("autosave", True)
+    if isinstance(v, str):
+        return v.strip().lower() not in ("0", "false", "off", "no")
+    return bool(v)
+
+
+def set_autosave(value) -> bool:
+    if isinstance(value, str):
+        on = value.strip().lower() not in ("0", "false", "off", "no")
+    else:
+        on = bool(value)
+    from .db import update_app_settings
+    update_app_settings({"autosave": on})
+    return on
+
+
 def get_prefs() -> dict:
     from . import token_registry as _reg
     return {
@@ -273,6 +291,7 @@ def get_prefs() -> dict:
         "token_registry": _reg.get_registry(persist_seed=True),
         "calc_prefs": _reg.get_calc_prefs(),
         "token_limits": _reg.get_limits(),
+        "autosave": get_autosave(),
     }
 
 
@@ -289,4 +308,6 @@ def update_prefs(data) -> dict:
         _reg.set_calc_prefs(data.get("calc_prefs") or {})
     if "token_limits" in data:
         _reg.set_limits(data.get("token_limits") or {})
+    if "autosave" in data:
+        set_autosave(data.get("autosave"))
     return get_prefs()

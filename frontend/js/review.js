@@ -33,6 +33,7 @@ function markDirty() {
   const b = $("#saveCases"); if (b) b.disabled = false;
   const u = $("#unsavedBar"); if (u) u.classList.remove("hidden");
   updateProgress(); renderNav();
+  if (window.autosaveSchedule) autosaveSchedule("review", async () => { await saveCases(); afterSave(); }, { valid: () => !!(S.cases && S.cases.length && S.cases.every((c) => c.id)) });
 }
 function updateProgress() {
   const n = S.cases.length, r = S.cases.filter((t) => t.status === "reviewed").length;
@@ -52,7 +53,7 @@ function viewReview(v) {
   if (!S.localDirty) loadCasesFromRun();
   const acs = r.ac_list || [];
   v.innerHTML = `<div class="rv-head"><div><h1>Review Test Cases</h1><div class="sub" id="rvSub" style="margin:0"></div></div>
-    <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn g dp-btn" id="dupBtn" title="Find near-identical test cases (local check, no AI call)">≋ Check duplicates</button><button class="btn g" id="upExcel" title="Import test cases from an .xlsx file">⬆ Upload Excel</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button><a class="tpl-link" href="/api/excel/template" title="Excel template with all supported columns">Download template</a></div></div>
+    <div class="rv-actions"><button class="btn g" id="addTc">＋ Test case</button><button class="btn g" id="saveCases" ${S.localDirty ? "" : "disabled"}>💾 Save changes</button><span class="as-ind" data-as="review" hidden></span><button class="btn g" id="aiRev">🤖 Run AI Reviewer</button><button class="btn g dp-btn" id="dupBtn" title="Find near-identical test cases (local check, no AI call)">≋ Check duplicates</button><button class="btn g" id="upExcel" title="Import test cases from an .xlsx file">⬆ Upload Excel</button><button class="btn s" id="dlExcel">⬇ Save &amp; Download Excel</button><a class="tpl-link" href="/api/excel/template" title="Excel template with all supported columns">Download template</a></div></div>
     <div class="warn rv-unsaved ${S.localDirty ? "" : "hidden"}" id="unsavedBar">⚠ You have unsaved edits in this table. <span class="sub" style="margin:0">Save changes (or Continue — it saves automatically).</span></div>
     ${!S.localDirty && r.excel_name && !r.dirty ? `<div class="note" style="margin:0 0 10px">✅ Excel saved: <b>${esc(r.excel_name)}</b></div>` : ""}
     <div id="covBar"></div><div id="covPanel"></div><div id="dupBanner"></div><div id="dupPanel"></div>
@@ -169,7 +170,7 @@ function card(t, i, total) {
       <button class="prio p-${t.priority}" data-act="prio">${t.priority} ▾</button>
       <span class="sub nsteps">${t.steps.length} steps</span>
       <button class="stp ${st.cls}" data-act="status" title="Click to change review status">${st.label} <span class="caret">▾</span></button>
-      <button class="rg-btn" data-act="regen" title="Regenerate only ${esc(t.id)} with AI · other test cases are untouched" ${window.RG && RG.loading ? "disabled" : ""}>↻ Regenerate${window.prettyProvider && window.resolvedRunProvider ? " · " + prettyProvider(resolvedRunProvider()) : ""}</button>
+      <button class="rg-btn" data-act="regen" title="Regenerate only ${esc(t.id)} with AI · other test cases are untouched. Choose a provider in the popover." ${window.RG && RG.loading ? "disabled" : ""}>↻ Regenerate</button>
       <button class="ib" data-act="tcmenu" title="More">⋮</button></div>
    </div>${rgL ? window.rgOverlay(t) : ""}`;
   if (open) {
@@ -293,11 +294,28 @@ function closePop() { const p = $("#rvPop"); if (p) p.remove(); document.removeE
 function popOutside(e) { const p = $("#rvPop"); if (p && !p.contains(e.target) && !e.target.closest("[data-act='acadd'],[data-act='prio'],[data-act='status'],[data-act='tcmenu'],[data-act='smenu'],[data-act='regen']")) closePop(); }
 function openPop(anchor, html, width, alignRight) {
   closePop();
-  const r = anchor.getBoundingClientRect(); const p = document.createElement("div");
+  const pad = 8;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  width = Math.min(width || 220, vw - pad * 2);
+  const r = anchor.getBoundingClientRect();
+  const p = document.createElement("div");
   p.id = "rvPop"; p.className = "pop"; p.style.width = width + "px"; p.innerHTML = html;
-  p.style.top = window.scrollY + r.bottom + 4 + "px";
-  p.style.left = Math.max(8, window.scrollX + (alignRight ? r.right - width : r.left)) + "px";
-  document.body.appendChild(p); setTimeout(() => document.addEventListener("mousedown", popOutside, true), 0);
+  p.style.position = "fixed"; p.style.visibility = "hidden"; p.style.left = "0"; p.style.top = "0";
+  document.body.appendChild(p);
+  const ph = p.offsetHeight, pw = p.offsetWidth || width;
+  const spaceBelow = vh - r.bottom - pad;
+  const spaceAbove = r.top - pad;
+  const flip = spaceBelow < Math.min(ph, 260) && spaceAbove > spaceBelow;
+  const maxH = Math.max(140, Math.floor(flip ? spaceAbove : spaceBelow));
+  p.style.maxHeight = maxH + "px";
+  p.style.overflowY = "auto";
+  if (flip) { p.style.top = "auto"; p.style.bottom = (vh - r.top + 4) + "px"; }
+  else { p.style.top = (r.bottom + 4) + "px"; p.style.bottom = "auto"; }
+  let left = alignRight ? r.right - pw : r.left;
+  left = Math.min(Math.max(pad, left), vw - pw - pad);
+  p.style.left = left + "px";
+  p.style.visibility = "visible";
+  setTimeout(() => document.addEventListener("mousedown", popOutside, true), 0);
   return p;
 }
 function openPrio(b, t) {

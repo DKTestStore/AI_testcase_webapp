@@ -580,13 +580,18 @@ async function viewRequirementDetail(v, r) {
     ${editing ? `<div class="rq-unsaved" id="rqUnsaved">
       <div><b>● Unsaved changes</b>
         <div class="muted" style="font-size:12px">Last saved ${rqEsc(rqDateTime(r.updated))}${lastBy ? " by " + rqEsc(lastBy) : ""}</div></div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="as-ind" data-as="requirements" hidden></span>
         <button class="btn g" id="rqEditDiscard">Discard</button>
         <button class="btn" id="rqEditSave">Save changes</button>
       </div>
     </div>` : ""}`;
-  $("#rqBack").onclick = (e) => {
+  $("#rqBack").onclick = async (e) => {
     e.preventDefault();
+    if (typeof autosaveFlush === "function" && typeof autosaveHasPending === "function" && autosaveHasPending()) {
+      const rflush = await autosaveFlush({ reason: "navigate" });
+      if (rflush === "cancel") return;
+    }
     if (RQ.editing && rqFormDirty($("#rqEditForm"), RQ.editSnap) && !confirm("You have unsaved changes. Leave without saving?")) return;
     RQ.view = "list"; RQ.detail = null; RQ.editing = false; RQ.editSnap = ""; go("requirements");
   };
@@ -603,6 +608,20 @@ async function viewRequirementDetail(v, r) {
     $("#rqEditBtn").disabled = true;
     rqBindForm($("#rqEditForm"), r);
     RQ.editSnap = rqFormSnapshot($("#rqEditForm"));
+    rqBindAutosave($("#rqEditForm"), {
+      getId: () => r.id,
+      setId: () => {},
+      getSnap: () => RQ.editSnap,
+      setSnap: (s) => { RQ.editSnap = s; },
+      getBefore: () => (r.linked_cases || []).map((c) => c.id),
+      after: async (id) => {
+        const fresh = await api("/api/requirements/" + encodeURIComponent(id));
+        RQ.detail = fresh.requirement;
+        r = fresh.requirement;
+        const last = document.querySelector("#rqUnsaved .muted");
+        if (last) last.textContent = "Last saved " + rqDateTime(r.updated);
+      },
+    });
     $("#rqEditDiscard").onclick = () => {
       if (rqFormDirty($("#rqEditForm"), RQ.editSnap) && !confirm("Discard unsaved changes?")) return;
       RQ.editing = false; RQ.editSnap = ""; viewRequirementDetail($("#view"), r);
@@ -679,6 +698,9 @@ function rqNewReqModal() { rqOpenReqDrawer({ mode: "new" }); }
 
 function rqCloseDrawer({ force } = {}) {
   const root = $("#rqDrw");
+  if (!force && typeof autosaveHasPending === "function" && autosaveHasPending()) {
+    if (typeof autosaveFlush === "function") autosaveFlush({ reason: "navigate" });
+  }
   if (!force && root && rqFormDirty(root, RQ._drawerSnap) && !confirm("You have unsaved changes. Close without saving?")) return false;
   ["rqDrw", "rqDbg"].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); });
   document.body.style.overflow = "";
@@ -704,7 +726,7 @@ async function rqOpenReqDrawer({ mode, id } = {}) {
   }
   const folders = (RQ.data && RQ.data.folders) || [];
   const p = rqProject();
-  const isNew = mode !== "edit";
+  let isNew = mode !== "edit";
   document.body.style.overflow = "hidden";
   const dbg = document.createElement("div"); dbg.className = "rq-dbg"; dbg.id = "rqDbg";
   const drw = document.createElement("div"); drw.className = "rq-drw"; drw.id = "rqDrw";
@@ -717,6 +739,7 @@ async function rqOpenReqDrawer({ mode, id } = {}) {
     </div>
     <div class="rq-drw-b">${rqFormHtml(r, folders, { isNew })}</div>
     <div class="rq-drw-f">
+      <span class="as-ind" data-as="requirements" hidden></span>
       <button type="button" class="btn g" id="rqDrwCancel">Cancel</button>
       ${isNew ? `<button type="button" class="btn g" id="rqDrwAnother">Save &amp; add another</button>` : ""}
       <button type="button" class="btn" id="rqDrwSave">${isNew ? "Save" : "Save changes"}</button>
@@ -729,6 +752,15 @@ async function rqOpenReqDrawer({ mode, id } = {}) {
   $("#rqDrwCancel").onclick = close;
   rqBindForm(drw, r);
   RQ._drawerSnap = rqFormSnapshot(drw);
+  RQ._drawerId = isNew ? "" : r.id;
+  rqBindAutosave(drw, {
+    getId: () => RQ._drawerId,
+    setId: (id, rec) => { RQ._drawerId = id; r = rec || r; r.id = id; isNew = false; const h = drw.querySelector(".rq-drw-h h2"); if (h) h.textContent = "Edit " + id; },
+    getSnap: () => RQ._drawerSnap,
+    setSnap: (s) => { RQ._drawerSnap = s; },
+    getBefore: () => (r.linked_cases || []).map((c) => c.id),
+    source: r.source,
+  });
   const save = async (addAnother) => {
     const body = rqReadForm(drw);
     if (!rqValidateForm(drw, body)) return false;
@@ -842,6 +874,58 @@ function rqAcRowHtml(text, i) {
 
 function rqChipHtml(id, title) {
   return `<span class="rq-chip" data-cid="${rqEsc(id)}">${rqEsc(id)}${title && title !== id ? " · " + rqEsc(title) : ""} <button type="button" data-chip-x title="Remove">×</button></span>`;
+}
+
+function rqAutosaveValid(root, body) {
+  body = body || rqReadForm(root);
+  if (!body.title) return false;
+  const jk = (body.jira_key || "").trim();
+  // Mid-typing a Jira key (ends with "-" or has a hyphen but no number) — wait.
+  if (jk.includes("-") && !/^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(jk)) return false;
+  return true;
+}
+function rqIsDirty() {
+  if ($("#rqEditForm") && RQ.editing && rqFormDirty($("#rqEditForm"), RQ.editSnap)) return true;
+  if ($("#rqDrw") && rqFormDirty($("#rqDrw"), RQ._drawerSnap)) return true;
+  return false;
+}
+function rqNavGuard() {
+  if (rqIsDirty() && !confirm("You have unsaved changes on this requirement. Leave without saving?")) return false;
+  return true;
+}
+window.rqIsDirty = rqIsDirty;
+window.rqNavGuard = rqNavGuard;
+
+async function rqDoAutosave(root, ctx) {
+  ctx = ctx || {};
+  const body = rqReadForm(root);
+  if (!rqAutosaveValid(root, body)) return;
+  if (ctx.snapKey && !rqFormDirty(root, ctx.getSnap())) return;
+  body.project_id = RQ.projectId;
+  let id = ctx.getId();
+  if (!id) {
+    body.source = (body.jira_key || "").trim() ? (ctx.source || "Jira") : (ctx.source || "Manual");
+    const j = await api("/api/requirements", { method: "POST", body });
+    id = j.requirement.id;
+    ctx.setId(id, j.requirement);
+    if (ctx.setSnap) ctx.setSnap(rqFormSnapshot(root));
+    return;
+  }
+  await api("/api/requirements/" + encodeURIComponent(id), { method: "PUT", body });
+  const before = ctx.getBefore ? ctx.getBefore() : [];
+  await rqSyncLinks(id, before, body.case_ids);
+  if (ctx.after) await ctx.after(id);
+  if (ctx.setSnap) ctx.setSnap(rqFormSnapshot(root));
+}
+
+function rqBindAutosave(root, ctx) {
+  if (!root) return;
+  const kick = () => {
+    if (typeof autosaveSchedule !== "function") return;
+    autosaveSchedule("requirements", () => rqDoAutosave(root, ctx), { valid: () => rqAutosaveValid(root) && (!ctx.getSnap || rqFormDirty(root, ctx.getSnap())) });
+  };
+  root.addEventListener("input", kick);
+  root.addEventListener("change", kick);
 }
 
 function rqBindForm(root, r) {
