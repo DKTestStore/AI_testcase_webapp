@@ -611,6 +611,7 @@ function setIsDirty() {
   const hl = $("#histLimit"), dt = $("#dupThr");
   if (hl && SET_ST.prefs.hist !== "" && hl.value !== SET_ST.prefs.hist) dirty = true;
   if (dt && SET_ST.prefs.dup !== "" && dt.value !== SET_ST.prefs.dup) dirty = true;
+  if (typeof window.tokenCalcIsDirty === "function" && window.tokenCalcIsDirty($("#sbody"))) dirty = true;
   return dirty;
 }
 
@@ -787,8 +788,8 @@ async function viewSettings(v) {
   }));
   $$(".set-subtabs button").forEach((b) => (b.onclick = () => setShowSubtab(b.dataset.sub)));
 
-  $("#sbody").addEventListener("input", (e) => { if (e.target && e.target.matches("[data-key], #histLimit, #dupThr")) setUpdateDirty(); });
-  $("#sbody").addEventListener("change", (e) => { if (e.target && e.target.matches("[data-key]")) setUpdateDirty(); });
+  $("#sbody").addEventListener("input", (e) => { if (e.target && e.target.matches("[data-key], [data-f], #histLimit, #dupThr")) setUpdateDirty(); });
+  $("#sbody").addEventListener("change", (e) => { if (e.target && e.target.matches("[data-key], [data-f]")) setUpdateDirty(); });
 
   api("/api/settings/history_limit").then((h) => {
     const el = $("#histLimit"); if (!el) return;
@@ -827,7 +828,10 @@ async function viewSettings(v) {
     try {
       const j = await api("/api/settings/prefs");
       if (j.prefs && Object.prototype.hasOwnProperty.call(j.prefs, "autosave")) on = !!j.prefs.autosave;
-      window._prefs = Object.assign(window._prefs || {}, j.prefs || {});
+      const incoming = Object.assign({}, j.prefs || {});
+      if (window._prefs && _prefs.token_registry) delete incoming.token_registry;
+      if (window._prefs && _prefs.token_limits) delete incoming.token_limits;
+      window._prefs = Object.assign(window._prefs || {}, incoming);
     } catch (e) { if (window._prefs && Object.prototype.hasOwnProperty.call(_prefs, "autosave")) on = !!_prefs.autosave; }
     el.checked = on;
     if (hint) hint.textContent = on ? "Currently on" : "Currently off";
@@ -835,13 +839,22 @@ async function viewSettings(v) {
       const r = await api("/api/settings/prefs", { method: "PUT", body: { autosave: el.checked } });
       const next = !!(r.prefs ? r.prefs.autosave : el.checked);
       el.checked = next;
+      const keepReg = window._prefs && _prefs.token_registry;
+      const keepLim = window._prefs && _prefs.token_limits;
       window._prefs = Object.assign(window._prefs || {}, (r.prefs || { autosave: next }));
+      if (keepReg) _prefs.token_registry = keepReg;
+      if (keepLim) _prefs.token_limits = keepLim;
       if (hint) hint.textContent = next ? "Currently on" : "Currently off";
       toast(next ? "Auto Save is on" : "Auto Save is off — use the manual Save buttons");
     });
   })();
   $("#saveSettings").onclick = () => guarded($("#saveSettings"), async () => {
     const values = setCollectEnvValues();
+    // Persist Models / Limits for every rendered provider before the full reload,
+    // so footer Save changes does not wipe an unsaved add-model row.
+    if (typeof window.tokenCalcSaveRegistry === "function") {
+      await window.tokenCalcSaveRegistry($("#sbody"));
+    }
     const r = await api("/api/settings", { method: "PUT", body: { values } });
     toast(`Saved (${r.changed.length} changed)`);
     // Reload to refresh masks / set pills; preserve current tab + provider

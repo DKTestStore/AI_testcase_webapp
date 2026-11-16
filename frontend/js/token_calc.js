@@ -308,6 +308,111 @@
     });
     return models;
   }
+  function tcExampleCtx(pid) {
+    const seed = tcSeedModels(pid);
+    const hit = seed.find((m) => Number(m && m.ctx) > 0);
+    return hit ? Number(hit.ctx) : 128000;
+  }
+  function tokenCalcModelsSig(models) {
+    return (models || []).map((m) => [
+      String(m.id || ""),
+      Number(m.inn) || 0,
+      Number(m.out) || 0,
+      Number(m.ctx) || 0,
+      !!(m.default || m.star),
+      m.enabled !== false,
+      String(m.note || ""),
+    ]);
+  }
+  function tokenCalcLimSig(v) {
+    v = v || {};
+    const t = v.daily_tokens == null ? "" : String(v.daily_tokens);
+    const c = v.daily_cost == null ? "" : String(v.daily_cost);
+    return [t, c];
+  }
+  function tokenCalcCollectAll(root) {
+    root = root || (typeof $ === "function" ? $("#sbody") : null);
+    const current = JSON.parse(JSON.stringify(((window._prefs && _prefs.token_registry && _prefs.token_registry.providers) || [])));
+    const limits = Object.assign({}, ((window._prefs && _prefs.token_limits) || {}));
+    if (!root) return { token_registry: { providers: current }, token_limits: limits };
+    $$(".tc-prov-models", root).forEach((el) => {
+      const pid = el.dataset.pid;
+      if (!pid || !$("table", el)) return;
+      const modelsNew = tokenCalcCollectProvider(el, pid);
+      const i = current.findIndex((p) => p.id === pid);
+      const name = (i >= 0 && current[i].name) || (tcProvider(pid) || {}).name || pid;
+      const row = { id: pid, name: name, models: modelsNew };
+      if (i >= 0) current[i] = { ...current[i], ...row };
+      else current.push(row);
+    });
+    $$(".tc-prov-limits", root).forEach((el) => {
+      const pid = el.dataset.pid;
+      const tok = pid ? $("[data-f=daily_tokens]", el) : null;
+      const cost = pid ? $("[data-f=daily_cost]", el) : null;
+      if (!pid || (!tok && !cost)) return;
+      limits[pid] = { daily_tokens: (tok || {}).value, daily_cost: (cost || {}).value };
+    });
+    return { token_registry: { providers: current }, token_limits: limits };
+  }
+  function tokenCalcSubmittedIds(root) {
+    const out = {};
+    if (!root) return out;
+    $$(".tc-prov-models", root).forEach((el) => {
+      const pid = el.dataset.pid;
+      if (!pid || !$("table", el)) return;
+      out[pid] = tokenCalcCollectProvider(el, pid).map((m) => m.id).filter(Boolean);
+    });
+    return out;
+  }
+  function tokenCalcMissingIds(prefs, submitted) {
+    const missing = [];
+    const providers = ((prefs && prefs.token_registry && prefs.token_registry.providers) || []);
+    Object.keys(submitted || {}).forEach((pid) => {
+      const saved = (providers.find((p) => p.id === pid) || {}).models || [];
+      const ids = new Set(saved.map((m) => m.id));
+      (submitted[pid] || []).forEach((id) => { if (!ids.has(id)) missing.push(id); });
+    });
+    return missing;
+  }
+  function tokenCalcIsDirty(root) {
+    root = root || (typeof $ === "function" ? $("#sbody") : null);
+    if (!root || !root.querySelector) return false;
+    const prefs = window._prefs || {};
+    for (const el of $$(".tc-prov-models", root)) {
+      const pid = el.dataset.pid;
+      if (!pid || !$("table", el)) continue;
+      const draft = $$("tr[data-i]", el).some((tr) => !((($("[data-f=id]", tr) || {}).value || "").trim()));
+      if (draft) return true;
+      const now = tokenCalcCollectProvider(el, pid);
+      const prev = (((prefs.token_registry || {}).providers || []).find((p) => p.id === pid) || {}).models || [];
+      if (JSON.stringify(tokenCalcModelsSig(now)) !== JSON.stringify(tokenCalcModelsSig(prev))) return true;
+    }
+    for (const el of $$(".tc-prov-limits", root)) {
+      const pid = el.dataset.pid;
+      const tok = pid ? $("[data-f=daily_tokens]", el) : null;
+      const cost = pid ? $("[data-f=daily_cost]", el) : null;
+      if (!pid || (!tok && !cost)) continue;
+      const now = { daily_tokens: (tok || {}).value, daily_cost: (cost || {}).value };
+      const prev = (prefs.token_limits || {})[pid] || {};
+      if (JSON.stringify(tokenCalcLimSig(now)) !== JSON.stringify(tokenCalcLimSig(prev))) return true;
+    }
+    return false;
+  }
+  async function tokenCalcSaveRegistry(root) {
+    root = root || (typeof $ === "function" ? $("#sbody") : null);
+    if (!root || !root.querySelector || !root.querySelector(".tc-prov-models table")) return null;
+    const submitted = tokenCalcSubmittedIds(root);
+    const body = tokenCalcCollectAll(root);
+    const j = await api("/api/settings/prefs", { method: "PUT", body: body });
+    window._prefs = j.prefs || _prefs;
+    tokenCalcRenderAllProviders(root, window._prefs || {});
+    const missing = tokenCalcMissingIds(window._prefs, submitted);
+    if (missing.length) throw new Error("These model IDs were not saved: " + missing.join(", "));
+    return j;
+  }
+  function tokenCalcTouchDirty() {
+    if (typeof setUpdateDirty === "function") setUpdateDirty();
+  }
   function tokenCalcModelRow(pid, m, i) {
     m = m || {};
     const note = m.note || "";
@@ -340,25 +445,29 @@
       const act = e.target.dataset && e.target.dataset.act;
       if (act === "add") {
         const tbl = $("table", modelsHost);
+        if (!tbl) return;
+        const body = tbl.tBodies[0] || tbl.createTBody();
         const i = $$("tr[data-i]", modelsHost).length;
-        tbl.insertAdjacentHTML("beforeend", tokenCalcModelRow(pid, { id: "", inn: 0, out: 0, ctx: 0, enabled: true }, i));
+        body.insertAdjacentHTML("beforeend", tokenCalcModelRow(pid, { id: "", inn: 0, out: 0, ctx: tcExampleCtx(pid), enabled: true }, i));
+        tokenCalcTouchDirty();
       }
       if (act === "rm") {
         const tr = e.target.closest("tr");
         if (tr) tr.remove();
+        tokenCalcTouchDirty();
       }
       if (act === "save-models") {
         guarded(e.target, async () => {
-          const current = JSON.parse(JSON.stringify(((window._prefs && _prefs.token_registry && _prefs.token_registry.providers) || [])));
-          const modelsNew = tokenCalcCollectProvider(modelsHost, pid);
-          const i = current.findIndex((p) => p.id === pid);
-          const row = { id: pid, name: (prov.name || (tcProvider(pid) || {}).name || pid), models: modelsNew };
-          if (i >= 0) current[i] = { ...current[i], ...row };
-          else current.push(row);
-          const j = await api("/api/settings/prefs", { method: "PUT", body: { token_registry: { providers: current } } });
-          window._prefs = j.prefs || _prefs;
+          const submitted = { [pid]: tokenCalcCollectProvider(modelsHost, pid).map((m) => m.id).filter(Boolean) };
+          await tokenCalcSaveRegistry(modelsHost.closest("#sbody") || modelsHost);
           const hint = $("[data-role=hint]", modelsHost);
+          const missing = tokenCalcMissingIds(window._prefs, submitted);
+          if (missing.length) {
+            if (hint) hint.textContent = "Not saved: " + missing.join(", ");
+            throw new Error("These model IDs were not saved: " + missing.join(", "));
+          }
           if (hint) hint.textContent = "Saved.";
+          tokenCalcTouchDirty();
         });
       }
     };
@@ -475,6 +584,10 @@
   window.tokenCalcRenderProvider = tokenCalcRenderProvider;
   window.tokenCalcRenderAllProviders = tokenCalcRenderAllProviders;
   window.tokenCalcPidFromGroup = tokenCalcPidFromGroup;
+  window.tokenCalcCollectAll = tokenCalcCollectAll;
+  window.tokenCalcIsDirty = tokenCalcIsDirty;
+  window.tokenCalcSaveRegistry = tokenCalcSaveRegistry;
+  window.tcExampleCtx = tcExampleCtx;
   window.tokenSummaryHtml = tokenSummaryHtml;
   window.tcCalcHref = tcCalcHref;
   window.tcSeedCalc = tcSeedCalc;
