@@ -256,6 +256,7 @@
   function tokenCalcPidFromGroup(name) {
     const n = String(name || "").toLowerCase();
     if (n.indexOf("gemini") >= 0) return "gemini";
+    if (n.indexOf("nvidia") >= 0) return "nvidia";
     if (n.indexOf("groq") >= 0) return "groq";
     if (n.indexOf("grok") >= 0 || n.indexOf("xai") >= 0) return "grok";
     if (n.indexOf("claude") >= 0) return "claude";

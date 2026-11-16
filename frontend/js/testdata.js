@@ -2,14 +2,14 @@
    Additive Review / Settings hooks. Existing Save / Excel / qTest flows stay intact. */
 (function () {
   const PROVIDERS = [
-    ["gemini", "Gemini"], ["grok", "Grok"], ["groq", "Groq"], ["claude", "Claude"],
+    ["gemini", "Gemini"], ["grok", "Grok"], ["groq", "Groq"], ["nvidia", "NVIDIA"], ["claude", "Claude"],
     ["openai", "OpenAI"], ["codex", "Codex (OpenAI)"], ["ollama", "Ollama (local)"],
   ];
   const TYPES = ["Positive", "Negative", "Boundary", "Security"];
   window._prefs = window._prefs || {};
 
   function prettyProvider(id) {
-    const map = { gemini: "Gemini", grok: "Grok", groq: "Groq", claude: "Claude", openai: "OpenAI",
+    const map = { gemini: "Gemini", grok: "Grok", groq: "Groq", nvidia: "NVIDIA", claude: "Claude", openai: "OpenAI",
       codex: "Codex", ollama: "Ollama", none: "Docs search only" };
     return map[String(id || "").toLowerCase()] || (id ? String(id) : "");
   }

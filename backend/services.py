@@ -184,7 +184,7 @@ def _codex_module():
     return c
 
 
-KNOWN_PROVIDERS = ("gemini", "grok", "groq", "claude", "openai", "codex", "ollama")
+KNOWN_PROVIDERS = ("gemini", "grok", "groq", "nvidia", "claude", "openai", "codex", "ollama")
 
 
 def model_name_for(provider: str, override: str = "") -> str:
@@ -207,6 +207,8 @@ def model_name_for(provider: str, override: str = "") -> str:
         return (env("GROK_MODEL") or "").strip().strip("\"'")
     if p == "groq":
         return (env("GROQ_MODEL") or "").strip().strip("\"'")
+    if p == "nvidia":
+        return (env("NVIDIA_MODEL") or "").strip().strip("\"'") or "nvidia/nemotron-3.5-super-vl-120b-a12b"
     if p == "claude":
         return (env("CLAUDE_MODEL") or "").strip().strip("\"'")
     if p == "openai":
@@ -244,6 +246,8 @@ def _norm_provider(model: str) -> str:
         return "grok"
     if m in ("groq",):
         return "groq"
+    if m in ("nvidia", "nim", "nvidia-nim", "ngc"):
+        return "nvidia"
     if m in ("claude", "anthropic"):
         return "claude"
     if m in ("ollama", "local"):
@@ -352,6 +356,14 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
             raise _provider_error(ex)
         return {"text": text, "usage": usage}
 
+    if provider == "nvidia":
+        try:
+            mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_nvidia")
+            text, usage = mod.complete(system_prompt, user_content, temperature=temperature, model_name=mid)
+        except Exception as ex:
+            raise _provider_error(ex)
+        return {"text": text, "usage": usage}
+
     if provider == "claude":
         try:
             mod = importlib.import_module("ai_test_generator.ai_helpers.test_generator_claude")
@@ -386,7 +398,7 @@ def _complete(provider: str, system_prompt: str, user_content: str, *, temperatu
             "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
         }}
 
-    raise ServiceError(f"Unknown provider '{provider}'. Choose Gemini, Grok, Groq, Claude, OpenAI, Codex (OpenAI), or Ollama.")
+    raise ServiceError(f"Unknown provider '{provider}'. Choose Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex (OpenAI), or Ollama.")
 
 
 def _ollama_chat(system_prompt: str, user_content: str, model_name: Optional[str] = None) -> str:

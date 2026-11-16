@@ -263,6 +263,7 @@ async function viewGenerate(v) {
         <option value="gemini" ${selModel === "gemini" ? "selected" : ""}>Gemini</option>
         <option value="grok" ${selModel === "grok" ? "selected" : ""}>Grok</option>
         <option value="groq" ${selModel === "groq" ? "selected" : ""}>Groq</option>
+        <option value="nvidia" ${selModel === "nvidia" ? "selected" : ""}>NVIDIA</option>
         <option value="claude" ${selModel === "claude" ? "selected" : ""}>Claude</option>
         <option value="openai" ${selModel === "openai" ? "selected" : ""}>OpenAI</option>
         <option value="codex" ${selModel === "codex" ? "selected" : ""}>Codex (OpenAI)</option>
@@ -529,6 +530,7 @@ const SET_AI = [
   { group: "Gemini", pid: "gemini", sub: "Cloud", note: null },
   { group: "Grok (xAI)", pid: "grok", sub: "Cloud", note: null },
   { group: "Groq", pid: "groq", sub: "Cloud · free tier", note: "groq" },
+  { group: "NVIDIA", pid: "nvidia", sub: "Cloud · NIM / API Catalog", note: "nvidia" },
   { group: "Claude (Anthropic)", pid: "claude", sub: "Cloud", note: null },
   { group: "OpenAI", pid: "openai", sub: "Cloud · key shared", note: "openai" },
   { group: "Codex (OpenAI)", pid: "codex", sub: "Uses OpenAI key", note: "codex" },
@@ -541,11 +543,23 @@ const SET_INT = [
 ];
 const SET_PLACEHOLDERS = {
   ZEPHYR_BASE_URL: "https://api.zephyrscale.smartbear.com/v2/",
+  NVIDIA_BASE_URL: "https://integrate.api.nvidia.com/v1",
+  NVIDIA_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+  NVIDIA_TOP_P: "0.95",
+  NVIDIA_MAX_TOKENS: "16384",
+  NVIDIA_TIMEOUT: "120",
+  NVIDIA_TEMPERATURE: "leave blank for app default",
 };
 const SET_ST = { tab: "providers", provider: "Gemini", subtab: "connection", baseline: {}, prefs: { hist: "", dup: "" } };
 
 function setFieldHtml(f) {
   const id = `sf_${f.key}`;
+  if (f.key === "NVIDIA_ENABLE_THINKING") {
+    const on = /^(1|true|yes|on)$/i.test(String(f.value || "").trim());
+    return `<div class="set-field"><label for="${id}" class="row" style="align-items:center;gap:8px;font-weight:600">
+      <input id="${id}" data-key="${esc(f.key)}" data-secret="0" data-initial="${on ? "true" : "false"}" type="checkbox" ${on ? "checked" : ""} style="width:auto"> Enable thinking</label>
+      <div class="hint">Off by default so JSON test-case output stays reliable. When on, the model may emit reasoning tokens; the app uses only the final message content (reasoning is discarded).</div></div>`;
+  }
   const pill = f.secret ? (f.is_set ? ' <span class="pill">set</span>' : ' <span class="pill r">not set</span>') : "";
   const ph = f.secret ? esc(f.value || "not set") : esc(SET_PLACEHOLDERS[f.key] || "");
   const val = f.secret ? "" : esc(f.value);
@@ -554,7 +568,9 @@ function setFieldHtml(f) {
   const hint = f.secret
     ? `<div class="hint">Leave blank to keep the current value.</div>`
     : (f.key === "CODEX_MODEL"
-      ? `<div class="hint">Optional. Falls back to OPENAI_MODEL, then the app’s legacy default.</div>` : "");
+      ? `<div class="hint">Optional. Falls back to OPENAI_MODEL, then the app’s legacy default.</div>`
+      : (f.key === "NVIDIA_TEMPERATURE"
+        ? `<div class="hint">Leave blank to use the app default (0.2 on Generate, 0.0 on Review). A set value is used for every NVIDIA call.</div>` : ""));
   return `<div class="set-field"><label for="${id}">${esc(f.label)}${pill}</label>
     <input id="${id}" data-key="${esc(f.key)}" data-secret="${f.secret ? "1" : "0"}" data-initial="${val}"
       ${f.secret ? 'type="password" autocomplete="new-password"' : 'type="text"'}
@@ -569,7 +585,9 @@ function setGroupConfigured(fs) {
 function setCollectEnvValues() {
   const values = {};
   $$("#sbody [data-key]").forEach((i) => {
-    if (i.type === "password") {
+    if (i.type === "checkbox") {
+      values[i.dataset.key] = i.checked ? "true" : "false";
+    } else if (i.type === "password") {
       if (i.value.trim()) values[i.dataset.key] = i.value;
     } else {
       values[i.dataset.key] = i.value;
@@ -581,7 +599,10 @@ function setCollectEnvValues() {
 function setIsDirty() {
   let dirty = false;
   $$("#sbody [data-key]").forEach((i) => {
-    if (i.dataset.secret === "1") {
+    if (i.type === "checkbox") {
+      const now = i.checked ? "true" : "false";
+      if (now !== (i.dataset.initial || "false")) dirty = true;
+    } else if (i.dataset.secret === "1") {
       if (i.value.trim()) dirty = true;
     } else if ((i.value || "") !== (i.dataset.initial || "")) {
       dirty = true;
@@ -656,6 +677,9 @@ async function viewSettings(v) {
     } else if (p.note === "groq") {
       lede = "Cloud provider · fast hosted open models (Llama, etc.) via Groq’s OpenAI-compatible API.";
       note = `<div class="set-note"><b>Groq free tier</b><br>Free keys from console.groq.com have per-minute and per-day request/token limits. Rate-limited calls are retried up to 2 times; Model ID defaults to <span class="mono">llama-3.3-70b-versatile</span> when blank. Configure additional models and rates on the <b>Models</b> tab; set a daily cap on <b>Limits</b>.</div>`;
+    } else if (p.note === "nvidia") {
+      lede = "Cloud provider · NVIDIA API Catalog / NIM, OpenAI-compatible Chat Completions.";
+      note = `<div class="set-note"><b>NVIDIA API Catalog</b><br>Default base URL is <span class="mono">https://integrate.api.nvidia.com/v1</span>. Model ID defaults to <span class="mono">nvidia/nemotron-3.5-super-vl-120b-a12b</span> when blank. Seeded registry prices are 0 — enter current catalog rates on the <b>Models</b> tab. <b>Enable thinking</b> is off by default; when on, reasoning tokens are discarded and only the final message content is used. Rate-limited calls are retried up to 2 times.</div>`;
     } else if (p.note === "codex") {
       lede = "OpenAI family profile — uses the OpenAI API key (not a separate vendor). Not ChatGPT Plus / CLI subscription.";
       note = `<div class="set-note"><b>Shared key</b><br>API key is configured under <b>OpenAI</b>. Only the Codex model ID is set here.</div>`;
@@ -764,6 +788,7 @@ async function viewSettings(v) {
   $$(".set-subtabs button").forEach((b) => (b.onclick = () => setShowSubtab(b.dataset.sub)));
 
   $("#sbody").addEventListener("input", (e) => { if (e.target && e.target.matches("[data-key], #histLimit, #dupThr")) setUpdateDirty(); });
+  $("#sbody").addEventListener("change", (e) => { if (e.target && e.target.matches("[data-key]")) setUpdateDirty(); });
 
   api("/api/settings/history_limit").then((h) => {
     const el = $("#histLimit"); if (!el) return;
