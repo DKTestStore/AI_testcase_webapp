@@ -58,7 +58,14 @@ Set `GROQ_MODEL` to a model listed in your Groq console, for example `openai/gpt
 
 **Settings → AI Providers → NVIDIA** is an OpenAI-compatible Catalog / NIM provider (default base URL `https://integrate.api.nvidia.com/v1`). Paste `NVIDIA_API_KEY`, or set it in `ai_test_generator/.env`. The default model is `nvidia/nemotron-3.5-super-vl-120b-a12b` when the Model ID is blank.
 
-Enable thinking is **off** by default. When on, reasoning tokens are discarded and only the final message content is used (better for JSON test cases). Seeded example prices are 0 — enter current rates on the **Models** tab. Leave Temperature blank to keep the usual Generate 0.2 / Review 0.0 defaults.
+Enable thinking is **off** by default — keep it off for JSON test cases. When on, reasoning tokens are discarded and only the final message content is used. Seeded example prices are 0, with the note “NVIDIA free trial — enter rates if billed”. Leave Temperature blank to keep the usual Generate 0.2 / Review 0.0 defaults.
+
+Seeded catalog (Super stays the default). Suggested uses:
+
+- **Generate / Review:** `mistralai/mistral-large-4-1t-a52b` (262,144), `nvidia/nemotron-3.5-super-vl-120b-a12b` (262,144, default), `z-ai/glm-5.3-flash` (1,048,576), `minimaxai/minimax-m3.1-flash` (262,144)
+- **Regenerate / Help:** `nvidia/nemotron-3.5-lightning-30b-a3b` (1,048,576), `nvidia/nemotron-3.5-bolt-e4b` (65,536), `openai/gpt-oss-20b` (131,072)
+
+Missing seed IDs are merged into an existing saved registry on read; your edits and any models you Removed and Saved are not overwritten or re-added.
 
 Pick **NVIDIA** on Generate, in Review / Repo regenerate pickers, or as the default provider in Preferences. The app uses non-streaming text completions (no image parts).
 
