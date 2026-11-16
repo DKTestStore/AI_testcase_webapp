@@ -19,6 +19,7 @@ EXAMPLE_RATES = {
     "claude": {"inn": 3.00, "out": 15.00, "ctx": 200_000, "div": 3.98},
     "grok": {"inn": 0.20, "out": 0.50, "ctx": 131_072, "div": 4.0},
     "ollama": {"inn": 0.0, "out": 0.0, "ctx": 8192, "div": 3.81, "local": True},
+    "nvidia": {"inn": 0.0, "out": 0.0, "ctx": 131072, "div": 4.0},
 }
 
 EXTRA_MODELS = {
@@ -52,6 +53,10 @@ EXTRA_MODELS = {
         {"id": "gemma3:4b", "inn": 0.0, "out": 0.0, "ctx": 8192, "div": 3.81, "local": True},
         {"id": "llama3.2:3b", "inn": 0.0, "out": 0.0, "ctx": 2048, "div": 3.81, "local": True},
     ],
+    "nvidia": [
+        # Pricing left at 0 — enter current NVIDIA API Catalog rates on the Models tab.
+        {"id": "nvidia/nemotron-3.5-super-vl-120b-a12b", "inn": 0.0, "out": 0.0, "ctx": 131072, "div": 4.0},
+    ],
 }
 
 ENV_KEYS = {
@@ -62,12 +67,13 @@ ENV_KEYS = {
     "claude": "CLAUDE_MODEL",
     "grok": "GROK_MODEL",
     "ollama": "OLLAMA_MODEL",
+    "nvidia": "NVIDIA_MODEL",
 }
 
-PROVIDER_IDS = ("gemini", "groq", "openai", "codex", "claude", "grok", "ollama")
+PROVIDER_IDS = ("gemini", "groq", "openai", "codex", "claude", "grok", "ollama", "nvidia")
 PROVIDER_NAMES = {
     "gemini": "Gemini", "groq": "Groq", "openai": "OpenAI", "codex": "Codex",
-    "claude": "Claude", "grok": "Grok", "ollama": "Ollama",
+    "claude": "Claude", "grok": "Grok", "ollama": "Ollama", "nvidia": "NVIDIA",
 }
 
 

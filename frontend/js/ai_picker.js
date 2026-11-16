@@ -31,7 +31,7 @@
 
   function prettyName(pid) {
     if (typeof prettyProvider === "function") return prettyProvider(pid);
-    const map = { gemini: "Gemini", grok: "Grok", groq: "Groq", claude: "Claude", openai: "OpenAI", codex: "Codex (OpenAI)", ollama: "Ollama" };
+    const map = { gemini: "Gemini", grok: "Grok", groq: "Groq", nvidia: "NVIDIA", claude: "Claude", openai: "OpenAI", codex: "Codex (OpenAI)", ollama: "Ollama" };
     return map[String(pid || "").toLowerCase()] || pid || "";
   }
   function registry() {

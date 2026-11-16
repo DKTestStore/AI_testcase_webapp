@@ -19,6 +19,7 @@
     { id: "gemini", label: "Gemini" },
     { id: "grok", label: "Grok (xAI)" },
     { id: "groq", label: "Groq" },
+    { id: "nvidia", label: "NVIDIA" },
     { id: "claude", label: "Claude" },
     { id: "openai", label: "OpenAI" },
     { id: "codex", label: "Codex (OpenAI)" },
@@ -30,6 +31,7 @@
     gemini: "Uses your Gemini key and model from Settings → AI Providers.",
     grok: "Uses your Grok (xAI) key and model from Settings → AI Providers.",
     groq: "Uses your Groq key and model from Settings → AI Providers.",
+    nvidia: "Uses your NVIDIA API Catalog / NIM key and model from Settings → AI Providers.",
     claude: "Uses your Claude key and model from Settings → AI Providers.",
     openai: "Uses your OpenAI key and model from Settings → AI Providers.",
     codex: "Uses the Codex model and the shared OpenAI key from Settings → AI Providers.",
@@ -130,7 +132,7 @@
     return P.engine;
   }
   function prettyProvider(id) {
-    const map = { gemini: "Gemini", grok: "Grok", groq: "Groq", claude: "Claude", openai: "OpenAI", codex: "Codex", ollama: "Ollama", none: "Docs search only" };
+    const map = { gemini: "Gemini", grok: "Grok", groq: "Groq", nvidia: "NVIDIA", claude: "Claude", openai: "OpenAI", codex: "Codex", ollama: "Ollama", none: "Docs search only" };
     return map[String(id || "").toLowerCase()] || (id ? String(id) : "Generate provider");
   }
   function badgeText(resp) {
@@ -536,6 +538,7 @@
     if (/jira/.test(t)) add("jira", { tab: "integrations", jumpId: "set-int-jira", label: "Open Settings › Jira" });
     if (/\bqtest\b/.test(t)) add("qtest", { tab: "integrations", jumpId: "set-int-qtest", label: "Open Settings › qTest" });
     if (/groq|gpt-oss|llama-3\.3|model 404/.test(t)) add("groq", { tab: "providers", provider: "Groq", label: "Open Settings › Groq" });
+    if (/nvidia|nemotron|nvidia-nim|integrate\.api\.nvidia/.test(t)) add("nvidia", { tab: "providers", provider: "NVIDIA", label: "Open Settings › NVIDIA" });
     if (/parse error|parser/.test(t)) add("generate", { view: "generate", label: "Go to Generate" });
     if (/voice input|speech recognition|dictat|web speech/.test(t)) add("voice", { tab: "preferences", jumpId: "voiceCard", label: "Open Settings › Voice input" });
     if (/help assistant|quick.question chip/.test(t)) add("help", { tab: "preferences", jumpId: "helpCard", label: "Open Settings › Help Assistant" });

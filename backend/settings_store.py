@@ -20,6 +20,14 @@ FIELDS: List[tuple] = [
     ("GROQ_MODEL", "Model ID (default llama-3.3-70b-versatile)", "Groq", False),
     ("GROQ_TIMEOUT", "Timeout in seconds (default 120)", "Groq", False),
     ("GROQ_MAX_TOKENS", "Max output tokens (default 8192)", "Groq", False),
+    ("NVIDIA_API_KEY", "API Key", "NVIDIA", True),
+    ("NVIDIA_BASE_URL", "Base URL (default https://integrate.api.nvidia.com/v1)", "NVIDIA", False),
+    ("NVIDIA_MODEL", "Model ID (default nvidia/nemotron-3.5-super-vl-120b-a12b)", "NVIDIA", False),
+    ("NVIDIA_TEMPERATURE", "Temperature (optional; leave blank to use 0.2 generate / 0.0 review)", "NVIDIA", False),
+    ("NVIDIA_TOP_P", "top_p (default 0.95)", "NVIDIA", False),
+    ("NVIDIA_MAX_TOKENS", "Max output tokens (default 16384)", "NVIDIA", False),
+    ("NVIDIA_TIMEOUT", "Timeout in seconds (default 120)", "NVIDIA", False),
+    ("NVIDIA_ENABLE_THINKING", "Enable thinking (true/false, default false)", "NVIDIA", False),
     ("ANTHROPIC_API_KEY", "API Key", "Claude (Anthropic)", True),
     ("CLAUDE_MODEL", "Model ID (enter from Anthropic)", "Claude (Anthropic)", False),
     ("CLAUDE_TIMEOUT", "Timeout in seconds (default 120)", "Claude (Anthropic)", False),
@@ -178,7 +186,7 @@ def set_dup_threshold(value) -> int:
 # --------------------------------------------------------------------------- #
 # Preferences: default Generate provider + Edge value library (non-secret, SQLite)
 # --------------------------------------------------------------------------- #
-KNOWN_PREF_PROVIDERS = ("gemini", "grok", "groq", "claude", "openai", "codex", "ollama")
+KNOWN_PREF_PROVIDERS = ("gemini", "grok", "groq", "nvidia", "claude", "openai", "codex", "ollama")
 
 
 def get_default_provider() -> str:
@@ -189,6 +197,8 @@ def get_default_provider() -> str:
         raw = "codex"
     if raw in ("grok", "xai"):
         raw = "grok"
+    if raw in ("nvidia", "nim", "nvidia-nim", "ngc"):
+        raw = "nvidia"
     if raw in ("claude", "anthropic"):
         raw = "claude"
     if raw in ("ollama", "local"):

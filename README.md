@@ -42,7 +42,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 |---|---|---|
 | Backend | Python 3.10+, FastAPI, Uvicorn | REST API (`/api/...`) and serving the frontend |
 | Config | python-dotenv (`ai_test_generator/.env`) | API keys and settings (never commit `.env`) |
-| AI / LLM | Gemini (`google-genai`), Grok/xAI, Groq (OpenAI-compatible via `openai`), Claude (Anthropic Messages via `requests`), OpenAI / Codex (`openai`), Ollama | Generation / review / regenerate; provider chosen on Generate; keys + model IDs on Settings |
+| AI / LLM | Gemini (`google-genai`), Grok/xAI, Groq and NVIDIA (OpenAI-compatible via `openai`), Claude (Anthropic Messages via `requests`), OpenAI / Codex (`openai`), Ollama | Generation / review / regenerate; provider chosen on Generate; keys + model IDs on Settings |
 | Integrations | Jira (`jira` + FastMCP worker), qTest (REST via `requests`) | Story fetch; module / test-case upload + RTM |
 | Record | Playwright (Chromium) | Capture browser actions as test steps |
 | Data | SQLite (`backend/app.db`) + JSON files | Repo, runs, requirements, token ledger, app settings, prompt templates, and run history live in SQLite. Sessions, recordings, Gemini quota, and attachments stay as files. |
@@ -98,6 +98,7 @@ Copy from `.env.example`. **Never commit `.env`**. Secrets are masked in the Set
 | Gemini (default) | `GEMINI_API_KEY`, `GEMINI_MODEL` |
 | Grok (xAI) | `GROK_API_KEY`, `GROK_MODEL`, optional `GROK_TIMEOUT` (default 120) |
 | Groq | `GROQ_API_KEY`, `GROQ_MODEL` (default `llama-3.3-70b-versatile` when blank), optional `GROQ_TIMEOUT` (120), `GROQ_MAX_TOKENS` (8192) — see [Groq provider](#groq-provider) |
+| NVIDIA (API Catalog / NIM) | `NVIDIA_API_KEY`, optional `NVIDIA_BASE_URL` (default `https://integrate.api.nvidia.com/v1`), `NVIDIA_MODEL` (default `nvidia/nemotron-3.5-super-vl-120b-a12b` when blank), `NVIDIA_TOP_P` (0.95), `NVIDIA_MAX_TOKENS` (16384), `NVIDIA_TIMEOUT` (120), `NVIDIA_TEMPERATURE` (blank = app default), `NVIDIA_ENABLE_THINKING` (default false) — see [NVIDIA provider](#nvidia-provider) |
 | Claude (Anthropic) | `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, optional `CLAUDE_TIMEOUT` (120), `CLAUDE_MAX_TOKENS` (8192) |
 | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_TIMEOUT` (120) |
 | Codex (OpenAI family) | Uses `OPENAI_API_KEY`. Optional `CODEX_MODEL` (falls back to `OPENAI_MODEL`, then legacy `gpt-5-mini`) |
@@ -119,6 +120,22 @@ Model IDs are free-text — enter the exact ID from each provider console. Do no
 
 **Free-tier note:** Groq's free plan has per-model limits per minute and per day (requests and tokens; check the *Limits* page in your Groq console for current numbers). When Groq returns HTTP 429 the app waits for the `retry-after` header (capped at 30 s) and retries up to **2** times; if it is still rate-limited the UI shows a clear "rate limit reached" error (HTTP 429). Large stories with a high `GROQ_MAX_TOKENS` can hit the per-minute token cap — lower it or use a smaller model if that happens.
 
+### NVIDIA provider
+
+[NVIDIA API Catalog / NIM](https://build.nvidia.com/) exposes OpenAI-compatible Chat Completions at `https://integrate.api.nvidia.com/v1`. The app calls that endpoint with the existing `openai` package — no new dependency — and uses **non-streaming** responses.
+
+1. Create an API key at <https://build.nvidia.com/> (or your NGC / NIM endpoint).
+2. **Settings → AI Providers → NVIDIA**: paste the key. Base URL defaults to the catalog host above; Model ID defaults to `nvidia/nemotron-3.5-super-vl-120b-a12b` when blank. Optional: timeout, `top_p` (default 0.95), max output tokens (default 16384), and temperature.
+3. Pick **NVIDIA** in the Provider dropdown on **Generate** (or the Model dropdown on **Batch**), and in Review / Repo regenerate pickers. You can also set it as **Settings → Preferences → Default provider**.
+
+**Temperature:** leave the Connection field blank so Generate uses 0.2 and Review uses 0.0 (same contract as the other providers). A set value is sent on every NVIDIA call.
+
+**Enable thinking** is a Connection checkbox, **off by default**, so JSON test-case output stays reliable. When on, the request sends `chat_template_kwargs.enable_thinking=true`. The app still uses only `message.content`; `reasoning_content` (and any leaked `<think>…</think>` tags) is discarded. If thinking is on and the final content is empty, the call fails with a clear error — turn thinking off and retry.
+
+**Pricing:** the seeded registry row is `nvidia/nemotron-3.5-super-vl-120b-a12b` with example input/output rates of **0**. Enter current catalog rates on **Settings → AI Providers → NVIDIA → Models**. Rate-limited calls (HTTP 429) are retried up to **2** times, same as Groq.
+
+The example NVIDIA snippet uses streaming, vision parts, `seed`, and `parallel_tool_calls`. This app sends **text-only**, non-streaming Chat Completions (no image parts, no fixed seed).
+
 Non-secret app settings (history limit, duplicate threshold, token rates/limit, model registry, calculator prefs, per-provider daily limits) live in the SQLite `app_settings` table in `backend/app.db`, not `.env`. A leftover `backend/app_settings.json` is imported once on first start and kept as a backup.
 
 ---
@@ -127,7 +144,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit, 
 
 | Area | What you get |
 |---|---|
-| Multi-provider AI | Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama — choose provider **and model** on **Generate**; configure keys / a fallback model ID on **Settings → AI Providers** (Connection), and a per-provider model registry (multiple models, rates, context, default, enable) plus daily token/cost limits on that same provider’s **Models** and **Limits** sub-tabs |
+| Multi-provider AI | Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex, Ollama — choose provider **and model** on **Generate**; configure keys / a fallback model ID on **Settings → AI Providers** (Connection), and a per-provider model registry (multiple models, rates, context, default, enable) plus daily token/cost limits on that same provider’s **Models** and **Limits** sub-tabs |
 | Settings UI | Tabs: **AI Providers** (each provider has **Connection** / **Models** / **Limits** sub-tabs) / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, **Auto Save** (default on), **default Generate provider**, **Edge value library**, token calculator options, voice input, Help Assistant, floating windows) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
@@ -196,7 +213,7 @@ Git-ignored runtime data: `ai_test_generator/.env`, `ai_test_generator/reports/*
 ├── ai_test_generator/          # Jira worker, AI helpers, qTest utils, CLI pipeline
 │   ├── .env.example            # copy to .env (never commit .env)
 │   ├── prompt/                 # generator + reviewer prompts
-│   ├── ai_helpers/             # test_generator_{gemini,grok,groq,claude,openai,codex,ollama}.py
+│   ├── ai_helpers/             # test_generator_{gemini,grok,groq,nvidia,claude,openai,codex,ollama}.py
 │   └── reports/                # run Excel, usage JSON, exports
 ├── backend/
 │   ├── app.py                  # FastAPI routes + static pages
@@ -397,7 +414,7 @@ Answers include **source citations** (README or FAQ heading) and, when relevant,
 
 **Answer engine**
 - **Use Generate provider** (default) — follows the provider saved on the current run after Generate. If the run has no saved provider (Repo or Excel open), it uses **Settings → Preferences → Default provider** (not a hardcoded Gemini). The badge shows *Generate provider · …* or *Settings default · …*.
-- A specific provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, or Ollama) — uses that provider’s key and model from Settings → AI Providers, via the same backend dispatch as Generate.
+- A specific provider (Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex, or Ollama) — uses that provider’s key and model from Settings → AI Providers, via the same backend dispatch as Generate.
 - **No AI — docs search only** — no model is called. `GET /api/help/search` returns ranked README / FAQ sections with snippets.
 
 `POST /api/help/chat` keyword-ranks the docs, sends the top excerpts to the chosen provider, and returns `{answer, sources, provider, model}`. Token usage is recorded as action **Help chat**. Provider errors use the existing error mapper (429 / 504 / 502).

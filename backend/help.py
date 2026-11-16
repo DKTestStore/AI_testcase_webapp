@@ -195,7 +195,7 @@ def _resolve_provider(raw: str, run=None, run_model: str = "") -> str:
     n = _norm_provider(p)
     if n not in KNOWN_PROVIDERS:
         raise ServiceError(
-            f"Unknown provider '{raw}'. Choose Gemini, Grok, Groq, Claude, OpenAI, Codex (OpenAI), Ollama, or No AI.",
+            f"Unknown provider '{raw}'. Choose Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex (OpenAI), Ollama, or No AI.",
             400,
         )
     return n

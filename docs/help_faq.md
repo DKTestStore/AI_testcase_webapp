@@ -6,7 +6,7 @@ Short answers for the in-app Help Assistant. These notes complement the README a
 
 1. On **Input**, fetch a **Jira Story**, paste **Local text**, or **Upload Excel** (Excel skips Generate).
 2. Optionally pick prompt templates on Input, or use **Record** to capture steps.
-3. On **Generate**, choose a **Provider** (Gemini, Grok, Groq, Claude, OpenAI, Codex, or Ollama) and Default / Custom prompt.
+3. On **Generate**, choose a **Provider** (Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex, or Ollama) and Default / Custom prompt.
 4. Optionally turn on **Also run AI Reviewer after generation**.
 5. When it finishes, continue to **Review** to edit, map acceptance criteria, generate test data, boost coverage, and export (including Gherkin).
 
@@ -53,6 +53,15 @@ If Groq returns HTTP 404, the Model ID in **Settings → AI Providers → Groq**
 The app default `llama-3.3-70b-versatile` (used when `GROQ_MODEL` is blank) is Enterprise-only for some accounts and will 404 on a free or developer key.
 
 Set `GROQ_MODEL` to a model listed in your Groq console, for example `openai/gpt-oss-120b` or `openai/gpt-oss-20b`. Enter the exact ID; do not treat example names as guaranteed.
+
+## NVIDIA provider
+
+**Settings → AI Providers → NVIDIA** is an OpenAI-compatible Catalog / NIM provider (default base URL `https://integrate.api.nvidia.com/v1`). Paste `NVIDIA_API_KEY`, or set it in `ai_test_generator/.env`. The default model is `nvidia/nemotron-3.5-super-vl-120b-a12b` when the Model ID is blank.
+
+Enable thinking is **off** by default. When on, reasoning tokens are discarded and only the final message content is used (better for JSON test cases). Seeded example prices are 0 — enter current rates on the **Models** tab. Leave Temperature blank to keep the usual Generate 0.2 / Review 0.0 defaults.
+
+Pick **NVIDIA** on Generate, in Review / Repo regenerate pickers, or as the default provider in Preferences. The app uses non-streaming text completions (no image parts).
+
 
 Free-tier keys also have per-minute and per-day limits. HTTP 429 is retried up to 2 times.
 
@@ -190,7 +199,7 @@ Generate, AI Review, Regenerate and Help show a live estimate before you call th
 
 ## Model registry and daily limits
 
-**Settings → AI Providers** has **Connection**, **Models**, and **Limits** sub-tabs on each provider (Gemini, Grok, Groq, Claude, OpenAI, Codex, Ollama). Connection keeps the API key and existing model ID fallback. **Settings → Preferences** keeps the existing default provider, Edge library, history, duplicate, **Auto Save** (default on), and calculator-option cards.
+**Settings → AI Providers** has **Connection**, **Models**, and **Limits** sub-tabs on each provider (Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex, Ollama). Connection keeps the API key and existing model ID fallback. **Settings → Preferences** keeps the existing default provider, Edge library, history, duplicate, **Auto Save** (default on), and calculator-option cards.
 
 - **Models** — several models for *that* provider, each with example input/output rates, a context limit, a default ★, and an enable toggle. Dropdowns on Generate, AI Review, Regenerate and Help list enabled models. The starred model is the default. Existing **Connection** model ID fields (and env) still work as a fallback. The registry is stored in the app settings database and is seeded from the model already configured for each provider; it does not change `.env`.
 - **Limits** — daily token & cost caps for *that* provider. Leave a field blank for no warning. When you set a limit, the Dashboard and Token Usage show a banner at 80% of that day’s usage for that provider. Click the banner to open the ledger already filtered to that provider.
