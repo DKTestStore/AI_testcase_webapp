@@ -132,7 +132,21 @@ Model IDs are free-text — enter the exact ID from each provider console. Do no
 
 **Enable thinking** is a Connection checkbox, **off by default**, so JSON test-case output stays reliable. When on, the request sends `chat_template_kwargs.enable_thinking=true`. The app still uses only `message.content`; `reasoning_content` (and any leaked `<think>…</think>` tags) is discarded. If thinking is on and the final content is empty, the call fails with a clear error — turn thinking off and retry.
 
-**Pricing:** the seeded registry row is `nvidia/nemotron-3.5-super-vl-120b-a12b` with example input/output rates of **0**. Enter current catalog rates on **Settings → AI Providers → NVIDIA → Models**. Rate-limited calls (HTTP 429) are retried up to **2** times, same as Groq.
+**Pricing:** seeded NVIDIA registry rows have example input/output rates of **0**, with the note “NVIDIA free trial — enter rates if billed”. Enter current catalog rates on **Settings → AI Providers → NVIDIA → Models**. Rate-limited calls (HTTP 429) are retried up to **2** times, same as Groq. Keep **Enable thinking** off for JSON test-case output.
+
+**Seeded models** (`nvidia/nemotron-3.5-super-vl-120b-a12b` stays the default ★):
+
+| Model ID | Context | Suggested use |
+|---|---|---|
+| `nvidia/nemotron-3.5-super-vl-120b-a12b` | 262,144 | Generate / Review (default) |
+| `mistralai/mistral-large-4-1t-a52b` | 262,144 | Generate / Review |
+| `z-ai/glm-5.3-flash` | 1,048,576 | Generate / Review |
+| `minimaxai/minimax-m3.1-flash` | 262,144 | Generate / Review |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | 1,048,576 | Regenerate / Help |
+| `nvidia/nemotron-3.5-bolt-e4b` | 65,536 | Regenerate / Help |
+| `openai/gpt-oss-20b` | 131,072 | Regenerate / Help |
+
+Existing saved registries **merge missing seed IDs on read** without changing your edited rates, enabled flags, or default. If you Remove a seeded model and Save, it is not re-added. An older Super row that still has the previous 131,072 context and $0 rates is updated to 262,144; a Super row you already edited is left alone.
 
 The example NVIDIA snippet uses streaming, vision parts, `seed`, and `parallel_tool_calls`. This app sends **text-only**, non-streaming Chat Completions (no image parts, no fixed seed).
 

@@ -40,6 +40,18 @@
   document.head.appendChild(st);
 
   const PAL = ["#dbe4ff", "#c7f0e0", "#ffe8c2", "#fde2e2", "#e4d7ff", "#ccecff", "#f5e6c8", "#e2f0c9"];
+  const TC_NVIDIA_NOTE = "NVIDIA free trial — enter rates if billed";
+  const TC_SEED_MODELS = {
+    nvidia: [
+      { id: "nvidia/nemotron-3.5-super-vl-120b-a12b", inn: 0, out: 0, ctx: 262144, default: true, enabled: true, note: TC_NVIDIA_NOTE },
+      { id: "mistralai/mistral-large-4-1t-a52b", inn: 0, out: 0, ctx: 262144, enabled: true, note: TC_NVIDIA_NOTE },
+      { id: "z-ai/glm-5.3-flash", inn: 0, out: 0, ctx: 1048576, enabled: true, note: TC_NVIDIA_NOTE },
+      { id: "minimaxai/minimax-m3.1-flash", inn: 0, out: 0, ctx: 262144, enabled: true, note: TC_NVIDIA_NOTE },
+      { id: "nvidia/nemotron-3.5-lightning-30b-a3b", inn: 0, out: 0, ctx: 1048576, enabled: true, note: TC_NVIDIA_NOTE },
+      { id: "nvidia/nemotron-3.5-bolt-e4b", inn: 0, out: 0, ctx: 65536, enabled: true, note: TC_NVIDIA_NOTE },
+      { id: "openai/gpt-oss-20b", inn: 0, out: 0, ctx: 131072, enabled: true, note: TC_NVIDIA_NOTE }
+    ]
+  };
 
   async function tcPrefs(force) {
     if (!force && window._prefs && _prefs.token_registry) return _prefs;
@@ -58,21 +70,33 @@
     pid = String(pid || "").toLowerCase();
     return tcRegistry().find((p) => p.id === pid) || null;
   }
+  function tcSeedModels(pid) {
+    return TC_SEED_MODELS[String(pid || "").toLowerCase()] || [];
+  }
   function tcEnabled(pid) {
     const p = tcProvider(pid);
-    return ((p && p.models) || []).filter((m) => m && m.enabled !== false);
+    const models = ((p && p.models) || []).filter((m) => m && m.enabled !== false);
+    if (models.length) return models;
+    // Fallback only when the provider is missing or has no rows yet — not when the
+    // user cleared the list (empty models + a removed list).
+    if (p && Array.isArray(p.models) && (p.removed || []).length) return [];
+    const seed = tcSeedModels(pid);
+    return seed.filter((m) => m && m.enabled !== false);
   }
   function tcDefaultId(pid) {
     const p = tcProvider(pid);
-    const models = (p && p.models) || [];
-    const star = models.find((m) => m.default && m.enabled !== false) || models.find((m) => m.enabled !== false);
+    let models = (p && p.models) || [];
+    if (!models.length && !(p && (p.removed || []).length)) models = tcSeedModels(pid);
+    const star = models.find((m) => (m.default || m.star) && m.enabled !== false) || models.find((m) => m.enabled !== false);
     return star ? star.id : "";
   }
   function tcModelOpts(pid, selected, all) {
-    const list = all ? ((tcProvider(pid) || {}).models || []) : tcEnabled(pid);
+    const p = tcProvider(pid);
+    let list = all ? ((p && p.models) || []) : tcEnabled(pid);
+    if (all && !list.length && !(p && (p.removed || []).length)) list = tcSeedModels(pid);
     const sel = selected || tcDefaultId(pid);
     if (!list.length) return `<option value="">(Settings / env default)</option>`;
-    return list.map((m) => `<option value="${esc(m.id)}" ${m.id === sel ? "selected" : ""}>${esc(m.id)}${m.default ? " ★" : ""}${m.enabled === false ? " (off)" : ""}</option>`).join("");
+    return list.map((m) => `<option value="${esc(m.id)}" ${m.id === sel ? "selected" : ""}>${esc(m.id)}${(m.default || m.star) ? " ★" : ""}${m.enabled === false ? " (off)" : ""}</option>`).join("");
   }
   function tcSelectHtml(pid, mid, pId, mId) {
     return `<select id="${pId}"></select>`.replace("</select>", "") && "" +
@@ -238,7 +262,7 @@
           try { j = await tcEstimate({ provider: p.id, model_name: m.id, text, expected_output: expected }); }
           catch (e) { j = { error: e.message }; }
           const over = j.fits === false;
-          rows.push(`<tr class="${over ? "over" : ""}"><td>${esc(m.id)}${m.default ? " ★" : ""}</td>
+          rows.push(`<tr class="${over ? "over" : ""}"><td>${esc(m.id)}${(m.default || m.star) ? " ★" : ""}</td>
             <td class="tu-r">${fmt(j.est_input || 0)}</td><td class="tu-r">${fmt(j.est_output || 0)}</td>
             <td class="tu-r">${tcMoney(j.est_cost)}</td><td>${j.ctx ? fmt(j.ctx) : "—"}</td>
             <td class="${over ? "over" : "ok"}">${j.ctx ? (over ? "Over limit" : "Fits " + j.fit_pct + "%") : "—"}</td>
@@ -271,6 +295,7 @@
     $$("tr[data-i]", el).forEach((tr) => {
       const idv = (($("[data-f=id]", tr) || {}).value || "").trim();
       if (!idv) return;
+      const note = (($("[data-f=note]", tr) || {}).value || "").trim();
       models.push({
         id: idv,
         inn: +$("[data-f=inn]", tr).value || 0,
@@ -278,18 +303,20 @@
         ctx: +$("[data-f=ctx]", tr).value || 0,
         default: $("[data-f=default]", tr).checked,
         enabled: $("[data-f=enabled]", tr).checked,
+        ...(note ? { note: note } : {}),
       });
     });
     return models;
   }
   function tokenCalcModelRow(pid, m, i) {
     m = m || {};
+    const note = m.note || "";
     return `<tr data-p="${esc(pid)}" data-i="${i}">
-      <td><input type="text" data-f="id" value="${esc(m.id || "")}" placeholder="model-id"></td>
+      <td><input type="text" data-f="id" value="${esc(m.id || "")}" placeholder="model-id">${note ? `<div class="sub" style="margin:4px 0 0">${esc(note)}</div><input type="hidden" data-f="note" value="${esc(note)}">` : ""}</td>
       <td><input type="number" data-f="inn" min="0" step="0.01" value="${m.inn ?? ""}"></td>
       <td><input type="number" data-f="out" min="0" step="0.01" value="${m.out ?? ""}"></td>
       <td><input type="number" data-f="ctx" min="0" step="1" value="${m.ctx ?? ""}"></td>
-      <td style="text-align:center"><input type="radio" name="tcDef-${esc(pid)}" data-f="default" ${m.default ? "checked" : ""}></td>
+      <td style="text-align:center"><input type="radio" name="tcDef-${esc(pid)}" data-f="default" ${(m.default || m.star) ? "checked" : ""}></td>
       <td style="text-align:center"><input type="checkbox" data-f="enabled" ${m.enabled !== false ? "checked" : ""}></td>
       <td><button type="button" class="btn g sm" data-act="rm">Remove</button></td>
     </tr>`;
@@ -299,8 +326,10 @@
     prefs = prefs || window._prefs || {};
     const prov = ((prefs.token_registry && prefs.token_registry.providers) || []).find((p) => p.id === pid)
       || { id: pid, name: pid, models: [] };
-    const models = prov.models || [];
-    modelsHost.innerHTML = `<p class="sub" style="margin:0 0 10px">Models for <b>${esc(prov.name || pid)}</b> only. The starred model is the default in Generate, Review, Regenerate and Help. Disabled models stay here but are hidden from dropdowns. Example prices — edit as needed. Seeded from the Connection model ID — does not change <span class="mono">.env</span>.</p>
+    let models = prov.models || [];
+    if (!models.length && !(prov.removed || []).length && tcSeedModels(pid).length) models = tcSeedModels(pid);
+    const nvidiaHint = pid === "nvidia" ? " Seeded NVIDIA catalog prices are 0 (NVIDIA free trial — enter rates if billed). Nemotron Super 120B stays the default." : "";
+    modelsHost.innerHTML = `<p class="sub" style="margin:0 0 10px">Models for <b>${esc(prov.name || pid)}</b> only. The starred model is the default in Generate, Review, Regenerate and Help. Disabled models stay here but are hidden from dropdowns. Example prices — edit as needed. Seeded from the Connection model ID — does not change <span class="mono">.env</span>.${nvidiaHint}</p>
       <div class="tc-reg"><table><tr><th>Model id</th><th>$ / 1M in</th><th>$ / 1M out</th><th>Context</th><th>Default</th><th>On</th><th></th></tr>${models.map((m, i) => tokenCalcModelRow(pid, m, i)).join("")}</table></div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
         <button type="button" class="btn g sm" data-act="add">+ Add model</button>
