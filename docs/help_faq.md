@@ -86,7 +86,7 @@ The Review row button is labelled **Regenerate** (the provider name is inside th
 
 ### Auto Save
 
-**Settings → Preferences → Auto Save** is on by default. Edits in the Review step, Requirements, and the Test Case Repo editor are saved automatically about 1.5 seconds after you stop typing, using the existing save endpoints. The indicator reads **Saving…**, **All changes saved**, or **Save failed – retry** (click to retry). Manual Save buttons still work. Autosave waits when a title is empty or a Jira key is only partly typed, and it flushes when you leave the page. In the Repo editor, autosave updates the live case in place and does not create a new version on every save; use **Save draft** or **Save as Ready** when you want a new version.
+**Settings → Preferences → Auto Save** is on by default. Edits in the Review step, Requirements, the Test Case Repo editor, and the Automation Script editor are saved automatically about 1.5 seconds after you stop typing, using the existing save endpoints. The indicator reads **Saving…**, **All changes saved**, or **Save failed – retry** (click to retry). Manual Save buttons still work. Autosave waits when a title is empty or a Jira key is only partly typed, and it flushes when you leave the page. In the Repo editor, autosave updates the live case in place and does not create a new version on every save; use **Save draft** or **Save as Ready** when you want a new version. In the Automation Script editor, autosave likewise updates the working copy; use **Save as new version** for a snapshot.
 
 This is separate from inline editing, AC mapping, duplicate detection (local, no AI call), and the local quality score / Improve with AI tools on the Review toolbar.
 
@@ -95,12 +95,28 @@ This is separate from inline editing, AC mapping, duplicate detection (local, no
 The **Review** step (step 3) is where you work with generated (or uploaded) cases before export or upload.
 
 - Edit names, descriptions, preconditions and steps inline. Set priority, AC tags and review status.
-- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (opens the shared provider/model picker, then Confirm), Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin).
+- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (opens the shared provider/model picker, then Confirm), **Generate Automation Script**, Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin). A **Scripts (n)** badge on each case opens the Automation Scripts library filtered to that id.
 - A provider badge shows the Generate provider, or the Settings default when the run has none. Coverage chips count Positive / Negative / Boundary / Security cases. Each step has a **Test Data** column (edit, regenerate, or ⚡ insert from the Edge library).
 - Additive tools also include Edit mode, AC coverage (List / Matrix), type tags, version history and a local quality score.
 - When you are happy, **Save to Test Case Repo** or **Execute now**, or continue to **qTest Upload**. Test data is appended into the qTest step description; the six-column layout is unchanged.
 
 Unsaved edits are guarded. A step unlocks once the previous one has data.
+
+
+## Generate Automation Script
+
+From **Review** (action row or bulk bar) or the **Test Case Repo** (bulk bar or per-row menu), **Generate Automation Script** builds runnable tests for the selected cases.
+
+1. Choose **Language** (one, by default), **Type** (UI / API / Database / Mobile, several at once), and **Framework**. Grey chips are incompatible with the current language or types — hover for the reason. Catalogue and selection mode are under **Settings → Script options**.
+2. Fill the context cards (base URLs, auth, database placeholder, mobile device) and optional **Additional context**. The token estimate includes this text.
+3. Pick a provider and model with the shared AI picker, then Generate. Optional: reuse locators from an accessible Recorder session.
+4. Review files, mapping and warnings. Copy, download one file or a `.zip`, or **Save to Script Library** (new script, or overwrite an existing one as a new version). **Mirror Test Case Repo folders** copies the current repo folder path into the script library.
+
+Open **Automation Scripts** in the sidebar to browse folders, edit files (Auto Save keeps the working copy; **Save as new version** snapshots history), or Regenerate from linked cases.
+
+Robot Framework is its own language (`.robot` files), not a Python framework. Record’s no-AI Playwright export on the Input step is unchanged.
+
+Deleting a language, type, or framework in Settings hides it from Generate; scripts already saved keep the value they stored.
 
 ## Voice input limits
 

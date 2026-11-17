@@ -20,19 +20,20 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 8. [Project structure & data files](#5-project-structure--data-files)
 9. [API overview](#api-overview)
 10. [Test Case Repo & Test Runs](#test-case-repo--test-runs)
-11. [Projects & Requirement Repo](#projects--requirement-repo)
-12. [Dashboard](#dashboard)
-13. [Token Usage & calculator](#token-usage)
-14. [Prompt templates](#prompt-templates-multi-select)
-15. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
-16. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
-17. [Voice input](#voice-input)
-18. [Help Assistant](#help-assistant)
-19. [Floating windows](#floating-windows)
-20. [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin)
-21. [Troubleshooting](#troubleshooting)
-22. [Testing notes](#6-testing-notes)
-23. [Original CLI](#original-cli-pipeline)
+11. [Automation Scripts](#automation-scripts)
+12. [Projects & Requirement Repo](#projects--requirement-repo)
+13. [Dashboard](#dashboard)
+14. [Token Usage & calculator](#token-usage)
+15. [Prompt templates](#prompt-templates-multi-select)
+16. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
+17. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
+18. [Voice input](#voice-input)
+19. [Help Assistant](#help-assistant)
+20. [Floating windows](#floating-windows)
+21. [Test data, coverage and Gherkin](#test-data-coverage-and-gherkin)
+22. [Troubleshooting](#troubleshooting)
+23. [Testing notes](#6-testing-notes)
+24. [Original CLI](#original-cli-pipeline)
 
 ---
 
@@ -159,12 +160,13 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit, 
 | Area | What you get |
 |---|---|
 | Multi-provider AI | Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex, Ollama — choose provider **and model** on **Generate**; configure keys / a fallback model ID on **Settings → AI Providers** (Connection), and a per-provider model registry (multiple models, rates, context, default, enable) plus daily token/cost limits on that same provider’s **Models** and **Limits** sub-tabs |
-| Settings UI | Tabs: **AI Providers** (each provider has **Connection** / **Models** / **Limits** sub-tabs) / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, **Auto Save** (default on), **default Generate provider**, **Edge value library**, token calculator options, voice input, Help Assistant, floating windows) |
+| Settings UI | Tabs: **AI Providers** (each provider has **Connection** / **Models** / **Limits** sub-tabs) / **Integrations** (Jira, qTest, Zephyr Scale) / **Preferences** (history limit, duplicate threshold, **Auto Save** (default on), **default Generate provider**, **Edge value library**, token calculator options, voice input, Help Assistant, floating windows, **automation script defaults**) / **Script options** (languages, types, frameworks, selection mode, reset to defaults) |
 | Projects + Requirement Repo | Project switcher; Requirements (REQ-####) with create / edit / duplicate / archive / permanent-delete; folder tree (new / rename / subfolder / delete with move); Jira import; link/unlink cases; auto-link by `case.story`; Generate-from-requirement; traceability matrix |
 | Test Case Repo | Folders, versions, AI review, import/export, case drawer/full page |
+| Automation Scripts | Generate runnable UI / API / Database / Mobile scripts from reviewed or repo cases (Language, Type, Framework chips, context cards, composed token estimate, shared AI picker). Save to a folder library with versions, edit in a textarea editor (Auto Save), download a file or `.zip`. Manage languages / types / frameworks on **Settings → Script options**. |
 | Test Runs | Cycles, step execution, attachments, results history |
 | Dashboard | Totals **exclude Archived** cases; charts; cycle / story filters; token tiles (Tokens, Estimated cost, Today, By provider — click through to a pre-filtered ledger); near-limit banner at 80% of a user-set daily cap |
-| Token usage | Per-provider ledger (Mode, provider, model, action, date filters; pagination 10/25/50/100; delete / delete-older; Export CSV). **Calculator** tab (`#tokens/calculator`) counts tokens (coloured tokens, Token IDs, compare enabled models, over-limit). New rows store estimated vs actual tokens, cost, and `rate_source` (`model` or `legacy_global`); older rows stay on workspace-wide global rates. Dashboard AI token totals still use those global rates. Estimates appear on Generate, AI Review, Regenerate and Help; Test data / Boost show **No AI call**. Gemini daily quota file is separate and is not reset by deletes. |
+| Token usage | Per-provider ledger (Mode, provider, model, action, date filters; pagination 10/25/50/100; delete / delete-older; Export CSV). **Calculator** tab (`#tokens/calculator`) counts tokens (coloured tokens, Token IDs, compare enabled models, over-limit). New rows store estimated vs actual tokens, cost, and `rate_source` (`model` or `legacy_global`); older rows stay on workspace-wide global rates. Dashboard AI token totals still use those global rates. Estimates appear on Generate, AI Review, Regenerate, Automation script and Help; Test data / Boost show **No AI call**. Gemini daily quota file is separate and is not reset by deletes. |
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
@@ -178,11 +180,11 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit, 
 
 ## 2. Workflow
 
-The sidebar is grouped (no section captions): **Dashboard** and **Setup checklist**; workflow steps 1–4 (**Input**, **Generate**, **Review**, **qTest Upload**) plus **Run history**; **Requirements**, **Test Case Repo**, **Test Runs**; **Prompt templates**, **Token Usage**, **Settings**. A step unlocks once the previous one has data. Projects / Traceability stay hidden (reachable from the Requirements area). “NEW” badges are not shown; the Run history count badge remains. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count. The project switcher stays under the brand, with Lucide icons on every visible item (workflow steps also show numbered badges 1–4).
+The sidebar is grouped (no section captions): **Dashboard** and **Setup checklist**; workflow steps 1–4 (**Input**, **Generate**, **Review**, **qTest Upload**) plus **Run history**; **Requirements**, **Test Case Repo**, **Automation Scripts**, **Test Runs**; **Prompt templates**, **Token Usage**, **Settings**. A step unlocks once the previous one has data. Projects / Traceability stay hidden (reachable from the Requirements area). “NEW” badges are not shown; the Run history count badge remains. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count. The project switcher stays under the brand, with Lucide icons on every visible item (workflow steps also show numbered badges 1–4).
 
 1. **Input:** *Jira Story* (fetch), *Local text*, or *Upload Excel* (skips Generate). Optional **Record**.
 2. **Generate:** pick **Provider** + Default / Custom prompt (or templates from Input). Optional AI Reviewer. Token usage card.
-3. **Review:** edit, map ACs, generate test data, boost coverage, save Excel; **Save to Test Case Repo** / **Execute now**. The Review badge shows the Generate provider (or the Settings default when a Repo / Excel run has none).
+3. **Review:** edit, map ACs, generate test data, boost coverage, save Excel; **Save to Test Case Repo** / **Execute now**; **Generate Automation Script** (also on the bulk bar and in the Test Case Repo). The Review badge shows the Generate provider (or the Settings default when a Repo / Excel run has none).
 4. **qTest Upload:** Preview payload → Confirm Upload; **RTM** tab for Story → AC → TC → qTest IDs. Test data is appended into each step description so it reaches qTest without a new column.
 
 **＋ New run** starts fresh (previous run stays in history). **Log out** clears only the session.
@@ -276,6 +278,7 @@ All `/api/*` routes (except health/session start as applicable) require the sess
 | Settings / prompts / tokens | `GET\|PUT /api/settings`, `GET\|PUT /api/settings/prefs` (default provider, Edge library, model registry, calculator prefs, per-provider daily limits), `GET\|PUT /api/prompt/default`, `/api/templates*`, `GET /api/tokens` (paged; also `provider` + `action` filters), `GET /api/tokens/export.csv` (includes provider, estimate, cost, `rate_source`), `POST /api/tokens/delete`, `POST /api/tokens/estimate`, `POST /api/tokens/count`, `/api/usage` |
 | History / batch | `/api/history*`, `/api/batch*` |
 | Test Case Repo | `/api/repo*` |
+| Automation Scripts | `/api/automation/*` (folders, scripts, versions, download, counts, generate, options, prefs, recordings). Composed token estimate: `POST /api/tokens/estimate` with `compose=true` and `kind=automation` |
 | Test Runs | `/api/runs*`, `/api/attachments*` |
 | Projects / Requirements | `/api/projects*`, `/api/requirements*` (incl. `traceability`, `import`, `auto-link`, `generate-context`, `delete-check`, `duplicate`, `bulk`, folder `delete-check`) |
 | Dashboard | `GET /api/dashboard` |
@@ -296,6 +299,24 @@ IDs: cases `TC-####`, cycles `CY-####`.
 
 ---
 
+
+## Automation Scripts
+
+Additive: generate and store automation scripts from test cases without changing the Generate step 2 layout or Record’s no-AI export.
+
+**Generate.** On **Review** (action row and bulk bar) and on the **Test Case Repo** (bulk bar and per-row menu), **Generate Automation Script** opens a modal. Pick a **Language** (single chip by default), one or more **Types** (UI, API, Database, Mobile), and compatible **Frameworks** (incompatible chips are greyed with a hover hint). Context cards appear for the selected types (UI base URL; API base URL + auth; database type + connection placeholder; mobile platform/device/app). Optional **Page Object Model**, **Include assertions**, **One file per test**, a Recorder-locator source if a recording is accessible, and **Additional context**. A composed token estimate and the shared **AI picker** sit in the footer. The prompt includes each framework’s AI prompt hint and calls the same provider abstraction as Review / Regenerate. The model is asked for JSON `{files, mapping, warnings}` (parsing is tolerant of fences and minor shape differences).
+
+Built-in languages: Java, Python, .NET (C#), JavaScript, TypeScript, and Robot Framework (its own language, `.robot` files). Frameworks include Playwright, Selenium, Rest Assured, Requests, RestSharp/HttpClient, Axios/SuperTest, Appium, WebdriverIO, JDBC, SQLAlchemy/pyodbc, ADO.NET/Dapper, pg/mysql2, runners (TestNG, JUnit 5, pytest, NUnit, xUnit, MSTest, Jest, Mocha), Cucumber / pytest-bdd, and Robot libraries (SeleniumLibrary, Browser, RequestsLibrary, AppiumLibrary, DatabaseLibrary).
+
+**Result.** File tabs grouped by folder, mapping and warnings, **Copy**, **Download file**, **Download .zip**, and **Save to Script Library** (name, folder picker, tags, new script or overwrite as a new version, **Mirror Test Case Repo folders**).
+
+**Library** (`#scripts`). Folder tree like the Test Case Repo (new / rename / move / delete, drag scripts onto folders, counts, breadcrumbs). List with search and language filter. Row actions: Open, Download, Duplicate, Regenerate, Delete. The editor has file tabs, a textarea, Auto Save (updates the working copy; does **not** create a version on each tick), notes, linked cases, version history with a simple line diff, and **Save as new version**. A **Scripts (n)** badge on Review cards and in the Repo table links here, filtered by test case id.
+
+**Settings.** **Script options** tab: CRUD for Languages / Types / Frameworks, enable, reorder, set default language, selection mode per group, framework compatibility chips and prompt hint, delete confirm (saved scripts keep their stored value), **Reset to defaults**. **Preferences** has an **Automation script defaults** card (default language/types/frameworks, base URLs, output folder hint). Saving uses the existing footer **Save changes** / unsaved tracking. Options are stored in SQLite `app_settings` (not `.env`) and merged with built-in defaults on read.
+
+**Data.** Tables `script_folders`, `automation_scripts`, and `script_versions` are added by Alembic revision `005_automation_scripts`. The app runs `alembic upgrade head` on startup; you can also run `alembic upgrade head` from the repo root if you manage the database yourself. IDs: folders `SF-####`, scripts `AS-####`. Downloads use Python’s standard-library `zipfile`. No new required Python or JavaScript dependencies.
+
+---
 ## Projects & Requirement Repo
 
 Additive: **Projects** scope Requirements ↔ linked Test Cases ↔ cycles. Cases keep free-text `story`.

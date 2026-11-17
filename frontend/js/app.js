@@ -72,7 +72,7 @@ function renderNav() {
   $$("#nav a").forEach((a) => {
     const v = a.dataset.view;
     const reqViews = ["requirements", "projects", "trace"];
-    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")) || (v === "tokens" && String(S.view).split("?")[0].startsWith("tokens")) || (v === "requirements" && reqViews.includes(S.view)));
+    a.classList.toggle("a", v === S.view || (v === "dashboard" && String(S.view).startsWith("dashboard/")) || (v === "tokens" && String(S.view).split("?")[0].startsWith("tokens")) || (v === "requirements" && reqViews.includes(S.view)) || (v === "scripts" && String(S.view).split("?")[0].startsWith("scripts")));
     a.classList.toggle("done", STEPS.includes(v) && stepDone(v));
     a.classList.toggle("locked", STEPS.includes(v) && !stepUnlocked(v));
   });
@@ -110,7 +110,7 @@ function render() {
     return window.viewRequirements ? viewRequirements(v) : viewInput(v);
   }
   const viewKey = String(S.view || "").split("?")[0].split("/")[0];
-  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), requirements: (v) => viewRequirements(v), projects: (v) => viewProjects(v), trace: (v) => viewTraceability(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings }[viewKey] || viewInput)(v);
+  ({ dashboard: (v) => viewDashboard(v), history: (v) => viewHistory(v), compare: (v) => viewCompare(v), tokens: (v) => viewTokens(v), prompts: (v) => viewPrompts(v), repo: (v) => viewRepo(v), runs: (v) => viewRuns(v), requirements: (v) => viewRequirements(v), projects: (v) => viewProjects(v), trace: (v) => viewTraceability(v), setup: viewSetup, input: viewInput, generate: viewGenerate, review: viewReview, qtest: viewQtest, settings: viewSettings, scripts: (v) => window.viewScripts ? viewScripts(v) : viewInput(v) }[viewKey] || viewInput)(v);
 }
 
 
@@ -612,6 +612,7 @@ function setIsDirty() {
   if (hl && SET_ST.prefs.hist !== "" && hl.value !== SET_ST.prefs.hist) dirty = true;
   if (dt && SET_ST.prefs.dup !== "" && dt.value !== SET_ST.prefs.dup) dirty = true;
   if (typeof window.tokenCalcIsDirty === "function" && window.tokenCalcIsDirty($("#sbody"))) dirty = true;
+  if (typeof window.asScriptOptionsDirty === "function" && window.asScriptOptionsDirty()) dirty = true;
   return dirty;
 }
 
@@ -727,6 +728,7 @@ async function viewSettings(v) {
       <button type="button" role="tab" data-tab="providers" class="a" aria-selected="true">AI Providers</button>
       <button type="button" role="tab" data-tab="integrations" aria-selected="false">Integrations</button>
       <button type="button" role="tab" data-tab="preferences" aria-selected="false">Preferences</button>
+      <button type="button" role="tab" data-tab="script-options" aria-selected="false">Script options</button>
     </div>
     <div class="set-pane a" data-pane="providers" role="tabpanel">
       <div class="set-ai">
@@ -748,8 +750,13 @@ async function viewSettings(v) {
         <div class="sub" style="margin:8px 0 0">Test cases at or above this similarity are flagged as possible duplicates (50–99, default 80; 90%+ shown in red). Checked locally — no AI call.</div></div>
       <div class="card" id="asCard" style="margin-top:14px"><h3>💾 Auto Save</h3>
         <label class="row" style="align-items:center;gap:10px;font-weight:600"><input id="asToggle" type="checkbox" style="width:auto"> Enable Auto Save</label>
-        <div class="sub" style="margin:8px 0 0">When on (the default), edits in the Review step, Requirements, and the Test Case Repo editor are saved automatically about 1.5 seconds after you stop typing. Manual Save buttons still work. Repo autosave updates the live case in place and does not create a new version on each tick — use Save draft / Save as Ready for that. Mid-typing invalid states (empty title, incomplete Jira key) are skipped until the form is valid.</div>
+        <div class="sub" style="margin:8px 0 0">When on (the default), edits in the Review step, Requirements, the Test Case Repo editor, and the Automation Script editor are saved automatically about 1.5 seconds after you stop typing. Manual Save buttons still work. Repo autosave updates the live case in place and does not create a new version on each tick — use Save draft / Save as Ready for that. Mid-typing invalid states (empty title, incomplete Jira key) are skipped until the form is valid.</div>
         <div class="sub" id="asHint" style="margin:8px 0 0"></div></div>
+    </div>
+    <div class="set-pane" data-pane="script-options" role="tabpanel" hidden>
+      <div class="card"><h3>Script options</h3>
+        <div class="sub" style="margin:0 0 10px">Languages, types, and frameworks shown in Generate Automation Script. Changes are saved with the footer <b>Save changes</b> button.</div>
+        <div id="asScriptOptions"></div></div>
     </div>
     <div class="set-foot">
       <span id="setDirty" class="clean">All changes saved</span>
@@ -764,6 +771,8 @@ async function viewSettings(v) {
   if (window.winmgrRenderSettings) winmgrRenderSettings($('.set-pane[data-pane="preferences"]')); // Floating windows card (winmgr.js)
   if (window.testdataRenderSettings) testdataRenderSettings($('.set-pane[data-pane="preferences"]')); // Default provider + Edge library
   if (window.tokenCalcRenderSettings) tokenCalcRenderSettings($('.set-pane[data-pane="preferences"]')); // Model registry + daily limits
+  if (window.asRenderPrefsCard) asRenderPrefsCard($('.set-pane[data-pane="preferences"]'));
+  if (window.asRenderScriptOptions) asRenderScriptOptions($("#asScriptOptions"));
   if (SET_ST.tab && SET_ST.tab !== "providers") {
     setShowTab(SET_ST.tab);
     $$(".set-tabs button").forEach((x) => x.setAttribute("aria-selected", x.dataset.tab === SET_ST.tab ? "true" : "false"));
@@ -855,6 +864,9 @@ async function viewSettings(v) {
     if (typeof window.tokenCalcSaveRegistry === "function") {
       await window.tokenCalcSaveRegistry($("#sbody"));
     }
+    if (typeof window.asSaveScriptOptions === "function") {
+      await window.asSaveScriptOptions();
+    }
     const r = await api("/api/settings", { method: "PUT", body: { values } });
     toast(`Saved (${r.changed.length} changed)`);
     // Reload to refresh masks / set pills; preserve current tab + provider
@@ -882,7 +894,7 @@ async function viewSettings(v) {
 
 // ------------------------------------------------------------------ modal / logout / new run
 function modal(html) { $("#modal").innerHTML = html; $("#modalBg").classList.add("open"); }
-function closeModal() { $("#modalBg").classList.remove("open"); }
+function closeModal() { const m = $("#modal"); if (m) m.classList.remove("wide", "as-wide"); $("#modalBg").classList.remove("open"); }
 function unsavedSummary() {
   const r = S.run || {}; const parts = [];
   if (S.localDirty) parts.push("unsaved edits in the Review table");

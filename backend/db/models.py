@@ -266,3 +266,56 @@ class HistorySeq(Base):
     key: Mapped[str] = mapped_column(String(16), primary_key=True)
     day: Mapped[str] = mapped_column(String(8), primary_key=True)
     n: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ScriptFolder(Base):
+    """Folder tree for the Automation Script library (parent NULL = root)."""
+    __tablename__ = "script_folders"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    parent: Mapped[Optional[str]] = mapped_column(
+        String(32), ForeignKey("script_folders.id"), nullable=True
+    )
+    project: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class AutomationScript(Base):
+    """Saved automation script (working copy in files; version is the current number)."""
+    __tablename__ = "automation_scripts"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    folder_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    project: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    linked_ids: Mapped[Any] = mapped_column(JSON, nullable=False)
+    language: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    types: Mapped[Any] = mapped_column(JSON, nullable=False)
+    frameworks: Mapped[Any] = mapped_column(JSON, nullable=False)
+    model: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    tags: Mapped[Any] = mapped_column(JSON, nullable=False)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    files: Mapped[Any] = mapped_column(JSON, nullable=False)
+    mapping: Mapped[Any] = mapped_column(JSON, nullable=False)
+    warnings: Mapped[Any] = mapped_column(JSON, nullable=False)
+    created: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    updated: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+
+
+class ScriptVersion(Base):
+    """Immutable snapshot of a script's files, created by 'Save as new version'."""
+    __tablename__ = "script_versions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    script_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("automation_scripts.id"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    files: Mapped[Any] = mapped_column(JSON, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    created: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+
+    __table_args__ = (UniqueConstraint("script_id", "version", name="uq_script_version"),)

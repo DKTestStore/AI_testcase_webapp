@@ -291,6 +291,16 @@ def set_autosave(value) -> bool:
     return on
 
 
+def _script_options_catalogue() -> dict:
+    from . import script_options as _so
+    return _so.get_catalogue()
+
+
+def _automation_prefs() -> dict:
+    from . import script_options as _so
+    return _so.get_automation_prefs()
+
+
 def get_prefs() -> dict:
     from . import token_registry as _reg
     return {
@@ -302,6 +312,8 @@ def get_prefs() -> dict:
         "calc_prefs": _reg.get_calc_prefs(),
         "token_limits": _reg.get_limits(),
         "autosave": get_autosave(),
+        "script_options": _script_options_catalogue(),
+        "automation_prefs": _automation_prefs(),
     }
 
 
@@ -320,4 +332,10 @@ def update_prefs(data) -> dict:
         _reg.set_limits(data.get("token_limits") or {})
     if "autosave" in data:
         set_autosave(data.get("autosave"))
+    if "script_options" in data:
+        from . import script_options as _so
+        _so.set_catalogue(data.get("script_options") or {})
+    if "automation_prefs" in data:
+        from . import script_options as _so
+        _so.set_automation_prefs(data.get("automation_prefs") or {})
     return get_prefs()
