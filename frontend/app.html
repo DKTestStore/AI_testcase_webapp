@@ -4,18 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI TestCase Generator</title>
-<link rel="stylesheet" href="/static/css/app.css?v=53">
-<link rel="stylesheet" href="/static/css/search.css?v=53">
-<link rel="stylesheet" href="/static/css/rt.css?v=53">
-<link rel="stylesheet" href="/static/css/rec.css?v=53">
-<link rel="stylesheet" href="/static/css/repo.css?v=53">
-<link rel="stylesheet" href="/static/css/casepreview.css?v=53">
-<link rel="stylesheet" href="/static/css/dashboard.css?v=53">
-<link rel="stylesheet" href="/static/css/requirements.css?v=53">
-<link rel="stylesheet" href="/static/css/voice.css?v=53">
-<link rel="stylesheet" href="/static/css/help.css?v=53">
-<link rel="stylesheet" href="/static/css/winmgr.css?v=53">
-<link rel="stylesheet" href="/static/css/testdata.css?v=53">
+<link rel="stylesheet" href="/static/css/app.css?v=54">
+<link rel="stylesheet" href="/static/css/search.css?v=54">
+<link rel="stylesheet" href="/static/css/rt.css?v=54">
+<link rel="stylesheet" href="/static/css/rec.css?v=54">
+<link rel="stylesheet" href="/static/css/repo.css?v=54">
+<link rel="stylesheet" href="/static/css/casepreview.css?v=54">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=54">
+<link rel="stylesheet" href="/static/css/requirements.css?v=54">
+<link rel="stylesheet" href="/static/css/voice.css?v=54">
+<link rel="stylesheet" href="/static/css/help.css?v=54">
+<link rel="stylesheet" href="/static/css/winmgr.css?v=54">
+<link rel="stylesheet" href="/static/css/testdata.css?v=54">
+<link rel="stylesheet" href="/static/css/automation.css?v=54">
 </head>
 <body>
 <!-- Lucide Icons (ISC License) — https://lucide.dev/license
@@ -49,6 +50,10 @@
   <symbol id="ico-runs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" />
       <circle cx="12" cy="12" r="10" />
+  </symbol>
+  <symbol id="ico-scripts" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="16 18 22 12 16 6" />
+    <polyline points="8 6 2 12 8 18" />
   </symbol>
   <symbol id="ico-prompts" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
@@ -145,6 +150,7 @@
     <a data-view="projects" style="display:none">Projects</a>
     <a data-view="trace" style="display:none">Traceability</a>
     <a data-view="repo"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-repo"></use></svg></span>Test Case Repo</a>
+    <a data-view="scripts"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-scripts"></use></svg></span>Automation Scripts</a>
     <a data-view="runs"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-runs"></use></svg></span>Test Runs</a>
     <div class="sep"></div>
     <a data-view="prompts"><span class="num num-ico" aria-hidden="true"><svg class="nav-ico"><use href="#ico-prompts"></use></svg></span>Prompt templates</a>
@@ -171,31 +177,32 @@
 
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
-<script src="/static/js/review.js?v=53"></script>
-<script src="/static/js/regen.js?v=53"></script>
-<script src="/static/js/dup.js?v=53"></script>
-<script src="/static/js/cov.js?v=53"></script>
-<script src="/static/js/excel_upload.js?v=53"></script>
-<script src="/static/js/app.js?v=53"></script>
-<script src="/static/js/autosave.js?v=53"></script>
-<script src="/static/js/history.js?v=53"></script>
-<script src="/static/js/batch.js?v=53"></script>
-<script src="/static/js/cmp.js?v=53"></script>
-<script src="/static/js/tokens.js?v=53"></script>
-<script src="/static/js/search.js?v=53"></script>
-<script src="/static/js/prompts.js?v=53"></script>
-<script src="/static/js/rt.js?v=53"></script>
-<script src="/static/js/rec.js?v=53"></script>
-<script src="/static/js/repo.js?v=53"></script>
-<script src="/static/js/runs.js?v=53"></script>
-<script src="/static/js/casepreview.js?v=53"></script>
-<script src="/static/js/dashboard.js?v=53"></script>
-<script src="/static/js/requirements.js?v=53"></script>
-<script src="/static/js/winmgr.js?v=53"></script>
-<script src="/static/js/voice.js?v=53"></script>
-<script src="/static/js/help.js?v=53"></script>
-<script src="/static/js/testdata.js?v=53"></script>
-<script src="/static/js/token_calc.js?v=53"></script>
-<script src="/static/js/ai_picker.js?v=53"></script>
+<script src="/static/js/review.js?v=54"></script>
+<script src="/static/js/regen.js?v=54"></script>
+<script src="/static/js/dup.js?v=54"></script>
+<script src="/static/js/cov.js?v=54"></script>
+<script src="/static/js/excel_upload.js?v=54"></script>
+<script src="/static/js/app.js?v=54"></script>
+<script src="/static/js/autosave.js?v=54"></script>
+<script src="/static/js/history.js?v=54"></script>
+<script src="/static/js/batch.js?v=54"></script>
+<script src="/static/js/cmp.js?v=54"></script>
+<script src="/static/js/tokens.js?v=54"></script>
+<script src="/static/js/search.js?v=54"></script>
+<script src="/static/js/prompts.js?v=54"></script>
+<script src="/static/js/rt.js?v=54"></script>
+<script src="/static/js/rec.js?v=54"></script>
+<script src="/static/js/repo.js?v=54"></script>
+<script src="/static/js/runs.js?v=54"></script>
+<script src="/static/js/casepreview.js?v=54"></script>
+<script src="/static/js/dashboard.js?v=54"></script>
+<script src="/static/js/requirements.js?v=54"></script>
+<script src="/static/js/winmgr.js?v=54"></script>
+<script src="/static/js/voice.js?v=54"></script>
+<script src="/static/js/help.js?v=54"></script>
+<script src="/static/js/testdata.js?v=54"></script>
+<script src="/static/js/token_calc.js?v=54"></script>
+<script src="/static/js/ai_picker.js?v=54"></script>
+<script src="/static/js/automation.js?v=54"></script>
 </body>
 </html>

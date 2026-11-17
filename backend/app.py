@@ -198,6 +198,8 @@ from . import dashboard  # noqa: E402
 app.include_router(dashboard.router, dependencies=[Depends(current)])
 from . import help as help_api  # noqa: E402
 app.include_router(help_api.router, dependencies=[Depends(current)])
+from . import automation as automation_api  # noqa: E402
+app.include_router(automation_api.attach(current), dependencies=[Depends(current)])
 
 
 @app.post("/api/repo/review")
@@ -1578,7 +1580,7 @@ def _compose_regen_text(run: Dict[str, Any], data: Dict[str, Any]) -> str:
 
 @app.post("/api/tokens/estimate")
 def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(current)):
-    """Pre-call estimate for Generate, AI Review, Regenerate, or Help (no provider call)."""
+    """Pre-call estimate for Generate, AI Review, Regenerate, Automation script, or Help (no provider call)."""
     from . import token_estimate, parsing
     data = data or {}
     run = None
@@ -1600,6 +1602,10 @@ def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(curren
             text = _compose_review_text(run, data)
         elif kind in ("regenerate", "regen"):
             text = _compose_regen_text(run, data)
+        elif kind in ("automation", "automation script", "script"):
+            from . import automation as automation_api
+            composed = automation_api.compose_estimate(data)
+            text = "\n\n".join(p for p in (composed.get("system"), composed.get("user"), composed.get("prompt")) if p)
         else:
             parts = [str(run.get("feature_text") or data.get("feature_text") or ""),
                      str(data.get("prompt") or data.get("instruction") or data.get("question") or "")]
@@ -1616,7 +1622,8 @@ def tokens_estimate(data: Dict[str, Any] = Body(default={}), sess=Depends(curren
     expected = data.get("expected_output")
     if expected is None:
         expected = {"generate": 1800, "review": 900, "ai review": 900, "ai-review": 900,
-                    "regenerate": 400, "regen": 400, "help": 200, "help chat": 200}.get(kind, 800)
+                    "regenerate": 400, "regen": 400, "help": 200, "help chat": 200,
+                    "automation": 2400, "automation script": 2400, "script": 2400}.get(kind, 800)
     provider = str(data.get("provider") or data.get("model") or run.get("model") or "")
     mid = str(data.get("model_name") or data.get("model_id") or run.get("model_name") or "")
     # Library / heuristic testdata and boost are not AI calls.
