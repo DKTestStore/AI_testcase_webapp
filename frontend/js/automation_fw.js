@@ -36,6 +36,11 @@
     showUsed: false,
     usage: null,
     verCount: 0,
+    openTabs: [],
+    revealLine: 0,
+    symbols: null,
+    dataMode: {},
+    acFromKey: false,
   };
 
   function projectId() {
@@ -173,7 +178,7 @@
   }
   function isDataPath(path) {
     const e = extOf(path);
-    return /^(xlsx|csv|json|xml|yaml|yml)$/.test(e) || /^test_data\//.test(path || "");
+    return /^(xlsx|csv|json|xml|yaml|yml|txt)$/.test(e) || /^test_data\//.test(path || "");
   }
   function isSecretKey(k) {
     return /password|secret|token|key|passwd|api_key|connection/i.test(String(k || ""));
@@ -230,6 +235,7 @@
       + '<div id="fwHost" style="flex:1;min-height:0;display:flex;flex-direction:column"></div></div>';
     await fillLangSelect();
     bindHeaderChrome(v);
+    bindFwEditorKeys();
     loadVerCount();
     paintCrumb();
     await renderHost();
@@ -589,6 +595,9 @@
 
   function markerHtml(path) {
     const k = (FW.markers || {})[path];
+    const row = (FW.tree || []).find(function (r) { return r.path === path; });
+    if (row && row.edited) return '<span class="fw-mk e" title="Manually edited since the last generated version">edited</span>';
+    if (k === "edited") return '<span class="fw-mk e" title="Manually edited">edited</span>';
     if (k === "new") return '<span class="fw-mk n" title="New">New</span>';
     if (k === "changed" || k === "chg") return '<span class="fw-mk c" title="Changed">Chg</span>';
     return "";
@@ -614,8 +623,8 @@
     const neu = $("#fwTreeNew", tree);
     if (neu) neu.onclick = function (e) {
       e.stopPropagation();
-      const r = neu.getBoundingClientRect();
-      showTreeMenu(r.left, r.bottom + 4, FW.path && (FW.file && FW.file.is_dir) ? FW.path : "", true);
+      const folder = FW.path && FW.file && FW.file.is_dir ? FW.path : ((FW.path || "").split("/").slice(0, -1).join("/") || "");
+      openNewFileDialog({ folder: folder });
     };
     tree.oncontextmenu = function (e) {
       if (e.target === tree || e.target.id === "fwT") { e.preventDefault(); showTreeMenu(e.clientX, e.clientY, "", true); }
@@ -695,8 +704,15 @@
           if (pr.used_by) FW.file.used_by = pr.used_by;
         } catch (e2) { FW.preview = null; }
       } else FW.preview = null;
+      rememberTab(path);
+      if (isPreviewable(path) && FW.dataMode[path] !== "edit") FW.viewPane = "preview";
       const host = $("#fwHost");
       if (host) paintProject(host);
+      if (FW.revealLine) {
+        const line = FW.revealLine;
+        FW.revealLine = 0;
+        setTimeout(function () { revealCodeLine("left", line); }, 0);
+      }
     } catch (e) { toast(e.message || String(e)); }
   }
 
@@ -833,16 +849,19 @@
     const splitIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>';
     const fullIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
     const histIco = clockSvg();
+    const pev = isPreviewable(path) ? previewEditToggle(path, pane) : "";
     const bar = '<div class="fw-bar"><div class="fw-seg">'
       + tabs.map(function (t) { return '<button type="button" data-pane="' + t[0] + '" class="' + (pane === t[0] ? "on" : "") + '">' + t[1] + "</button>"; }).join("")
-      + '</div><div class="fw-ibar">'
+      + "</div>" + pev + '<div class="fw-ibar">'
       + '<button type="button" class="fw-ico-btn" data-act="split" title="Split view">' + splitIco + '<span class="tip">Split view</span></button>'
       + '<button type="button" class="fw-ico-btn" data-act="full" title="Full screen">' + fullIco + '<span class="tip">Full screen</span></button>'
       + '<button type="button" class="fw-ico-btn" data-act="hist" title="Version history">' + histIco + '<span class="tip">Version history</span></button>'
-      + '</div><button type="button" class="btn pri save" data-act="save"' + (unsaved || isEditing(side) ? "" : " disabled") + ">Save</button></div>";
+      + '</div><button type="button" class="btn g sm" data-act="regen" title="Regenerate this file or its test case">Regenerate</button>'
+      + '<button type="button" class="btn pri save" data-act="save"' + (unsaved || isEditing(side) ? "" : " disabled") + ">Save</button></div>";
     const hist = (FW.showHist && pane === "code" && side === "left") ? histHtml() : "";
     const stat = pane === "code" ? statusBarHtml(path, side) : "";
-    return fileCardHtml({ path: path, name: pathName(path), isDir: false, version: ver, used: used, unsaved: unsaved })
+    const tabsBar = side === "left" ? openTabsHtml(path) : "";
+    return tabsBar + fileCardHtml({ path: path, name: pathName(path), isDir: false, version: ver, used: used, unsaved: unsaved })
       + bar + '<div class="fw-code" id="fwPane">' + body + hist + "</div>" + stat;
   }
 
@@ -1078,6 +1097,7 @@
     m.className = "fw-menu"; m.id = "fwMenu";
     m.style.left = x + "px"; m.style.top = y + "px";
     m.innerHTML = '<div data-a="newf">New file</div><div data-a="newd">New folder</div>'
+      + (path && !isDir ? '<div data-a="regen">Regenerate…</div>' : "")
       + (path ? '<div data-a="ren">Rename</div><div data-a="del">Delete</div>' : "");
     document.body.appendChild(m);
     $$("div[data-a]", m).forEach(function (b) {
@@ -1091,10 +1111,13 @@
     const parent = isDir ? path : (path || "").split("/").slice(0, -1).join("/");
     const prefix = parent && !/\/$/.test(parent) ? parent + "/" : (parent || "");
     try {
+      if (act === "regen") {
+        openRegenDialog({ path: path, scope: "file" });
+        return;
+      }
       if (act === "newf") {
-        const name = prompt("New file name (relative to folder):");
-        if (!name) return;
-        await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "POST", body: { path: prefix + name.replace(/^\/+/, ""), content: "" } });
+        openNewFileDialog({ folder: prefix });
+        return;
       } else if (act === "newd") {
         const name = prompt("New folder name:");
         if (!name) return;
@@ -1148,23 +1171,33 @@
   function previewHtml() {
     const pr = FW.preview || {};
     const kind = pr.kind || "text";
-    const used = ((FW.file && FW.file.used_by) || []).map(function (id) { return '<span class="fw-chip ready">' + esc(id) + "</span>"; }).join(" ") || '<span class="sub">Not used by a test yet.</span>';
-    const mode = FW.previewMode || "table";
-    const toggles = '<div class="fw-filters"><button type="button" class="btn g sm' + (mode === "table" ? " on" : "") + '" data-pm="table">Table</button>'
-      + '<button type="button" class="btn g sm' + (mode === "tree" ? " on" : "") + '" data-pm="tree">Tree</button>'
+    const used = ((FW.file && FW.file.used_by) || []).map(function (id) { return '<span class="tid">' + esc(id) + "</span>"; }).join(" ") || '<span class="sub">Not used by a test yet.</span>';
+    const mode = FW.previewMode || (kind === "json" || kind === "xml" ? "tree" : "table");
+    const showTree = kind === "json" || kind === "xml" || kind === "yaml";
+    const showTable = kind === "xlsx" || kind === "csv" || kind === "yaml";
+    const toggles = '<div class="fw-filters">'
+      + (showTable ? '<button type="button" class="btn g sm' + (mode === "table" ? " on" : "") + '" data-pm="table">Table</button>' : "")
+      + (showTree ? '<button type="button" class="btn g sm' + (mode === "tree" ? " on" : "") + '" data-pm="tree">Tree</button>' : "")
       + '<button type="button" class="btn g sm' + (mode === "raw" ? " on" : "") + '" data-pm="raw">Raw</button>'
       + (kind === "json" || kind === "xml" || kind === "yaml" ? (pr.ok ? '<span class="fw-ok">Syntax OK</span>' : '<span class="fw-err">Syntax error</span>') : "")
       + '<span style="flex:1"></span><span>Used by ' + used + "</span></div>";
     if (pr.errors && pr.errors.length && kind === "xlsx" && !(pr.sheets && Object.keys(pr.sheets).length)) {
       return toggles + '<div class="sub">' + esc((pr.errors[0] && (pr.errors[0].message || pr.errors[0])) || "Preview unavailable") + "</div>";
     }
-    if (mode === "raw") return toggles + '<textarea id="fwRaw" style="width:100%;height:100%;min-height:280px;border:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px">' + esc(pr.raw != null ? pr.raw : currentContent()) + "</textarea>";
+    if (mode === "raw") return toggles + '<textarea id="fwRaw" style="width:100%;height:100%;min-height:280px;border:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px">' + esc(pr.raw != null ? pr.raw : currentContent(FW.path)) + "</textarea>";
     if (kind === "xlsx") return toggles + xlsxHtml(pr);
     if (kind === "csv") return toggles + gridHtml(pr.header || [], pr.rows || [], pr);
-    if ((kind === "json" || kind === "xml" || kind === "yaml") && mode === "tree") return toggles + '<div class="fw-tree-json">' + treeNodes(pr.tree || []) + "</div>";
-    if (kind === "yaml" && pr.table) return toggles + gridHtml(pr.table.header || [], pr.table.rows || [], pr);
-    if (kind === "json" || kind === "xml") return toggles + '<div class="fw-tree-json">' + treeNodes(pr.tree || []) + "</div>";
-    return toggles + '<pre style="padding:8px;white-space:pre-wrap">' + esc(pr.raw || currentContent()) + "</pre>";
+    if ((kind === "json" || kind === "xml" || kind === "yaml") && mode === "tree") return toggles + '<div class="fw-tree-json">' + treeNodes(pr.tree || [], 1) + "</div>";
+    if (kind === "yaml" && pr.table) {
+      const envs = pr.envs || (pr.table[0] ? Object.keys(pr.table[0]).filter(function (k) { return k !== "key"; }) : []);
+      const header = ["key"].concat(envs);
+      const rows = (Array.isArray(pr.table) ? pr.table : []).map(function (r) {
+        return header.map(function (h) { return r[h] == null ? "" : r[h]; });
+      });
+      return toggles + gridHtml(header, rows, pr);
+    }
+    if (kind === "json" || kind === "xml") return toggles + '<div class="fw-tree-json">' + treeNodes(pr.tree || [], 1) + "</div>";
+    return toggles + '<pre class="fw-txtprev">' + esc(pr.raw || currentContent(FW.path) || "") + "</pre>";
   }
   function xlsxHtml(pr) {
     const sheets = pr.sheets || {};
@@ -1184,14 +1217,15 @@
     });
     return h + "</tbody></table></div>";
   }
-  function treeNodes(nodes) {
+  function treeNodes(nodes, lvl) {
+    lvl = lvl || 1;
     return (nodes || []).map(function (n) {
-      const kids = n.children && n.children.length ? treeNodes(n.children) : "";
-      return '<div style="margin-left:12px"><span class="k">' + esc(n.name || n.key || "") + "</span>"
-        + (n.type ? '<span class="t">' + esc(n.type) + "</span>" : "")
-        + (n.value != null && !n.children ? " = " + esc(String(n.value)) : "")
-        + (n.attrs ? " " + esc(JSON.stringify(n.attrs)) : "")
-        + kids + "</div>";
+      const typ = String(n.type || "").toLowerCase();
+      const badge = typ ? '<span class="tbadge ' + (typ === "object" ? "obj" : typ === "array" ? "arr" : typ === "string" || typ === "str" ? "str" : typ === "number" || typ === "int" || typ === "float" ? "num" : typ === "bool" || typ === "boolean" ? "bool" : typ === "attr" ? "attr" : typ === "element" ? "el" : "obj") + '">' + esc(typ) + "</span>" : "";
+      const hasKids = n.children && n.children.length;
+      const kids = hasKids ? treeNodes(n.children, Math.min(4, lvl + 1)) : "";
+      const val = (n.value != null && !hasKids) ? '<span class="v">' + esc(typeof n.value === "string" ? JSON.stringify(n.value) : String(n.value)) + "</span>" : "";
+      return '<div class="n i' + lvl + '"><span class="ch">' + (hasKids ? "▾" : "•") + '</span><span class="k">' + esc(n.name || n.key || "") + "</span> " + val + badge + "</div>" + kids;
     }).join("");
   }
 
@@ -1263,6 +1297,19 @@
     if (histBtn) histBtn.onclick = function () { if (side === "left") { FW.showHist = !FW.showHist; paintProject($("#fwHost")); } };
     const saveBtn = act("save");
     if (saveBtn) saveBtn.onclick = function () { saveCurrent(side); };
+    const regenBtn = act("regen");
+    if (regenBtn) regenBtn.onclick = function () { openRegenDialog({ path: side === "right" ? FW.splitPath : FW.path }); };
+    $$("[data-pev]", main).forEach(function (b) {
+      b.onclick = function () { setPreviewEdit(side === "right" ? FW.splitPath : FW.path, b.dataset.pev, side); };
+    });
+    bindOpenTabs(main);
+    $$(".fw-ccode", main).forEach(function (td) {
+      td.addEventListener("click", function (e) {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const w = wordFromPoint(e);
+        if (w) { e.preventDefault(); goToDefinition(w); }
+      });
+    });
     if ($("#fwCmp", main)) $("#fwCmp", main).onclick = function () { compareVersions(); };
     $$("[data-env]", main).forEach(function (b) { b.onclick = function () { openFile(b.dataset.env); }; });
     $$("[data-pm]", main).forEach(function (b) { b.onclick = function () { FW.previewMode = b.dataset.pm; paintProject($("#fwHost")); }; });
@@ -1364,10 +1411,12 @@
       if (ta.value !== orig) FW.unsaved[path] = ta.value;
       else delete FW.unsaved[path];
       markDirtyUi(main, path);
+      maybeAutocomplete(ta, view, false);
     };
     ta.onkeyup = ta.onclick = ta.onselect = function () { caretPos(); };
-    ta.onscroll = syncScroll;
+    ta.onscroll = function () { syncScroll(); hideAutocomplete(); };
     ta.onfocus = function () { FW.splitFocus = side; };
+    ta.addEventListener("keydown", function (e) { handleEditorKey(e, ta, view, side); });
     if (typeof ResizeObserver === "function") {
       if (view._fwRo) view._fwRo.disconnect();
       const ro = new ResizeObserver(function () { syncScroll(); });
@@ -1427,13 +1476,7 @@
       else toast("No README.md in this project yet.");
     };
     const data = $("#fwEmptyData", main);
-    if (data) data.onclick = function () {
-      const folder = (FW.tree || []).find(function (r) {
-        return r.is_dir && (r.path === "test_data" || r.path === "test_data/");
-      });
-      if (folder) openFolder(folder.path);
-      else treeAction("newf", "test_data/", true);
-    };
+    if (data) data.onclick = function () { openNewFileDialog({ type: "xlsx", folder: "test_data/" }); };
   }
 
   function bindFolderSummary(main) {
@@ -1444,7 +1487,7 @@
       };
     });
     const folder = (FW.file && FW.file.is_dir) ? FW.path : "";
-    if ($("#fwFoldNew", main)) $("#fwFoldNew", main).onclick = function () { treeAction("newf", folder, true); };
+    if ($("#fwFoldNew", main)) $("#fwFoldNew", main).onclick = function () { openNewFileDialog({ folder: folder }); };
     if ($("#fwFoldRen", main)) $("#fwFoldRen", main).onclick = function () { treeAction("ren", folder, true); };
     if ($("#fwFoldUp", main)) $("#fwFoldUp", main).onclick = function () { uploadInto(folder); };
   }
@@ -1506,6 +1549,7 @@
       await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "PUT", body: { path: path, content: content, note: "Edited" } });
       delete FW.unsaved[path];
       setEditing(side, false);
+      FW.symbols = null;
       toast("Saved");
       if (side === "right") await openFileIn("right", path);
       else await openFile(path);
@@ -1615,7 +1659,10 @@
   function paintWiz() {
     const w = FW.wiz; if (!w || !$("#fwWiz")) return;
     const h2 = $("#fwWiz h2");
-    if (w.fromLibrary) {
+    if (w.mode === "regen") {
+      if (h2) h2.textContent = "Regenerate script";
+      $("#fwWizSteps").innerHTML = '<span class="sub">AI draft vs your files. Manual edits are never overwritten silently.</span>';
+    } else if (w.fromLibrary) {
       if (h2) h2.textContent = "Review changes";
       $("#fwWizSteps").innerHTML = '<span class="sub">Adding <b>' + esc(w.fromLibrary) + "</b>"
         + (w.libraryName && w.libraryName !== w.fromLibrary ? " (" + esc(w.libraryName) + ")" : "")
@@ -1626,7 +1673,7 @@
         return "<span class=\"" + (w.step === i + 1 ? "a" : "") + "\">" + s + "</span>";
       }).join(" → ");
     }
-    if (w.fromLibrary) paintWiz3();
+    if (w.fromLibrary || w.mode === "regen") paintWiz3();
     else if (w.step === 1) paintWiz1();
     else if (w.step === 2) paintWiz2();
     else paintWiz3();
@@ -1778,30 +1825,57 @@
 
   function paintWiz3() {
     const ch = FW.wiz.changes || [];
+    const regen = !!(FW.wiz && FW.wiz.mode === "regen");
     const rows = ch.map(function (c, i) {
       const kind = c.kind || "new";
+      const mine = c.current != null ? c.current : existingContent(c.path);
+      const edited = c.edited ? ' <span class="fw-mk e">edited</span>' : "";
       return '<tr><td><input type="checkbox" data-inc="' + i + '"' + (c.include !== false ? " checked" : "") + "></td>"
-        + "<td>" + esc(c.path) + ' <span class="fw-kind ' + kind + '">' + esc(kind.charAt(0).toUpperCase() + kind.slice(1)) + "</span></td>"
+        + "<td>" + esc(c.path) + ' <span class="fw-kind ' + kind + '">' + esc(kind.charAt(0).toUpperCase() + kind.slice(1)) + "</span>" + edited + "</td>"
         + "<td>" + esc((c.tc_ids || []).join(", ")) + "</td>"
-        + '<td><button type="button" class="btn g sm" data-diff="' + i + '">' + (c.show ? "Hide changes" : "Show changes") + "</button></td></tr>"
-        + (c.show ? '<tr><td colspan="4">' + diffHtml(existingContent(c.path), c.content || "") + "</td></tr>" : "");
+        + '<td><button type="button" class="btn g sm" data-diff="' + i + '">' + (c.show ? "Hide changes" : (regen ? "Show AI vs mine" : "Show changes")) + "</button></td></tr>"
+        + (c.show ? '<tr><td colspan="4">' + diffHtml(mine, c.content || "") + "</td></tr>" : "");
     }).join("") || '<tr><td colspan="4">No file changes returned.</td></tr>';
-    $("#fwWizBd").innerHTML = '<table class="fw-chg"><thead><tr><th style="width:36px"></th><th>File</th><th>Test cases</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>";
-    $("#fwWizFt").innerHTML = '<button type="button" class="btn g" id="fwWizBack">Back</button>'
-      + '<button type="button" class="btn" id="fwWizApply">Apply selected</button>'
-      + '<button type="button" class="btn g" id="fwWizChk">Check</button>'
-      + '<button type="button" class="btn" id="fwWizRun">Run</button>';
-    $("#fwWizBack").onclick = function () {
-      if (FW.wiz && FW.wiz.fromLibrary) { closeWiz(); return; }
+    const intro = regen
+      ? '<p class="sub" style="margin-top:0">Compare the new AI draft with your current files. Manually edited files are tagged. Nothing is overwritten until you choose.</p>'
+        + '<div class="fw-scope">'
+        + '<button type="button" class="' + (FW.wiz.scope !== "tc" ? "on" : "") + '" id="fwRegenFile">Per file</button>'
+        + '<button type="button" class="' + (FW.wiz.scope === "tc" ? "on" : "") + '" id="fwRegenTc">Per test case' + (FW.wiz.scopeTc ? " · " + esc(FW.wiz.scopeTc) : "") + "</button>"
+        + "</div>"
+      : "";
+    $("#fwWizBd").innerHTML = intro + '<table class="fw-chg"><thead><tr><th style="width:36px"></th><th>File</th><th>Test cases</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>";
+    if (regen) {
+      $("#fwWizFt").innerHTML = '<button type="button" class="btn g" id="fwWizKeep">Keep mine</button>'
+        + '<button type="button" class="btn g" id="fwWizTake">Take AI</button>'
+        + '<button type="button" class="btn" id="fwWizApply">Merge selected</button>';
+      const h2 = $("#fwWiz h2"); if (h2) h2.textContent = "Regenerate script";
+    } else {
+      $("#fwWizFt").innerHTML = '<button type="button" class="btn g" id="fwWizBack">Back</button>'
+        + '<button type="button" class="btn" id="fwWizApply">Apply selected</button>'
+        + '<button type="button" class="btn g" id="fwWizChk">Check</button>'
+        + '<button type="button" class="btn" id="fwWizRun">Run</button>';
+    }
+    if ($("#fwWizBack")) $("#fwWizBack").onclick = function () {
+      if (FW.wiz && (FW.wiz.fromLibrary || FW.wiz.mode === "regen")) { closeWiz(); return; }
       FW.wiz.step = 2; paintWiz();
+    };
+    if ($("#fwWizKeep")) $("#fwWizKeep").onclick = function () { closeWiz(); toast("Kept your files. Nothing was overwritten."); };
+    if ($("#fwWizTake")) $("#fwWizTake").onclick = function () {
+      (FW.wiz.changes || []).forEach(function (c) { c.include = true; });
+      applyChanges();
     };
     $$("[data-inc]").forEach(function (ck) { ck.onchange = function () { FW.wiz.changes[+ck.dataset.inc].include = ck.checked; }; });
     $$("[data-diff]").forEach(function (b) { b.onclick = function () { const i = +b.dataset.diff; FW.wiz.changes[i].show = !FW.wiz.changes[i].show; paintWiz3(); }; });
-    $("#fwWizApply").onclick = applyChanges;
-    $("#fwWizChk").onclick = function () { startCheck(); };
-    $("#fwWizRun").onclick = function () { startRun(); };
+    if ($("#fwWizApply")) $("#fwWizApply").onclick = applyChanges;
+    if ($("#fwWizChk")) $("#fwWizChk").onclick = function () { startCheck(); };
+    if ($("#fwWizRun")) $("#fwWizRun").onclick = function () { startRun(); };
+    if ($("#fwRegenFile")) $("#fwRegenFile").onclick = function () { if (FW.wiz.scope !== "file") openRegenDialog({ path: FW.wiz.scopePath, scope: "file", rerun: true }); };
+    if ($("#fwRegenTc")) $("#fwRegenTc").onclick = function () { if (FW.wiz.scope !== "tc") openRegenDialog({ path: FW.wiz.scopePath, scope: "tc", rerun: true }); };
   }
   function existingContent(path) {
+    if (Object.prototype.hasOwnProperty.call(FW.unsaved, path)) return FW.unsaved[path];
+    if (FW.file && FW.path === path && FW.file.content != null) return FW.file.content || "";
+    if (FW.splitFile && FW.splitPath === path && FW.splitFile.content != null) return FW.splitFile.content || "";
     const row = (FW.tree || []).find(function (f) { return f.path === path; });
     return (row && row.content) || "";
   }
@@ -1831,8 +1905,11 @@
         if (!c.path) return;
         if (k === "new" || k === "created" || k === "add") FW.markers[c.path] = "new";
         else FW.markers[c.path] = "changed";
+        delete FW.unsaved[c.path];
       });
+      FW.symbols = null;
       await reloadTree();
+      if (FW.wiz && FW.wiz.mode === "regen") closeWiz();
     } catch (e) { toast(e.message || String(e)); }
   }
 
@@ -2069,6 +2146,662 @@
       toast(e.message || String(e));
     }
   }
+
+
+  function isPreviewable(path) {
+    const e = extOf(path);
+    return /^(xlsx|csv|json|xml|yaml|yml|txt)$/.test(e);
+  }
+
+  function previewEditToggle(path, pane) {
+    const mode = (FW.dataMode[path] === "edit" || (pane === "code" && isEditing("left") && FW.dataMode[path] !== "preview")) ? "edit" : "preview";
+    if (pane !== "preview" && pane !== "code") return "";
+    return '<span class="fw-pev"><button type="button" data-pev="preview" class="' + (mode === "preview" && pane === "preview" ? "on" : "") + '">Preview</button>'
+      + '<button type="button" data-pev="edit" class="' + (pane === "code" ? "on" : "") + '">Edit</button></span>';
+  }
+
+  function setPreviewEdit(path, mode, side) {
+    side = side || "left";
+    FW.dataMode[path] = mode === "edit" ? "edit" : "preview";
+    if (mode === "edit") {
+      if (side === "right") FW.viewPaneRight = "code";
+      else FW.viewPane = "code";
+      setEditing(side, true);
+    } else {
+      if (side === "right") FW.viewPaneRight = "preview";
+      else FW.viewPane = "preview";
+      setEditing(side, false);
+    }
+    const host = $("#fwHost");
+    if (host) paintProject(host);
+  }
+
+  function rememberTab(path) {
+    if (!path) return;
+    FW.openTabs = FW.openTabs || [];
+    if (FW.openTabs.indexOf(path) < 0) FW.openTabs.push(path);
+  }
+
+  function openTabsHtml(active) {
+    const tabs = (FW.openTabs || []).filter(function (p) { return (FW.tree || []).some(function (r) { return r.path === p && !r.is_dir; }) || p === active; });
+    FW.openTabs = tabs;
+    if (!tabs.length) return "";
+    return '<div class="fw-tabs" id="fwOpenTabs">'
+      + tabs.map(function (p) {
+          const on = p === active ? " on" : "";
+          const dirty = FW.unsaved[p] ? '<span class="udot" title="Unsaved changes"></span>' : "";
+          return '<button type="button" class="tab' + on + '" data-tab="' + esc(p) + '">' + fwIcon(p, false) + '<span class="nm">' + esc(pathName(p)) + "</span>" + dirty + '<span class="x" data-tabx="' + esc(p) + '" title="Close">×</span></button>';
+        }).join("")
+      + '<button type="button" class="qp" id="fwQuickOpen" title="Quick open">Quick open <kbd>Ctrl</kbd><kbd>P</kbd></button></div>';
+  }
+
+  function bindOpenTabs(main) {
+    if (!main) return;
+    $$("[data-tab]", main).forEach(function (b) {
+      b.onclick = function (e) {
+        if (e.target && e.target.dataset && e.target.dataset.tabx != null) return;
+        if (b.dataset.tab) openFile(b.dataset.tab);
+      };
+    });
+    $$("[data-tabx]", main).forEach(function (x) {
+      x.onclick = function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeEditorTab(x.dataset.tabx);
+      };
+    });
+    if ($("#fwQuickOpen", main)) $("#fwQuickOpen", main).onclick = function () { openQuickOpen(); };
+  }
+
+  function closeEditorTab(path) {
+    FW.openTabs = (FW.openTabs || []).filter(function (p) { return p !== path; });
+    if (FW.path === path) {
+      const next = FW.openTabs[FW.openTabs.length - 1];
+      if (next) openFile(next);
+      else { FW.path = ""; FW.file = null; const host = $("#fwHost"); if (host) paintProject(host); }
+    } else {
+      const host = $("#fwHost"); if (host) paintProject(host);
+    }
+  }
+
+  function bindFwEditorKeys() {
+    if (FW._keysBound) return;
+    FW._keysBound = true;
+    document.addEventListener("keydown", function (e) {
+      if (!$(".fw-shell")) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        openQuickOpen();
+        return;
+      }
+      if (e.key === "Escape") {
+        hideAutocomplete();
+        closeQuickOpen();
+        return;
+      }
+      if (e.key === "F12") {
+        const ta = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("fw-edit-ta") ? document.activeElement : null;
+        const w = ta ? wordAtCaret(ta).token.replace(/\.$/, "").split(".").pop() : null;
+        if (w) { e.preventDefault(); goToDefinition(w); }
+      }
+    });
+  }
+
+  function FILE_TYPES() {
+    return [
+      { id: "py", ext: "py", label: "Python" },
+      { id: "xlsx", ext: "xlsx", label: "Excel" },
+      { id: "csv", ext: "csv", label: "CSV" },
+      { id: "json", ext: "json", label: "JSON" },
+      { id: "txt", ext: "txt", label: "TXT" },
+      { id: "yaml", ext: "yaml", label: "YAML" },
+      { id: "xml", ext: "xml", label: "XML" },
+    ];
+  }
+
+  function defaultNewFolder(typeId) {
+    const folders = (FW.tree || []).filter(function (r) { return r.is_dir; }).map(function (r) { return r.path; });
+    if (typeId === "py") {
+      if (folders.indexOf("tests/") >= 0) return "tests/";
+      if (folders.indexOf("pages/") >= 0) return "pages/";
+    } else if (folders.indexOf("test_data/") >= 0) return "test_data/";
+    if (FW.path && FW.file && FW.file.is_dir) return normDir(FW.path);
+    if (FW.path) {
+      const p = (FW.path || "").split("/").slice(0, -1).join("/");
+      return p ? normDir(p) : "";
+    }
+    return "";
+  }
+
+  function openNewFileDialog(opts) {
+    opts = opts || {};
+    closeFwMenu();
+    const types = FILE_TYPES();
+    let typeId = opts.type || (FW.lang === "python" || !FW.lang ? "py" : types[0].id);
+    if (!types.some(function (t) { return t.id === typeId; })) typeId = "py";
+    let folder = opts.folder != null && opts.folder !== "" ? normDir(opts.folder) : defaultNewFolder(typeId);
+    let name = opts.name || "";
+    const ov = document.createElement("div");
+    ov.className = "fw-wiz"; ov.id = "fwNewFile";
+    function typ() { return types.find(function (t) { return t.id === typeId; }) || types[0]; }
+    function paint() {
+      const t = typ();
+      const folders = (FW.tree || []).filter(function (r) { return r.is_dir; })
+        .sort(function (a, b) { return a.path.localeCompare(b.path); });
+      if (folder && folders.every(function (r) { return r.path !== folder && r.path !== normDir(folder); })) {
+        /* keep typed folder even if not in tree yet */
+      }
+      const typeBtns = types.map(function (x) {
+        return '<button type="button" class="' + (x.id === typeId ? "on" : "") + '" data-nt="' + x.id + '">' + fwIcon("file." + x.ext, false) + esc(x.label) + "</button>";
+      }).join("");
+      const foldRows = '<button type="button" class="row' + (!folder ? " on" : "") + '" data-folder="">(project root)</button>'
+        + folders.map(function (r) {
+            const depth = r.path.replace(/\/$/, "").split("/").length;
+            return '<button type="button" class="row' + (normDir(r.path) === folder ? " on" : "") + '" data-folder="' + esc(r.path) + '" style="padding-left:' + (8 + (depth - 1) * 12) + 'px">' + fwIcon(r.path, true) + esc(r.path.replace(/\/$/, "")) + "</button>";
+          }).join("");
+      const stem = name.replace(/\.[^.]+$/, "");
+      ov.querySelector(".box").innerHTML = '<div class="hd"><div><h2>New file</h2><p class="sub" style="margin:4px 0 0">The extension and icon follow the file type. Excel, JSON, TXT, CSV, YAML, and XML get a Preview after they are created.</p></div><button type="button" class="btn g sm" id="fwNfX">✕</button></div>'
+        + '<div class="bd">'
+        + '<label class="sub" style="display:block;font-weight:750;text-transform:uppercase;letter-spacing:.04em;font-size:11px;margin:0 0 6px">Type</label>'
+        + '<div class="fw-types">' + typeBtns + "</div>"
+        + '<label class="sub" style="display:block;font-weight:750;text-transform:uppercase;letter-spacing:.04em;font-size:11px;margin:0 0 6px">File name</label>'
+        + '<div class="fw-name">' + fwIcon("file." + t.ext, false) + '<input id="fwNfName" value="' + esc(stem) + '" placeholder="file_name" spellcheck="false"><span class="ext">.' + esc(t.ext) + "</span></div>"
+        + '<p class="sub" style="margin:6px 0 12px">The extension is set from the file type (.' + esc(t.ext) + ").</p>"
+        + '<label class="sub" style="display:block;font-weight:750;text-transform:uppercase;letter-spacing:.04em;font-size:11px;margin:0 0 6px">Target folder</label>'
+        + '<div class="fw-folderlist" id="fwNfFolders">' + foldRows + "</div>"
+        + "</div>"
+        + '<div class="ft"><button type="button" class="btn g" id="fwNfCancel">Cancel</button><button type="button" class="btn" id="fwNfGo">Create file</button></div>';
+      ov.querySelector(".box").classList.add("fw-newf");
+      $$("[data-nt]", ov).forEach(function (b) {
+        b.onclick = function () {
+          const inp = $("#fwNfName", ov);
+          name = inp ? inp.value : name;
+          typeId = b.dataset.nt;
+          if (!opts.folder) folder = defaultNewFolder(typeId);
+          paint();
+        };
+      });
+      $$("[data-folder]", ov).forEach(function (b) {
+        b.onclick = function () { folder = b.dataset.folder || ""; const inp = $("#fwNfName", ov); name = inp ? inp.value : name; paint(); };
+      });
+      if ($("#fwNfX", ov)) $("#fwNfX", ov).onclick = close;
+      if ($("#fwNfCancel", ov)) $("#fwNfCancel", ov).onclick = close;
+      if ($("#fwNfGo", ov)) $("#fwNfGo", ov).onclick = function () { create(); };
+      const inp = $("#fwNfName", ov);
+      if (inp) { inp.focus(); inp.select(); inp.onkeydown = function (e) { if (e.key === "Enter") create(); if (e.key === "Escape") close(); }; }
+    }
+    function close() { if (ov && ov.parentNode) ov.remove(); }
+    async function create() {
+      const inp = $("#fwNfName", ov);
+      let stem = ((inp && inp.value) || name || "").trim();
+      if (!stem) { toast("Enter a file name."); return; }
+      const t = typ();
+      const re = new RegExp("\\." + t.ext + "$", "i");
+      if (re.test(stem)) stem = stem.slice(0, -(t.ext.length + 1));
+      const base = folder ? (folder.endsWith("/") ? folder : folder + "/") : "";
+      const path = base + stem + "." + t.ext;
+      try {
+        await ensureFramework();
+        await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "POST", body: { path: path } });
+        close();
+        FW.symbols = null;
+        await reloadTree();
+        await openFile(path);
+        if (isPreviewable(path)) {
+          FW.dataMode[path] = "preview";
+          FW.viewPane = "preview";
+          const host = $("#fwHost"); if (host) paintProject(host);
+        } else {
+          setEditing("left", true);
+          const host = $("#fwHost"); if (host) paintProject(host);
+        }
+        toast("Created " + path);
+      } catch (e) { toast(e.message || String(e)); }
+    }
+    ov.innerHTML = '<div class="box fw-newf"></div>';
+    document.body.appendChild(ov);
+    paint();
+  }
+
+  function closeQuickOpen() { const el = $("#fwPalette"); if (el) el.remove(); }
+
+  function openQuickOpen(preset) {
+    closeQuickOpen();
+    const files = (FW.tree || []).filter(function (r) { return !r.is_dir; });
+    const box = document.createElement("div");
+    box.className = "fw-palette"; box.id = "fwPalette";
+    box.innerHTML = '<div class="q">🔍 <input id="fwPq" type="search" placeholder="Open file" spellcheck="false" value="' + esc(preset || "") + '"> <kbd>Ctrl</kbd><kbd>P</kbd></div><div id="fwPqList"></div>';
+    document.body.appendChild(box);
+    let sel = 0;
+    function qv() { return (($("#fwPq") && $("#fwPq").value) || "").trim().toLowerCase(); }
+    function hits() {
+      const q = qv();
+      const list = files.filter(function (r) {
+        if (!q) return true;
+        const n = pathName(r.path).toLowerCase();
+        return n.indexOf(q) >= 0 || String(r.path).toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 12);
+      return list;
+    }
+    function paintList() {
+      const list = hits();
+      if (sel >= list.length) sel = Math.max(0, list.length - 1);
+      const el = $("#fwPqList");
+      if (!el) return;
+      el.innerHTML = list.map(function (r, i) {
+        const dir = r.path.split("/").slice(0, -1).join("/");
+        return '<div class="row' + (i === sel ? " on" : "") + '" data-i="' + i + '" data-open="' + esc(r.path) + '">' + fwIcon(r.path, false) + "<b>" + esc(pathName(r.path)) + '</b><span class="path">' + esc(dir) + "</span></div>";
+      }).join("") || '<div class="row">No matching files.</div>';
+      $$("[data-open]", el).forEach(function (row) {
+        row.onmouseenter = function () { sel = +row.dataset.i; paintList(); };
+        row.onclick = function () { pick(row.dataset.open); };
+      });
+    }
+    function pick(path) {
+      closeQuickOpen();
+      if (path) openFile(path);
+    }
+    paintList();
+    const inp = $("#fwPq");
+    if (inp) {
+      inp.focus();
+      inp.setSelectionRange((inp.value || "").length, (inp.value || "").length);
+      inp.oninput = function () { sel = 0; paintList(); };
+      inp.onkeydown = function (e) {
+        const list = hits();
+        if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(list.length - 1, sel + 1); paintList(); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(0, sel - 1); paintList(); }
+        else if (e.key === "Enter") { e.preventDefault(); if (list[sel]) pick(list[sel].path); }
+        else if (e.key === "Escape") { e.preventDefault(); closeQuickOpen(); }
+      };
+    }
+  }
+
+  async function ensureSymbols() {
+    if (FW.symbols) return FW.symbols;
+    if (!FW.fid) return [];
+    try {
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/symbols");
+      FW.symbols = j.symbols || [];
+    } catch (e) { FW.symbols = []; }
+    return FW.symbols;
+  }
+
+  function PY_KEYWORDS() {
+    return ["and","as","assert","async","await","break","class","continue","def","del","elif","else","except","False","finally","for","from","global","if","import","in","is","lambda","None","nonlocal","not","or","pass","raise","return","True","try","while","with","yield","self","pytest"];
+  }
+  function PW_APIS() {
+    return [
+      { name: "get_by_role", detail: "playwright.sync_api" },
+      { name: "get_by_label", detail: "playwright.sync_api" },
+      { name: "get_by_text", detail: "playwright.sync_api" },
+      { name: "get_by_placeholder", detail: "playwright.sync_api" },
+      { name: "get_by_test_id", detail: "playwright.sync_api" },
+      { name: "locator", detail: "playwright.sync_api" },
+      { name: "goto", detail: "page.goto" },
+      { name: "click", detail: "locator.click" },
+      { name: "fill", detail: "locator.fill" },
+      { name: "press", detail: "locator.press" },
+      { name: "hover", detail: "locator.hover" },
+      { name: "check", detail: "locator.check" },
+      { name: "uncheck", detail: "locator.uncheck" },
+      { name: "select_option", detail: "locator.select_option" },
+      { name: "wait_for", detail: "locator.wait_for" },
+      { name: "expect", detail: "playwright.sync_api" },
+      { name: "to_be_visible", detail: "expect" },
+      { name: "to_have_url", detail: "expect" },
+      { name: "to_have_text", detail: "expect" },
+      { name: "to_be_enabled", detail: "expect" },
+      { name: "page", detail: "fixture" },
+    ];
+  }
+
+  function wordAtCaret(ta) {
+    const v = ta.value || "";
+    const pos = ta.selectionStart || 0;
+    const left = v.slice(0, pos);
+    const right = v.slice(pos);
+    const dotted = (left.match(/[A-Za-z_][\w.]*$/) || [""])[0];
+    const pre = (left.match(/[A-Za-z0-9_]+$/) || [""])[0];
+    const suf = (right.match(/^[A-Za-z0-9_]+/) || [""])[0];
+    return { prefix: pre, token: dotted, start: pos - pre.length, end: pos + suf.length, pos: pos };
+  }
+
+  function wordFromPoint(e) {
+    const td = e.currentTarget || e.target;
+    const text = td && td.innerText ? td.innerText : "";
+    if (!text) return "";
+    let idx = 0;
+    try {
+      if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(e.clientX, e.clientY);
+        if (r && td.contains(r.startContainer)) {
+          const pre = document.createRange();
+          pre.selectNodeContents(td);
+          pre.setEnd(r.startContainer, r.startOffset);
+          idx = pre.toString().length;
+        }
+      }
+    } catch (err) { idx = 0; }
+    const left = text.slice(0, idx);
+    const right = text.slice(idx);
+    const pre = (left.match(/[A-Za-z0-9_]+$/) || [""])[0];
+    const suf = (right.match(/^[A-Za-z0-9_]+/) || [""])[0];
+    return pre + suf;
+  }
+
+  function hideAutocomplete() {
+    const el = $("#fwAc");
+    if (el) el.remove();
+    FW.acFromKey = false;
+  }
+
+  function acItems(prefix, token, symbols) {
+    const q = String(prefix || "").toLowerCase();
+    const dotted = String(token || "");
+    const afterDot = dotted.indexOf(".") >= 0;
+    const obj = afterDot ? dotted.split(".").slice(0, -1).join(".") : "";
+    const out = [];
+    function add(it) {
+      const name = it.name || "";
+      if (q && name.toLowerCase().indexOf(q) !== 0) return;
+      out.push(it);
+    }
+    (symbols || []).forEach(function (s) {
+      if (afterDot && (s.kind === "method" || s.kind === "locator")) {
+        if (obj && s.page && s.page.toLowerCase() !== obj.toLowerCase() && s.page.toLowerCase().indexOf(obj.toLowerCase()) < 0) {
+          /* still include locators/methods that match the prefix */
+        }
+        add({ name: s.name, kind: s.kind, detail: s.detail, path: s.path, line: s.line, insert: s.name + (s.kind === "method" ? "()" : "") });
+      } else if (!afterDot) {
+        add({ name: s.name, kind: s.kind, detail: s.detail, path: s.path, line: s.line, insert: s.name });
+      }
+    });
+    if (!afterDot) {
+      PY_KEYWORDS().forEach(function (k) { add({ name: k, kind: "keyword", detail: "Python", insert: k }); });
+    }
+    PW_APIS().forEach(function (k) { add({ name: k.name, kind: "playwright", detail: k.detail, insert: k.name + "()" }); });
+    const seen = {};
+    const uniq = [];
+    out.forEach(function (it) {
+      const key = it.kind + ":" + it.name;
+      if (seen[key]) return;
+      seen[key] = 1;
+      uniq.push(it);
+    });
+    uniq.sort(function (a, b) {
+      const rank = { method: 0, class: 1, locator: 2, function: 3, playwright: 4, keyword: 5 };
+      return (rank[a.kind] || 9) - (rank[b.kind] || 9) || a.name.localeCompare(b.name);
+    });
+    return uniq.slice(0, 12);
+  }
+
+  async function maybeAutocomplete(ta, view, fromKey) {
+    if (fromKey) FW.acFromKey = true;
+    const w = wordAtCaret(ta);
+    if (!fromKey && (!w.prefix || w.prefix.length < 1) && !/\.$/.test(w.token)) { hideAutocomplete(); return; }
+    const symbols = await ensureSymbols();
+    const items = acItems(w.prefix, w.token, symbols);
+    showAutocomplete(ta, view, items, w, !!fromKey || FW.acFromKey);
+  }
+
+  function showAutocomplete(ta, view, items, word, withAi) {
+    hideAutocomplete();
+    if (!items.length && !withAi) return;
+    const box = document.createElement("div");
+    box.className = "fw-ac"; box.id = "fwAc";
+    const rows = items.map(function (it, i) {
+      return '<div class="row' + (i === 0 ? " on" : "") + '" data-i="' + i + '"><span class="name">' + esc(it.name) + '</span><span class="sub">' + esc(it.detail || "") + '</span><span class="kind">' + esc(it.kind) + "</span></div>";
+    }).join("");
+    const ai = withAi ? '<div class="row ai" data-ai="1"><span class="name">✨ Ask AI for a suggestion</span><span class="kind">AI</span></div>' : "";
+    box.innerHTML = rows + ai;
+    const parent = view || ta.closest(".fw-codeview") || ta.parentElement;
+    if (parent && getComputedStyle(parent).position === "static") parent.style.position = "relative";
+    (parent || document.body).appendChild(box);
+    const c = caretOffsetInView(ta, parent);
+    const top = Math.min((c.top || 24) + 18, (parent.clientHeight || 240) - 8);
+    let left = c.left || 48;
+    box.style.top = top + "px";
+    box.style.left = left + "px";
+    const br = box.getBoundingClientRect();
+    const pr = parent.getBoundingClientRect();
+    if (br.right > pr.right - 8) box.style.left = Math.max(8, pr.width - br.width - 8) + "px";
+    if (br.bottom > pr.bottom - 4 && top > 120) box.style.top = Math.max(8, (c.top || 24) - br.height - 6) + "px";
+    let sel = 0;
+    const all = box.querySelectorAll(".row");
+    function paintSel() {
+      all.forEach(function (r, i) { r.classList.toggle("on", i === sel); });
+    }
+    function accept(i) {
+      const row = all[i];
+      if (!row) return;
+      if (row.dataset.ai) { hideAutocomplete(); askAiCompletion(ta, view, word); return; }
+      const it = items[+row.dataset.i];
+      if (it) insertCompletion(ta, word, it.insert || it.name);
+      hideAutocomplete();
+    }
+    all.forEach(function (r, i) {
+      r.onmouseenter = function () { sel = i; paintSel(); };
+      r.onclick = function (e) { e.preventDefault(); accept(i); };
+    });
+    box._fwMove = function (dir) { sel = (sel + dir + all.length) % all.length; paintSel(); };
+    box._fwAccept = function () { accept(sel); };
+  }
+
+  function caretOffsetInView(ta, parent) {
+    const div = document.createElement("div");
+    const st = window.getComputedStyle(ta);
+    const props = ["fontFamily","fontSize","fontWeight","fontStyle","letterSpacing","textTransform","wordSpacing","textIndent","lineHeight","padding","border","boxSizing"];
+    props.forEach(function (p) { try { div.style[p] = st[p]; } catch (e) {} });
+    div.style.position = "absolute";
+    div.style.visibility = "hidden";
+    div.style.whiteSpace = "pre";
+    div.style.overflow = "hidden";
+    div.style.width = ta.clientWidth + "px";
+    div.style.left = "0";
+    div.style.top = "0";
+    const pos = ta.selectionStart || 0;
+    div.textContent = ta.value.slice(0, pos);
+    const span = document.createElement("span");
+    span.textContent = "\u200b";
+    div.appendChild(span);
+    document.body.appendChild(div);
+    const taRect = ta.getBoundingClientRect();
+    const pRect = (parent || ta).getBoundingClientRect();
+    const sRect = span.getBoundingClientRect();
+    const dRect = div.getBoundingClientRect();
+    const top = (sRect.top - dRect.top) - ta.scrollTop + (taRect.top - pRect.top);
+    const left = (sRect.left - dRect.left) - ta.scrollLeft + (taRect.left - pRect.left);
+    div.remove();
+    return { top: top, left: left };
+  }
+
+  function insertCompletion(ta, word, text) {
+    const v = ta.value || "";
+    const start = word && word.start != null ? word.start : (ta.selectionStart || 0);
+    const end = word && word.end != null ? word.end : (ta.selectionEnd || 0);
+    ta.value = v.slice(0, start) + text + v.slice(end);
+    const caret = start + String(text).length;
+    ta.setSelectionRange(caret, caret);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.focus();
+  }
+
+  async function askAiCompletion(ta, view, word) {
+    if (!FW.fid) { toast("No project framework is loaded."); return; }
+    try {
+      const picked = await pickAi("Ask AI for a completion");
+      const v = ta.value || "";
+      const pos = (word && word.pos) || ta.selectionStart || 0;
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/suggest", {
+        method: "POST",
+        body: {
+          kind: "completion",
+          provider: picked.provider,
+          model: picked.model,
+          context: {
+            path: ta.dataset.path || FW.path,
+            prefix: (word && word.prefix) || "",
+            before: v.slice(Math.max(0, pos - 2000), pos),
+            after: v.slice(pos, pos + 800),
+          },
+        },
+      });
+      const text = (j.suggestion && (j.suggestion.text || j.suggestion.completion)) || (typeof j.suggestion === "string" ? j.suggestion : "");
+      if (!text) { toast("No suggestion returned."); return; }
+      insertCompletion(ta, word, text);
+      toast("AI suggestion inserted");
+    } catch (e) {
+      if (String(e.message) === "cancelled") return;
+      toast(e.message || String(e));
+    }
+  }
+
+  function handleEditorKey(e, ta, view, side) {
+    const ac = $("#fwAc");
+    if (ac && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      if (ac._fwMove) ac._fwMove(e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (ac && (e.key === "Enter" || e.key === "Tab")) {
+      e.preventDefault();
+      if (ac._fwAccept) ac._fwAccept();
+      return;
+    }
+    if (ac && e.key === "Escape") { e.preventDefault(); hideAutocomplete(); return; }
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key === " ") {
+      e.preventDefault();
+      maybeAutocomplete(ta, view, true);
+      return;
+    }
+    if (mod && !e.shiftKey && (e.key === "b" || e.key === "B") && e.altKey) {
+      /* reserved */
+    }
+  }
+
+  async function goToDefinition(name) {
+    name = String(name || "").trim();
+    if (!name) return;
+    const symbols = await ensureSymbols();
+    const lower = name.toLowerCase();
+    let hit = symbols.find(function (s) { return s.kind === "class" && String(s.name).toLowerCase() === lower; });
+    if (!hit) hit = symbols.find(function (s) { return (s.kind === "function" || s.kind === "method") && String(s.name).toLowerCase() === lower; });
+    if (!hit) hit = symbols.find(function (s) { return String(s.name).toLowerCase() === lower; });
+    if (!hit || !hit.path) { toast("No definition found for “" + name + "”."); return; }
+    FW.revealLine = hit.line || 1;
+    if (FW.path === hit.path) {
+      const line = FW.revealLine; FW.revealLine = 0;
+      revealCodeLine("left", line);
+    } else {
+      await openFile(hit.path);
+    }
+  }
+
+  function revealCodeLine(side, line) {
+    const root = side === "right" ? $("#fwMain2") : $("#fwMain");
+    if (!root) return;
+    const rows = root.querySelectorAll(".fw-ctable tr");
+    const n = Math.max(1, line | 0);
+    const tr = rows[n - 1];
+    if (tr) {
+      tr.classList.add("fw-reveal");
+      tr.scrollIntoView({ block: "center" });
+      setTimeout(function () { tr.classList.remove("fw-reveal"); }, 1600);
+    }
+    const gut = root.querySelectorAll(".fw-ln i")[n - 1];
+    if (gut) {
+      gut.classList.add("cur");
+      gut.scrollIntoView({ block: "center" });
+    }
+    if (isEditing(side)) {
+      const ta = root.querySelector("textarea.fw-edit-ta");
+      if (ta) {
+        const parts = String(ta.value || "").split("\n");
+        let pos = 0;
+        for (let i = 0; i < n - 1 && i < parts.length; i++) pos += parts[i].length + 1;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        const lh = parseFloat(window.getComputedStyle(ta).lineHeight) || 18;
+        ta.scrollTop = Math.max(0, (n - 4) * lh);
+      }
+    }
+  }
+
+  async function openRegenDialog(opts) {
+    opts = opts || {};
+    const path = opts.path || FW.path;
+    let scope = opts.scope || "file";
+    try {
+      await ensureFramework();
+      let used = (FW.file && FW.path === path && FW.file.used_by) || [];
+      if ((!used || !used.length) && path) {
+        try {
+          const jf = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/file?path=" + encodeURIComponent(path));
+          used = (jf && jf.used_by) || [];
+        } catch (e1) { used = used || []; }
+      }
+      let tcs = used.slice();
+      if ((!tcs || !tcs.length) && FW.fromTc) tcs = [FW.fromTc];
+      if (scope === "tc" && (!tcs || !tcs.length)) {
+        toast("This file is not linked to a test case. Link a case, or regenerate from Generate.");
+        return;
+      }
+      if (scope === "file" && (!tcs || !tcs.length)) {
+        toast("Regenerate needs a linked test case for this file. Generate one first, or choose Per test case after linking.");
+        return;
+      }
+      const picked = await pickAi("Regenerate automation script");
+      let cases = [];
+      try {
+        const repo = await api("/api/repo");
+        cases = repo.cases || [];
+      } catch (e) { toast(e.message || String(e)); return; }
+      const ids = scope === "tc" ? [tcs[0]] : tcs;
+      const selected = cases.filter(function (c) { return ids.indexOf(c.id) >= 0; });
+      if (!selected.length) { toast("Could not load the linked test case(s)."); return; }
+      const test_cases = selected.map(function (c) {
+        return {
+          id: c.id, name: c.title || c.name, description: c.description,
+          precondition: c.precondition, priority: c.priority, type: c.type,
+          steps: (c.steps || []).map(function (s) { return { description: s.step || s.description, expected: s.expected, data: s.data }; }),
+        };
+      });
+      const body = {
+        test_cases: test_cases,
+        language: FW.lang,
+        frameworks: [(FW.fw && FW.fw.framework) || defaultFramework(FW.lang)],
+        types: (FW.fw && FW.fw.types) || ["ui"],
+        additional_context: (scope === "file" && path) ? ("Regenerate in particular: " + path + ". Preserve unrelated files. Do not drop manual comments if they still apply.") : "",
+        provider: picked.provider, model: picked.model,
+      };
+      closeWiz();
+      const ov = document.createElement("div");
+      ov.className = "fw-wiz"; ov.id = "fwWiz";
+      ov.innerHTML = '<div class="box"><div class="hd"><h2>Regenerate script</h2><span style="flex:1"></span><div class="fw-steps" id="fwWizSteps"></div></div><div class="bd" id="fwWizBd">Generating…</div><div class="ft" id="fwWizFt"></div></div>';
+      document.body.appendChild(ov);
+      const res = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/generate", { method: "POST", body: body });
+      let changes = (res.changes || []).map(function (c) { return Object.assign({}, c, { include: c.include !== false, show: !!c.edited || (scope === "file" && c.path === path) }); });
+      if (scope === "file" && path) {
+        changes.forEach(function (c) { c.include = c.path === path ? c.include !== false : false; });
+      }
+      FW.wiz = {
+        step: 3, mode: "regen", scope: scope, scopePath: path, scopeTc: ids[0] || "",
+        cases: cases, sel: {}, changes: changes, result: res, context: "",
+      };
+      paintWiz();
+    } catch (e) {
+      if (String(e.message) === "cancelled") return;
+      if ($("#fwWizBd")) {
+        $("#fwWizBd").innerHTML = '<div class="error">' + esc(e.message || e) + "</div>";
+        $("#fwWizFt").innerHTML = '<button type="button" class="btn g" id="fwWizX">Close</button>';
+        if ($("#fwWizX")) $("#fwWizX").onclick = closeWiz;
+      } else toast(e.message || String(e));
+    }
+  }
+
 
   window.fwAddLibraryToProject = addLibraryToProject;
   const _renderLib = window.asRenderLibrary;

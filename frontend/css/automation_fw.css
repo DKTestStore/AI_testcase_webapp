@@ -310,3 +310,64 @@
 .as-prevbar{display:flex;align-items:center;gap:10px;padding:8px 0 0;font-size:13px;color:#5b6475}
 .as-prevbar a{color:#4361ee;font-weight:650;text-decoration:none;cursor:pointer}
 #asEdCode[readonly]{background:#f7f8fb}
+
+/* v13 editor: new file, previews, tabs, quick open, autocomplete, regenerate */
+.fw-mk.e{background:#f3e8ff;color:#6d28d9}
+.fw-tabs{display:flex;align-items:stretch;gap:0;border-bottom:1px solid #e3e7f0;background:#f7f8fc;flex-shrink:0;padding:0 0 0 4px;min-height:32px;overflow:hidden}
+.fw-tabs .tab{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;font-size:12.5px;color:#5b6475;border-right:1px solid #e3e7f0;background:transparent;max-width:200px;cursor:pointer;border:0;border-right:1px solid #e3e7f0;font-family:inherit;white-space:nowrap}
+.fw-tabs .tab .nm{overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.fw-tabs .tab.on{background:#fff;color:#1e2433;font-weight:650;border-bottom:2px solid #4361ee;margin-bottom:-1px}
+.fw-tabs .tab .x{color:#8b93a7;font-size:11px;padding:0 2px;line-height:1;background:none;border:0;cursor:pointer;font-family:inherit}
+.fw-tabs .tab .x:hover{color:#1e2433}
+.fw-tabs .qp{margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:0 10px;font-size:12px;color:#6b7385;background:none;border:0;cursor:pointer;font-family:inherit;flex-shrink:0}
+.fw-tabs .qp kbd{font:11px/1 ui-monospace,Consolas,monospace;border:1px solid #d5dae6;border-radius:4px;padding:2px 5px;background:#fff}
+.fw-pev{display:inline-flex;background:#f4f6fb;border:1px solid #e3e7f0;border-radius:8px;overflow:hidden;padding:2px;margin-left:8px}
+.fw-pev button{padding:3px 9px;font-size:12px;font-weight:650;color:#5b6475;border-radius:6px;border:0;background:transparent;cursor:pointer;font-family:inherit}
+.fw-pev button.on{background:#fff;color:#1e2433;box-shadow:0 1px 2px #1e243314}
+.fw-prevwrap{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.fw-prevhd{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #eef1f7;flex-shrink:0}
+.fw-prevhd .sp{flex:1}
+.fw-txtprev{flex:1;min-height:0;margin:0;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.5;color:#1e2433;white-space:pre-wrap;overflow:auto;background:#fff}
+.fw-tree-json .n{display:flex;align-items:center;gap:6px;padding:2px 6px;border-radius:6px;line-height:1.35;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.fw-tree-json .n .k{color:#1e2433;font-weight:650}
+.fw-tree-json .n .v{color:#15803d;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fw-tree-json .tbadge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;text-transform:uppercase;letter-spacing:.03em;flex-shrink:0;font-family:Inter,Segoe UI,sans-serif}
+.fw-tree-json .tbadge.obj{background:#e8ecff;color:#3046b8}
+.fw-tree-json .tbadge.arr{background:#f3e8ff;color:#6d28d9}
+.fw-tree-json .tbadge.str{background:#e6f6ec;color:#15803d}
+.fw-tree-json .tbadge.num{background:#fff4dc;color:#a36b00}
+.fw-tree-json .tbadge.bool{background:#ecfeff;color:#0e7490}
+.fw-tree-json .tbadge.attr{background:#fff1e0;color:#c2410c}
+.fw-tree-json .tbadge.el{background:#e8ecff;color:#3046c4}
+.fw-tree-json .ch{width:12px;color:#8b93a7;font-size:10px;flex-shrink:0;text-align:center}
+.fw-tree-json .i1{padding-left:4px}.fw-tree-json .i2{padding-left:18px}.fw-tree-json .i3{padding-left:32px}.fw-tree-json .i4{padding-left:46px}
+.fw-palette{position:fixed;z-index:80;top:80px;left:50%;transform:translateX(-50%);width:min(520px,92vw);background:#fff;border:1px solid #d5dae6;border-radius:12px;box-shadow:0 16px 40px #1e243350;overflow:hidden}
+.fw-palette .q{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #eef1f7;font-size:13.5px;color:#1e2433}
+.fw-palette .q input{border:0;outline:0;flex:1;font:inherit;background:transparent}
+.fw-palette .row{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:13px;cursor:pointer}
+.fw-palette .row.on{background:#eef2ff}
+.fw-palette .path{color:#6b7385;font-size:11.5px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.fw-ac{position:absolute;z-index:40;width:min(420px,90%);background:#fff;border:1px solid #d5dae6;border-radius:10px;box-shadow:0 12px 32px #1e243340;overflow:hidden;font-size:12.5px;color:#1e2433}
+.fw-ac .row{display:flex;align-items:center;gap:8px;padding:5px 10px;cursor:pointer}
+.fw-ac .row.on{background:#eef2ff}
+.fw-ac .name{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;font-weight:650;color:#1e2433}
+.fw-ac .sub{color:#6b7385;font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fw-ac .kind{margin-left:auto;font-size:10.5px;font-weight:750;color:#6b7385;text-transform:uppercase;letter-spacing:.03em;flex-shrink:0}
+.fw-ac .ai{background:#f5f3ff;border-top:1px solid #e9e4ff}
+.fw-ac .ai .name{color:#5b21b6}
+.fw-goto{background:#1f3a5f66;border-bottom:1px dashed #58a6ff;cursor:pointer}
+.fw-reveal td.fw-ccode{background:#3fb95033}
+.fw-wiz .box.fw-newf{width:min(560px,96vw);height:auto;max-height:min(720px,94vh)}
+.fw-types{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 12px}
+.fw-types button{display:flex;flex-direction:column;align-items:center;gap:6px;border:1px solid #e3e7f0;border-radius:10px;padding:10px 6px 8px;font-size:12px;font-weight:750;color:#5b6475;background:#fff;cursor:pointer;font-family:inherit}
+.fw-types button.on{background:#eef2ff;border-color:#4361ee;color:#3046c4;box-shadow:0 0 0 3px #4361ee22}
+.fw-name{display:flex;align-items:center;gap:0;border:1px solid #d5dae6;border-radius:8px;overflow:hidden}
+.fw-name input{flex:1;border:0;outline:0;padding:8px 10px;font:inherit;font-size:14px;min-width:0}
+.fw-name .ext{padding:8px 10px;background:#f7f8fc;border-left:1px solid #e3e7f0;font-family:ui-monospace,Consolas,monospace;font-weight:750;color:#3046c4}
+.fw-folderlist{border:1px solid #e3e7f0;border-radius:10px;padding:6px;margin-top:6px;background:#f7f8fc;max-height:160px;overflow:auto}
+.fw-folderlist .row{display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:6px;font-size:12.5px;cursor:pointer;border:0;background:transparent;width:100%;text-align:left;font-family:inherit}
+.fw-folderlist .row.on{background:#eef2ff;font-weight:650}
+.fw-scope{display:flex;gap:8px;margin:0 0 10px}
+.fw-scope button{border:1px solid #d5dae6;background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:700;color:#5b6475;cursor:pointer;font-family:inherit}
+.fw-scope button.on{background:#eef2ff;border-color:#c9d3ff;color:#3046c4}
+.fw-cbtn.ghost.regen{color:#4361ee}

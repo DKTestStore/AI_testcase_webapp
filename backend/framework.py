@@ -6,6 +6,7 @@ disk, and never in the application .env.
 from __future__ import annotations
 
 import csv
+import zipfile
 import hashlib
 import io
 import json
@@ -273,7 +274,14 @@ def _tree_payload(session: Session, fid: str) -> List[Dict[str, Any]]:
         .order_by(FrameworkFile.is_dir.desc(), FrameworkFile.path)
         .all()
     )
-    return [_file_dict(r) for r in rows]
+    edited = _edited_paths(session, fid)
+    out = []
+    for r in rows:
+        d = _file_dict(r)
+        if not r.is_dir:
+            d["edited"] = bool(edited.get(r.path))
+        out.append(d)
+    return out
 
 
 # --------------------------------------------------------------------------- TC sync
@@ -720,6 +728,178 @@ def _is_test_path(path: str) -> bool:
     )
 
 
+
+def _stdlib_minimal_xlsx() -> bytes:
+    """Minimal xlsx (Office Open XML) built with the stdlib only."""
+    sheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetData/></worksheet>'
+    )
+    workbook = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    wb_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '</Relationships>'
+    )
+    ctypes = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", ctypes)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("xl/workbook.xml", workbook)
+        zf.writestr("xl/_rels/workbook.xml.rels", wb_rels)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet)
+    return buf.getvalue()
+
+
+def _minimal_xlsx_bytes() -> bytes:
+    if openpyxl is not None:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+    return _stdlib_minimal_xlsx()
+
+
+def _minimal_xlsx_json() -> str:
+    """Store a new workbook in the existing JSON-sheets format used by preview_xlsx."""
+    raw = _minimal_xlsx_bytes()
+    try:
+        book = parse_xlsx_bytes(raw)
+        if not book.get("sheets"):
+            book = {"sheets": {"Sheet1": {"header": [], "rows": []}}}
+        return json.dumps(book, ensure_ascii=False)
+    except Exception:
+        return json.dumps({"sheets": {"Sheet1": {"header": [], "rows": []}}}, ensure_ascii=False)
+
+
+def seed_new_file_content(path: str) -> str:
+    """Default content for a newly created file, based on extension."""
+    ext = _ext(path)
+    if ext in ("xlsx", "xlsm"):
+        return _minimal_xlsx_json()
+    if ext == "csv":
+        return "col1,col2\n"
+    if ext == "json":
+        return "{}\n"
+    if ext in ("yaml", "yml"):
+        return "# YAML\n"
+    if ext == "xml":
+        return '<?xml version="1.0" encoding="UTF-8"?>\n<root>\n</root>\n'
+    if ext == "txt":
+        return ""
+    if ext == "py":
+        name = path.rstrip("/").split("/")[-1]
+        return f'"""{name}"""\n'
+    return ""
+
+
+def _is_generated_version(author: str, note: str) -> bool:
+    a = (author or "").strip().lower()
+    n = (note or "").strip().lower()
+    if a == "ai":
+        return True
+    if a in ("you", "system", ""):
+        return n in ("applied", "new", "changed", "generated", "applied changes") or n.startswith("applied")
+    return False
+
+
+def _baselines(session: Session, fid: str) -> Dict[str, str]:
+    """Last AI/generated snapshot per file path (current content if last save was AI)."""
+    rows = (
+        session.query(FrameworkFile)
+        .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+        .all()
+    )
+    if not rows:
+        return {}
+    ids = [r.id for r in rows]
+    versions = (
+        session.query(FrameworkFileVersion)
+        .filter(FrameworkFileVersion.file_id.in_(ids))
+        .order_by(FrameworkFileVersion.file_id, FrameworkFileVersion.version.desc())
+        .all()
+    )
+    latest: Dict[int, FrameworkFileVersion] = {}
+    for v in versions:
+        if v.file_id in latest:
+            continue
+        if _is_generated_version(v.author, v.note):
+            latest[v.file_id] = v
+    out: Dict[str, str] = {}
+    for r in rows:
+        if r.id in latest:
+            out[r.path] = latest[r.id].content or ""
+        elif _is_generated_version(r.updated_by, ""):
+            out[r.path] = r.content or ""
+    return out
+
+
+def _edited_paths(session: Session, fid: str) -> Dict[str, bool]:
+    rows = (
+        session.query(FrameworkFile)
+        .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+        .all()
+    )
+    base = _baselines(session, fid)
+    out: Dict[str, bool] = {}
+    for r in rows:
+        b = base.get(r.path)
+        if b is not None and (r.content or "") != b:
+            out[r.path] = True
+    return out
+
+
+_PY_CLASS = re.compile(r"^class\s+(\w+)", re.M)
+_PY_DEF = re.compile(r"^([ \t]*)def\s+(\w+)\s*\(", re.M)
+
+
+def _parse_py_symbols(path: str, content: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    current = None
+    current_indent = 0
+    lines = (content or "").splitlines()
+    for i, line in enumerate(lines, 1):
+        cm = re.match(r"^class\s+(\w+)", line)
+        if cm:
+            current = cm.group(1)
+            current_indent = 0
+            out.append({"name": current, "kind": "class", "path": path, "line": i, "detail": "class", "page": current})
+            continue
+        dm = re.match(r"^([ \t]*)def\s+(\w+)\s*\(", line)
+        if dm:
+            indent, name = len(dm.group(1).replace("\t", "    ")), dm.group(2)
+            if current and indent > 0:
+                out.append({"name": name, "kind": "method", "path": path, "line": i, "detail": current + "." + name, "page": current})
+            else:
+                current = None
+                out.append({"name": name, "kind": "function", "path": path, "line": i, "detail": name, "page": ""})
+    return out
+
+
 def attach(parent: APIRouter, current) -> None:
 
     """Register framework routes on the existing /api/automation router."""
@@ -805,6 +985,8 @@ def attach(parent: APIRouter, current) -> None:
         is_dir = bool(data.get("is_dir")) or path.endswith("/")
         if is_dir and not path.endswith("/"):
             path += "/"
+        if not is_dir and content == "" and not data.get("empty"):
+            content = seed_new_file_content(path)
         with session_scope() as session:
             _fw_or_404(session, fid)
             if _file_row(session, fid, path):
@@ -942,6 +1124,17 @@ def attach(parent: APIRouter, current) -> None:
         result = auto.generate_impl(payload, sess)
         incoming = result.get("files_map") or {f["path"]: f["content"] for f in (result.get("files") or [])}
         changes = classify_files(existing, incoming, result.get("mapping") or [])
+        with session_scope() as session:
+            _fw_or_404(session, fid)
+            baselines = _baselines(session, fid)
+        for ch in changes:
+            path = ch.get("path") or ""
+            current = existing.get(path, "")
+            base = baselines.get(path)
+            ch["current"] = current
+            ch["edited"] = bool(base is not None and current != base)
+            if base is not None:
+                ch["baseline"] = base
         return {**result, "ok": True, "framework_id": fid, "changes": changes}
 
     @parent.post("/frameworks/{fid}/apply")
@@ -1367,6 +1560,15 @@ def attach(parent: APIRouter, current) -> None:
                 "Suggest test data rows as JSON {rows:[{...}]}. "
                 f"Context: {json.dumps(data.get('context') or {}, ensure_ascii=False)[:2000]}"
             )
+        elif kind == "completion":
+            ctx = data.get("context") or {}
+            user = (
+                "Suggest a short code completion as JSON {text}. "
+                "Return only the text that should be inserted at the cursor, not the whole file. "
+                f"Path: {ctx.get('path') or ''}. Prefix: {str(ctx.get('prefix') or '')[:400]}. "
+                f"Before cursor:\n{str(ctx.get('before') or '')[-2000:]}\n"
+                f"After cursor:\n{str(ctx.get('after') or '')[:800]}"
+            )
         else:
             user = f"Suggest a JSON improvement. Context: {json.dumps(data.get('context') or {}, ensure_ascii=False)[:2000]}"
         if env("ATG_MOCK_GEMINI", "") == "1":
@@ -1374,12 +1576,44 @@ def attach(parent: APIRouter, current) -> None:
                 suggestion = {"name": "forgot_link", "strategy": "role", "value": 'name="Forgot password"', "page": "Login", "status": "Suggested"}
             elif kind == "assertion":
                 suggestion = {"type": "Text equals", "target": "toast", "expected": "Reset link sent"}
+            elif kind == "completion":
+                ctx = data.get("context") or {}
+                suggestion = {"text": str(ctx.get("prefix") or "pass")}
             else:
                 suggestion = {"rows": [{"RESET_EMAIL": "ada@example.com"}]}
             return {"ok": True, "suggestion": suggestion, "mock": True}
         out = _ai_complete(str(data.get("provider") or ""), str(data.get("model") or ""), system, user, sess)
         suggestion = _parse_json_blob(out.get("text") or "")
         return {"ok": True, "suggestion": suggestion}
+
+    @parent.get("/frameworks/{fid}/symbols")
+    def get_symbols(fid: str):
+        """Page-object classes/methods plus saved locators, for editor autocomplete and go-to-definition."""
+        with session_scope() as session:
+            _fw_or_404(session, fid)
+            files = (
+                session.query(FrameworkFile)
+                .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+                .all()
+            )
+            symbols: List[Dict[str, Any]] = []
+            for row in files:
+                ext = _ext(row.path)
+                if ext == "py":
+                    symbols.extend(_parse_py_symbols(row.path, row.content or ""))
+            locators = session.query(FrameworkLocator).filter(FrameworkLocator.framework_id == fid).all()
+            for r in locators:
+                symbols.append({
+                    "name": r.name,
+                    "kind": "locator",
+                    "path": r.page or "",
+                    "line": 0,
+                    "detail": (r.strategy or "css") + "=" + (r.value or ""),
+                    "page": r.page or "",
+                    "strategy": r.strategy,
+                    "value": r.value,
+                })
+            return {"ok": True, "symbols": symbols}
 
     @parent.get("/frameworks/{fid}/preview")
     def get_preview(fid: str, path: str = Query(...)):
