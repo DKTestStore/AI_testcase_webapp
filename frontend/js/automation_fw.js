@@ -596,15 +596,22 @@
   function highlightCode(raw, ext) {
     raw = String(raw == null ? "" : raw);
     ext = (ext || "").toLowerCase();
-    if (ext === "py") return hlPython(raw);
-    if (ext === "js" || ext === "ts") return hlJs(raw);
-    if (ext === "ini" || ext === "cfg" || ext === "properties") return hlIni(raw);
-    if (ext === "json") return hlGeneric(raw);
-    if (ext === "env") return hlEnv(raw);
-    if (ext === "md") return hlMd(raw);
-    if (ext === "yaml" || ext === "yml") return hlYaml(raw);
-    if (ext === "xml" || ext === "html" || ext === "htm") return hlXml(raw);
-    return esc(raw);
+    try {
+      if (ext === "py") return hlTokenize(raw, "py");
+      if (ext === "js" || ext === "ts") return hlTokenize(raw, "js");
+      if (ext === "ini" || ext === "cfg" || ext === "properties") return hlIni(raw);
+      if (ext === "json") return hlTokenize(raw, "json");
+      if (ext === "env") return hlEnv(raw);
+      if (ext === "md") return hlMd(raw);
+      if (ext === "yaml" || ext === "yml") return hlYaml(raw);
+      if (ext === "xml" || ext === "html" || ext === "htm") return hlXml(raw);
+      return esc(raw);
+    } catch (e) {
+      return esc(raw);
+    }
+  }
+  function visText(s) {
+    return String(s == null ? "" : s).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   }
   function overlayInner(raw, ext) {
     raw = String(raw == null ? "" : raw);
@@ -614,116 +621,181 @@
     return html;
   }
   function setOverlay(pre, raw, ext) {
-    if (!pre) return;
+    if (!pre) return false;
     raw = String(raw == null ? "" : raw);
+    const wrap = pre.closest(".fw-edwrap");
     let code = pre.querySelector("code");
     if (!code) {
       code = document.createElement("code");
       pre.textContent = "";
       pre.appendChild(code);
     }
-    let html;
-    try { html = highlightCode(raw, ext); } catch (e) { html = esc(raw); }
-    code.innerHTML = html;
-    if (code.textContent !== raw) code.innerHTML = esc(raw);
+    let ok = false;
+    try {
+      code.innerHTML = highlightCode(raw, ext);
+      ok = visText(code.textContent) === visText(raw);
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) code.innerHTML = esc(raw);
     if (raw.endsWith("\n") || raw === "") code.appendChild(document.createTextNode("\n"));
+    if (wrap) {
+      wrap.classList.toggle("fallback", !ok);
+      const ta = wrap.querySelector("textarea");
+      if (ta && !isPlainEditor()) ta.style.color = ok ? "" : "#1e2433";
+    }
+    return ok;
   }
-  function hlParts(src, next) {
+  function hlPush(out, text, cls) {
+    if (!text) return;
+    if (!cls) { out.push(esc(text)); return; }
+    const parts = text.split(/(\r\n|\n|\r)/);
+    for (let p = 0; p < parts.length; p++) {
+      const part = parts[p];
+      if (!part) continue;
+      if (part === "\n" || part === "\r" || part === "\r\n") out.push(part);
+      else out.push('<span class="fw-t-' + cls + '">' + esc(part) + "</span>");
+    }
+  }
+  function pyStringPrefixLen(s, i) {
+    if (i > 0 && /[A-Za-z0-9_]/.test(s[i - 1])) return 0;
+    const two = s.slice(i, i + 2).toLowerCase();
+    if ((two === "fr" || two === "rf" || two === "br" || two === "rb") && (s[i + 2] === "'" || s[i + 2] === '"')) return 2;
+    const one = s.charAt(i).toLowerCase();
+    if ((one === "r" || one === "f" || one === "b" || one === "u") && (s[i + 1] === "'" || s[i + 1] === '"')) return 1;
+    return 0;
+  }
+  function scanQuoted(s, i, opts) {
+    const q = s[i];
+    const triple = !!(opts.triple && s[i + 1] === q && s[i + 2] === q);
+    const delimLen = triple ? 3 : 1;
+    let j = i + delimLen;
+    const allowMulti = triple || !!opts.multiline;
+    while (j < s.length) {
+      const ch = s[j];
+      if (ch === "\\" && j + 1 < s.length) {
+        if (s[j + 1] === "\r" && s[j + 2] === "\n") { j += 3; continue; }
+        j += 2;
+        continue;
+      }
+      if (!allowMulti && (ch === "\n" || ch === "\r")) return j;
+      if (triple) {
+        if (s[j] === q && s[j + 1] === q && s[j + 2] === q) return j + 3;
+      } else if (ch === q) {
+        return j + 1;
+      }
+      j++;
+    }
+    return s.length;
+  }
+  function hlTokenize(src, mode) {
+    const pyKw = { def: 1, class: 1, return: 1, import: 1, from: 1, as: 1, if: 1, elif: 1, else: 1, for: 1, while: 1, try: 1, except: 1, finally: 1, with: 1, yield: 1, lambda: 1, pass: 1, break: 1, continue: 1, and: 1, or: 1, not: 1, in: 1, is: 1, None: 1, True: 1, False: 1, self: 1, async: 1, await: 1, global: 1, nonlocal: 1, assert: 1, raise: 1, del: 1 };
+    const jsKw = { function: 1, const: 1, let: 1, var: 1, return: 1, import: 1, from: 1, export: 1, as: 1, if: 1, else: 1, for: 1, while: 1, try: 1, catch: 1, finally: 1, class: 1, new: 1, this: 1, async: 1, await: 1, true: 1, false: 1, null: 1, undefined: 1, typeof: 1, instanceof: 1, in: 1, of: 1, break: 1, continue: 1, switch: 1, case: 1, default: 1, throw: 1 };
+    const jsonKw = { true: 1, false: 1, null: 1 };
     const out = [];
     let i = 0;
     const n = src.length;
     while (i < n) {
-      const hit = next(src, i);
-      if (!hit) { out.push(esc(src.slice(i))); break; }
-      if (hit.start > i) out.push(esc(src.slice(i, hit.start)));
-      if (hit.cls) out.push('<span class="' + hit.cls + '">' + esc(src.slice(hit.start, hit.end)) + "</span>");
-      else out.push(esc(src.slice(hit.start, hit.end)));
-      i = hit.end;
-      if (hit.end <= hit.start) { out.push(esc(src.slice(i))); break; }
+      const ch = src[i];
+      if (mode === "py" && ch === "#") {
+        let j = i + 1;
+        while (j < n && src[j] !== "\n" && src[j] !== "\r") j++;
+        hlPush(out, src.slice(i, j), "c");
+        i = j;
+        continue;
+      }
+      if (mode === "js" && ch === "/" && src[i + 1] === "/") {
+        let j = i + 2;
+        while (j < n && src[j] !== "\n" && src[j] !== "\r") j++;
+        hlPush(out, src.slice(i, j), "c");
+        i = j;
+        continue;
+      }
+      if (mode === "js" && ch === "/" && src[i + 1] === "*") {
+        const end = src.indexOf("*/", i + 2);
+        const j = end < 0 ? n : end + 2;
+        hlPush(out, src.slice(i, j), "c");
+        i = j;
+        continue;
+      }
+      if (mode === "py") {
+        const pref = pyStringPrefixLen(src, i);
+        const qi = i + pref;
+        if (qi < n && (src[qi] === "'" || src[qi] === '"')) {
+          const end = scanQuoted(src, qi, { triple: true });
+          hlPush(out, src.slice(i, end), "s");
+          i = end;
+          continue;
+        }
+      }
+      if ((mode === "js" || mode === "json") && (ch === "'" || ch === '"' || (mode === "js" && ch === "`"))) {
+        if (mode === "json" && ch === "'") { hlPush(out, ch, ""); i++; continue; }
+        const end = scanQuoted(src, i, { triple: false, multiline: ch === "`" });
+        hlPush(out, src.slice(i, end), "s");
+        i = end;
+        continue;
+      }
+      if ((mode === "py" && /[A-Za-z_]/.test(ch)) || ((mode === "js" || mode === "json") && /[A-Za-z_$]/.test(ch))) {
+        let j = i + 1;
+        const re = mode === "js" ? /[\w$]/ : /\w/;
+        while (j < n && re.test(src[j])) j++;
+        const word = src.slice(i, j);
+        const kw = mode === "py" ? pyKw : mode === "json" ? jsonKw : jsKw;
+        const isFn = mode === "py" && (word === "def" || word === "class") && (src[j] === " " || src[j] === "\t");
+        if (isFn) {
+          hlPush(out, word, "k");
+          let k = j;
+          while (k < n && (src[k] === " " || src[k] === "\t")) k++;
+          hlPush(out, src.slice(j, k), "");
+          let e = k;
+          while (e < n && /\w/.test(src[e])) e++;
+          if (e > k) hlPush(out, src.slice(k, e), "f");
+          i = e > k ? e : k;
+          continue;
+        }
+        hlPush(out, word, kw[word] ? "k" : "");
+        i = j;
+        continue;
+      }
+      hlPush(out, ch, "");
+      i++;
     }
     return out.join("");
   }
-  function hlPython(src) {
-    const kw = /^(def|class|return|import|from|as|if|elif|else|for|while|try|except|finally|with|yield|lambda|pass|break|continue|and|or|not|in|is|None|True|False|self|async|await)\b/;
-    return hlParts(src, function (s, i) {
-      if (s[i] === "#") { const e = s.indexOf("\n", i); return { start: i, end: e < 0 ? s.length : e, cls: "c" }; }
-      const tq = String.fromCharCode(34, 34, 34);
-      const tqs = String.fromCharCode(39, 39, 39);
-      if (s.startsWith(tq, i) || s.startsWith(tqs, i)) {
-        const q = s.slice(i, i + 3); const e = s.indexOf(q, i + 3); return { start: i, end: e < 0 ? s.length : e + 3, cls: "s" };
-      }
-      if (s[i] === '"' || s[i] === "'") {
-        const q = s[i]; let j = i + 1;
-        while (j < s.length && s[j] !== q) { if (s[j] === "\\") j++; j++; }
-        return { start: i, end: Math.min(s.length, j + 1), cls: "s" };
-      }
-      if (s.startsWith("def ", i) || s.startsWith("class ", i)) {
-        const m = s.slice(i).match(/^(def|class)\s+(\w+)/);
-        if (m) return { start: i + m[1].length + 1, end: i + m[0].length, cls: "f" };
-      }
-      if (/[A-Za-z_]/.test(s[i])) {
-        const m = s.slice(i).match(/^[A-Za-z_]\w*/);
-        if (m && kw.test(m[0])) return { start: i, end: i + m[0].length, cls: "k" };
-        return { start: i, end: i + (m ? m[0].length : 1), cls: "" };
-      }
-      return null;
-    });
-  }
-  function hlJs(src) {
-    const kw = /^(function|const|let|var|return|import|from|export|as|if|else|for|while|try|catch|finally|class|new|this|async|await|true|false|null|undefined)\b/;
-    return hlParts(src, function (s, i) {
-      if (s.startsWith("//", i)) { const e = s.indexOf("\n", i); return { start: i, end: e < 0 ? s.length : e, cls: "c" }; }
-      if (s.startsWith("/*", i)) { const e = s.indexOf("*/", i + 2); return { start: i, end: e < 0 ? s.length : e + 2, cls: "c" }; }
-      if (s[i] === '"' || s[i] === "'" || s[i] === "`") {
-        const q = s[i]; let j = i + 1;
-        while (j < s.length && s[j] !== q) { if (s[j] === "\\") j++; j++; }
-        return { start: i, end: Math.min(s.length, j + 1), cls: "s" };
-      }
-      if (/[A-Za-z_$]/.test(s[i])) {
-        const m = s.slice(i).match(/^[A-Za-z_$][\w$]*/);
-        if (m && kw.test(m[0])) return { start: i, end: i + m[0].length, cls: "k" };
-        return { start: i, end: i + (m ? m[0].length : 1), cls: "" };
-      }
-      return null;
-    });
-  }
   function hlIni(src) {
     return src.split("\n").map(function (line) {
-      if (/^\s*[;#]/.test(line)) return '<span class="c">' + esc(line) + "</span>";
-      if (/^\s*\[/.test(line)) return '<span class="sec">' + esc(line) + "</span>";
+      if (/^\s*[;#]/.test(line)) return '<span class="fw-t-c">' + esc(line) + "</span>";
+      if (/^\s*\[/.test(line)) return '<span class="fw-t-sec">' + esc(line) + "</span>";
       const m = line.match(/^(\s*[^=]+?)(\s*=\s*)(.*)$/);
-      if (m) return '<span class="key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="s">' + esc(m[3]) + "</span>";
+      if (m) return '<span class="fw-t-key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="fw-t-s">' + esc(m[3]) + "</span>";
       return esc(line);
     }).join("\n");
   }
   function hlEnv(src) {
     return src.split("\n").map(function (line) {
-      if (/^\s*#/.test(line)) return '<span class="c">' + esc(line) + "</span>";
+      if (/^\s*#/.test(line)) return '<span class="fw-t-c">' + esc(line) + "</span>";
       const m = line.match(/^(\s*[^=]+)(\s*=\s*)(.*)$/);
-      if (m) return '<span class="key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="s">' + esc(m[3]) + "</span>";
+      if (m) return '<span class="fw-t-key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="fw-t-s">' + esc(m[3]) + "</span>";
       return esc(line);
     }).join("\n");
   }
   function hlMd(src) {
-    return esc(src).replace(/^#{1,6} .+$/gm, function (m) { return '<span class="k">' + m + "</span>"; })
-      .replace(/`[^`]+`/g, function (m) { return '<span class="s">' + m + "</span>"; });
+    return esc(src).replace(/^#{1,6} .+$/gm, function (m) { return '<span class="fw-t-k">' + m + "</span>"; })
+      .replace(/`[^`]+`/g, function (m) { return '<span class="fw-t-s">' + m + "</span>"; });
   }
   function hlYaml(src) {
     return src.split("\n").map(function (line) {
-      if (/^\s*#/.test(line)) return '<span class="c">' + esc(line) + "</span>";
+      if (/^\s*#/.test(line)) return '<span class="fw-t-c">' + esc(line) + "</span>";
       const m = line.match(/^(\s*[\w-]+\s*:)(\s*)(.*)$/);
-      if (m) return '<span class="key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="s">' + esc(m[3]) + "</span>";
+      if (m) return '<span class="fw-t-key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="fw-t-s">' + esc(m[3]) + "</span>";
       return esc(line);
     }).join("\n");
   }
   function hlXml(src) {
     return esc(src)
-      .replace(/&lt;!--[\s\S]*?--&gt;/g, function (m) { return '<span class="c">' + m + "</span>"; })
-      .replace(/&lt;\/?[\w:-]+/g, function (m) { return '<span class="k">' + m + "</span>"; })
-      .replace(/&gt;/g, '<span class="k">&gt;</span>');
-  }
-  function hlGeneric(src) {
-    return esc(src).replace(/(&quot;.*?&quot;|&#39;.*?&#39;)/g, function (m) { return '<span class="s">' + m + "</span>"; });
+      .replace(/&lt;!--[\s\S]*?--&gt;/g, function (m) { return '<span class="fw-t-c">' + m + "</span>"; })
+      .replace(/&lt;\/?[\w:-]+/g, function (m) { return '<span class="fw-t-k">' + m + "</span>"; })
+      .replace(/&gt;/g, '<span class="fw-t-k">&gt;</span>');
   }
 
   function histHtml() {
@@ -1039,6 +1111,7 @@
       };
       window.addEventListener("resize", FW._edResize);
     }
+    if (wrap) setOverlay(wrap.querySelector(".fw-hl"), ta.value, extOf(path));
     syncScroll();
   }
 
