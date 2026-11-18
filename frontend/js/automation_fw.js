@@ -98,6 +98,13 @@
   function clockSvg() {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>';
   }
+  function isPlainEditor() {
+    try { return localStorage.getItem("fwEditorPlain") === "1"; } catch (e) { return !!FW.plain; }
+  }
+  function setPlainEditor(on) {
+    FW.plain = !!on;
+    try { localStorage.setItem("fwEditorPlain", on ? "1" : "0"); } catch (e) {}
+  }
   function isEnvPath(path) {
     const n = (path || "").split("/").pop() || "";
     return n === ".env" || /\.env$/i.test(n);
@@ -558,6 +565,7 @@
       + '<button type="button" class="fw-ico-btn" data-act="split" title="Split view">' + splitIco + '<span class="tip">Split view</span></button>'
       + '<button type="button" class="fw-ico-btn" data-act="full" title="Full screen">' + fullIco + '<span class="tip">Full screen</span></button>'
       + '<button type="button" class="fw-ico-btn" data-act="hist" title="Version history">' + histIco + '<span class="tip">Version history</span></button>'
+      + '<button type="button" class="fw-ico-btn' + (isPlainEditor() ? " on" : "") + '" data-act="plain" title="Plain view" aria-pressed="' + (isPlainEditor() ? "true" : "false") + '"><span style="font-size:11px;font-weight:700;line-height:1">Aa</span><span class="tip">Plain view</span></button>'
       + '</div><button type="button" class="btn pri save" data-act="save"' + (unsaved ? "" : " disabled") + ">Save</button></div>";
     const hist = (FW.showHist && pane === "code" && side === "left") ? histHtml() : "";
     const stat = pane === "code" ? statusBarHtml(path, side) : "";
@@ -580,9 +588,9 @@
     const id = side === "right" ? "fwCodeR" : "fwCode";
     const hl = side === "right" ? "fwHlR" : "fwHl";
     const gutter = side === "right" ? "fwLnR" : "fwLn";
-    return '<div class="fw-edwrap" data-ed="' + side + '"><div class="fw-ln" id="' + gutter + '">' + ln + "</div>"
-      + '<div class="fw-edstack"><pre class="fw-hl" id="' + hl + '">' + highlightCode(val, ext) + "</pre>"
-      + '<textarea id="' + id + '" spellcheck="false" data-path="' + esc(path) + '" data-side="' + side + '">' + esc(val) + "</textarea></div></div>";
+    return '<div class="fw-edwrap' + (isPlainEditor() ? " plain" : "") + '" data-ed="' + side + '"><div class="fw-ln" id="' + gutter + '">' + ln + "</div>"
+      + '<div class="fw-edstack"><pre class="fw-hl" id="' + hl + '" aria-hidden="true"><code>' + overlayInner(val, ext) + "</code></pre>"
+      + '<textarea id="' + id + '" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-path="' + esc(path) + '" data-side="' + side + '">' + esc(val) + "</textarea></div></div>";
   }
 
   function highlightCode(raw, ext) {
@@ -597,6 +605,28 @@
     if (ext === "yaml" || ext === "yml") return hlYaml(raw);
     if (ext === "xml" || ext === "html" || ext === "htm") return hlXml(raw);
     return esc(raw);
+  }
+  function overlayInner(raw, ext) {
+    raw = String(raw == null ? "" : raw);
+    let html;
+    try { html = highlightCode(raw, ext); } catch (e) { html = esc(raw); }
+    if (raw.endsWith("\n") || raw === "") html += "\n";
+    return html;
+  }
+  function setOverlay(pre, raw, ext) {
+    if (!pre) return;
+    raw = String(raw == null ? "" : raw);
+    let code = pre.querySelector("code");
+    if (!code) {
+      code = document.createElement("code");
+      pre.textContent = "";
+      pre.appendChild(code);
+    }
+    let html;
+    try { html = highlightCode(raw, ext); } catch (e) { html = esc(raw); }
+    code.innerHTML = html;
+    if (code.textContent !== raw) code.innerHTML = esc(raw);
+    if (raw.endsWith("\n") || raw === "") code.appendChild(document.createTextNode("\n"));
   }
   function hlParts(src, next) {
     const out = [];
@@ -895,6 +925,20 @@
     if (histBtn) histBtn.onclick = function () { if (side === "left") { FW.showHist = !FW.showHist; paintProject($("#fwHost")); } };
     const saveBtn = act("save");
     if (saveBtn) saveBtn.onclick = function () { saveCurrent(side); };
+    const plainBtn = act("plain");
+    if (plainBtn) {
+      plainBtn.classList.toggle("on", isPlainEditor());
+      plainBtn.setAttribute("aria-pressed", isPlainEditor() ? "true" : "false");
+      plainBtn.onclick = function () {
+        setPlainEditor(!isPlainEditor());
+        const on = isPlainEditor();
+        $$(".fw-edwrap").forEach(function (w) { w.classList.toggle("plain", on); });
+        $$('[data-act="plain"]').forEach(function (b) {
+          b.classList.toggle("on", on);
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+      };
+    }
     if ($("#fwCmp", main)) $("#fwCmp", main).onclick = function () { compareVersions(); };
     $$("[data-env]", main).forEach(function (b) { b.onclick = function () { openFile(b.dataset.env); }; });
     $$("[data-pm]", main).forEach(function (b) { b.onclick = function () { FW.previewMode = b.dataset.pm; paintProject($("#fwHost")); }; });
@@ -937,23 +981,36 @@
       if (!wrap) return;
       const hl = wrap.querySelector(".fw-hl");
       const gut = wrap.querySelector(".fw-ln");
-      if (hl) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
-      if (gut) gut.scrollTop = ta.scrollTop;
+      const sbW = ta.offsetWidth - ta.clientWidth;
+      const sbH = ta.offsetHeight - ta.clientHeight;
+      if (hl) {
+        hl.style.right = sbW + "px";
+        hl.style.bottom = sbH + "px";
+        hl.scrollTop = ta.scrollTop;
+        hl.scrollLeft = ta.scrollLeft;
+      }
+      if (gut) {
+        gut.style.marginBottom = sbH + "px";
+        gut.scrollTop = ta.scrollTop;
+      }
+    }
+    function renderGutter() {
+      const gut = wrap && wrap.querySelector(".fw-ln");
+      if (!gut) return;
+      const n = String(ta.value || "").split("\n").length;
+      const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
+      if (gut.children.length !== n) {
+        let html = "";
+        for (let i = 1; i <= n; i++) html += '<i class="' + (i === cur ? "cur" : "") + '">' + i + "</i>";
+        gut.innerHTML = html;
+      } else {
+        $$("i", gut).forEach(function (el, i) { el.classList.toggle("cur", i + 1 === cur); });
+      }
     }
     function refresh() {
       if (wrap) {
-        const hl = wrap.querySelector(".fw-hl");
-        if (hl) hl.innerHTML = highlightCode(ta.value, extOf(path));
-        const gut = wrap.querySelector(".fw-ln");
-        if (gut) {
-          const n = String(ta.value || "").split("\n").length;
-          const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
-          if (gut.children.length !== n) {
-            let html = "";
-            for (let i = 1; i <= n; i++) html += '<i class="' + (i === cur ? "cur" : "") + '">' + i + "</i>";
-            gut.innerHTML = html;
-          }
-        }
+        setOverlay(wrap.querySelector(".fw-hl"), ta.value, extOf(path));
+        renderGutter();
       }
       syncScroll();
       const orig = paneOriginal(path, side);
@@ -965,6 +1022,24 @@
     ta.onkeyup = ta.onclick = ta.onselect = function () { caretPos(); };
     ta.onscroll = syncScroll;
     ta.onfocus = function () { FW.splitFocus = side; };
+    if (wrap) wrap.onscroll = syncScroll;
+    if (typeof ResizeObserver === "function") {
+      if (wrap && wrap._fwRo) wrap._fwRo.disconnect();
+      const ro = new ResizeObserver(function () { syncScroll(); });
+      if (wrap) wrap._fwRo = ro;
+      ro.observe(ta);
+      if (wrap) ro.observe(wrap);
+    }
+    if (!FW._edResize) {
+      FW._edResize = function () {
+        $$(".fw-edstack textarea").forEach(function (el) {
+          const ev = el.onscroll;
+          if (typeof ev === "function") ev.call(el);
+        });
+      };
+      window.addEventListener("resize", FW._edResize);
+    }
+    syncScroll();
   }
 
   function paneOriginal(path, side) {
