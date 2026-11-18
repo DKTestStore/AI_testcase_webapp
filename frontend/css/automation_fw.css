@@ -136,10 +136,45 @@
 .fw-cbtn.pri:hover{background:#2ea043}
 .fw-cbtn.ghost{background:transparent}
 .fw-cscroll{flex:1;min-height:0;min-width:0;overflow:auto;background:var(--cv-bg)}
-.fw-ctable{border-collapse:collapse;border-spacing:0;width:max-content;min-width:100%;font-family:var(--fw-ed-font);font-size:var(--fw-ed-size);line-height:var(--fw-ed-lh);letter-spacing:var(--fw-ed-ls);tab-size:var(--fw-ed-tab);-moz-tab-size:var(--fw-ed-tab);color:var(--cv-text)}
-.fw-ctable tr:hover td{background:var(--cv-hover)}
-.fw-cln{width:1%;text-align:right;vertical-align:top;padding:0 16px 0 12px;color:var(--cv-ln);user-select:none;-webkit-user-select:none;border-right:1px solid var(--cv-border);white-space:pre;box-sizing:border-box}
-.fw-ccode{vertical-align:top;padding:0 16px;white-space:pre;color:var(--cv-text);background:transparent;box-sizing:border-box}
+.fw-codeview .fw-ctable,
+.fw-codeview .fw-ctable thead,
+.fw-codeview .fw-ctable tbody,
+.fw-codeview .fw-ctable tr,
+.fw-codeview .fw-ctable th,
+.fw-codeview .fw-ctable td{
+  border:0!important;
+  border-top:0!important;
+  border-bottom:0!important;
+  border-left:0!important;
+  border-collapse:collapse!important;
+  border-spacing:0!important;
+  background:transparent!important;
+  background-color:transparent!important;
+  box-shadow:none!important;
+  outline:none!important
+}
+.fw-codeview .fw-ctable{
+  width:max-content;min-width:100%;
+  font-family:var(--fw-ed-font);font-size:var(--fw-ed-size);font-weight:400;
+  line-height:var(--fw-ed-lh);letter-spacing:var(--fw-ed-ls);
+  tab-size:var(--fw-ed-tab);-moz-tab-size:var(--fw-ed-tab);color:var(--cv-text)
+}
+.fw-codeview .fw-ctable tr:hover td{background:var(--cv-hover)!important;box-shadow:none!important}
+.fw-codeview .fw-ctable .fw-cln,
+.fw-codeview td.fw-cln{
+  width:1%;text-align:right;vertical-align:top;
+  padding:0 16px 0 12px!important;
+  color:var(--cv-ln);user-select:none;-webkit-user-select:none;
+  white-space:pre;box-sizing:border-box;line-height:var(--fw-ed-lh);
+  background:transparent!important;
+  border:0!important;border-right:1px solid var(--cv-border)!important
+}
+.fw-codeview .fw-ctable .fw-ccode,
+.fw-codeview td.fw-ccode{
+  vertical-align:top;padding:0 16px!important;white-space:pre;
+  color:var(--cv-text);box-sizing:border-box;line-height:var(--fw-ed-lh);
+  background:transparent!important;border:0!important;box-shadow:none!important
+}
 .fw-ccode span,.fw-ccode mark{background:transparent;background-color:transparent}
 .fw-ccode .fw-t-c{color:var(--cv-t-c)}.fw-ccode .fw-t-k{color:var(--cv-t-k)}.fw-ccode .fw-t-f{color:var(--cv-t-f)}
 .fw-ccode .fw-t-s{color:var(--cv-t-s)}.fw-ccode .fw-t-sec{color:var(--cv-t-sec)}.fw-ccode .fw-t-key{color:var(--cv-t-key)}
