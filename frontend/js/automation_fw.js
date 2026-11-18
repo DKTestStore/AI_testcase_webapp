@@ -30,6 +30,7 @@
     langs: [],
     cursorLine: 1,
     cursorCol: 1,
+    editing: { left: false, right: false },
   };
 
   function projectId() {
@@ -105,6 +106,62 @@
     FW.plain = !!on;
     try { localStorage.setItem("fwEditorPlain", on ? "1" : "0"); } catch (e) {}
   }
+  function isEditing(side) {
+    return !!(FW.editing && FW.editing[side || "left"]);
+  }
+  function setEditing(side, on) {
+    FW.editing = FW.editing || { left: false, right: false };
+    FW.editing[side || "left"] = !!on;
+  }
+  function codeTheme() {
+    try { return localStorage.getItem("fwCodeTheme") === "light" ? "light" : "dark"; } catch (e) { return "dark"; }
+  }
+  function setCodeTheme(theme) {
+    try { localStorage.setItem("fwCodeTheme", theme === "light" ? "light" : "dark"); } catch (e) {}
+  }
+  function byteSizeLabel(str) {
+    let n = 0;
+    try { n = new TextEncoder().encode(String(str == null ? "" : str)).length; } catch (e) { n = String(str || "").length; }
+    if (n < 1024) return n + " Bytes";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10 * 1024 ? 2 : 1).replace(/\.0+$/, "") + " KB";
+    return (n / (1024 * 1024)).toFixed(2) + " MB";
+  }
+  function locCount(raw) {
+    const lines = visText(raw).split("\n");
+    let loc = 0;
+    for (let i = 0; i < lines.length; i++) { if (lines[i].trim()) loc++; }
+    if (lines.length && lines[lines.length - 1] === "") { /* trailing newline empty */ }
+    return loc;
+  }
+  function highlightLines(raw, ext, rawMode) {
+    raw = String(raw == null ? "" : raw);
+    const lines = visText(raw).split("\n");
+    if (rawMode) return lines.map(function (ln) { return esc(ln); });
+    let html;
+    try { html = highlightCode(raw, ext); } catch (e) { html = null; }
+    if (html == null) return lines.map(function (ln) { return esc(ln); });
+    const recovered = html
+      .replace(/<span class="[^"]*">/g, "")
+      .replace(/<\/span>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, "&");
+    if (visText(recovered) !== visText(raw)) return lines.map(function (ln) { return esc(ln); });
+    const parts = html.split(/\r\n|\n|\r/);
+    if (parts.length !== lines.length) return lines.map(function (ln) { return esc(ln); });
+    return parts;
+  }
+  function cbarSvg(kind) {
+    if (kind === "copy") return '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    if (kind === "dl") return '<svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 21h16"/></svg>';
+    if (kind === "edit") return '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+    if (kind === "sun") return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+    if (kind === "moon") return '<svg viewBox="0 0 24 24"><path d="M21 14a8 8 0 1 1-9-11 7 7 0 0 0 9 11z"/></svg>';
+    return "";
+  }
+
+
   function isEnvPath(path) {
     const n = (path || "").split("/").pop() || "";
     return n === ".env" || /\.env$/i.test(n);
@@ -407,6 +464,8 @@
     FW.split = false;
     FW.splitPath = "";
     FW.splitFile = null;
+    setEditing("left", false);
+    setEditing("right", false);
     const row = (FW.tree || []).find(function (r) { return r.path === path || r.path === normDir(path); }) || { path: path, is_dir: true };
     FW.file = { path: path, is_dir: true, updated: row.updated || "", version: row.version || 1, updated_by: row.updated_by || "" };
     FW.preview = null;
@@ -424,6 +483,7 @@
   async function openFile(path) {
     FW.path = path;
     FW.splitFocus = "left";
+    setEditing("left", false);
     try {
       const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/file?path=" + encodeURIComponent(path));
       FW.file = j.file || {};
@@ -446,6 +506,7 @@
     if (side !== "right") return openFile(path);
     FW.splitPath = path;
     FW.splitFocus = "right";
+    setEditing("right", false);
     try {
       const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/file?path=" + encodeURIComponent(path));
       FW.splitFile = j.file || {};
@@ -565,8 +626,7 @@
       + '<button type="button" class="fw-ico-btn" data-act="split" title="Split view">' + splitIco + '<span class="tip">Split view</span></button>'
       + '<button type="button" class="fw-ico-btn" data-act="full" title="Full screen">' + fullIco + '<span class="tip">Full screen</span></button>'
       + '<button type="button" class="fw-ico-btn" data-act="hist" title="Version history">' + histIco + '<span class="tip">Version history</span></button>'
-      + '<button type="button" class="fw-ico-btn' + (isPlainEditor() ? " on" : "") + '" data-act="plain" title="Plain view" aria-pressed="' + (isPlainEditor() ? "true" : "false") + '"><span style="font-size:11px;font-weight:700;line-height:1">Aa</span><span class="tip">Plain view</span></button>'
-      + '</div><button type="button" class="btn pri save" data-act="save"' + (unsaved ? "" : " disabled") + ">Save</button></div>";
+      + '</div><button type="button" class="btn pri save" data-act="save"' + (unsaved || isEditing(side) ? "" : " disabled") + ">Save</button></div>";
     const hist = (FW.showHist && pane === "code" && side === "left") ? histHtml() : "";
     const stat = pane === "code" ? statusBarHtml(path, side) : "";
     return fileCardHtml({ path: path, name: pathName(path), isDir: false, version: ver, used: used, unsaved: unsaved })
@@ -576,21 +636,47 @@
   function statusBarHtml(path, side) {
     const line = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
     const col = side === "right" ? (FW.cursorColR || 1) : (FW.cursorCol || 1);
-    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">Ln " + line + ", Col " + col + "</span><span style=\"margin-left:auto\">" + esc(path) + "</span></div>";
+    const mid = isEditing(side) ? ("Ln " + line + ", Col " + col) : (visText(currentContent(path)).split("\n").length + " lines");
+    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">" + mid + "</span><span style=\"margin-left:auto\">" + esc(path) + "</span></div>";
   }
 
   function codeHtml(path, side) {
     const val = currentContent(path);
     const ext = extOf(path);
-    const lines = String(val || "").split("\n");
-    const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
-    const ln = lines.map(function (_, i) { return '<i class="' + (i + 1 === cur ? "cur" : "") + '">' + (i + 1) + "</i>"; }).join("");
+    const lines = visText(val).split("\n");
+    const n = lines.length;
+    const loc = locCount(val);
+    const info = n + " line" + (n === 1 ? "" : "s") + " (" + loc + " loc) · " + byteSizeLabel(val);
+    const theme = codeTheme();
+    const rawMode = isPlainEditor();
+    const editing = isEditing(side);
     const id = side === "right" ? "fwCodeR" : "fwCode";
-    const hl = side === "right" ? "fwHlR" : "fwHl";
-    const gutter = side === "right" ? "fwLnR" : "fwLn";
-    return '<div class="fw-edwrap' + (isPlainEditor() ? " plain" : "") + '" data-ed="' + side + '"><div class="fw-ln" id="' + gutter + '">' + ln + "</div>"
-      + '<div class="fw-edstack"><pre class="fw-hl" id="' + hl + '" aria-hidden="true"><code>' + overlayInner(val, ext) + "</code></pre>"
-      + '<textarea id="' + id + '" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-path="' + esc(path) + '" data-side="' + side + '">' + esc(val) + "</textarea></div></div>";
+    const unsaved = !!FW.unsaved[path];
+    let acts;
+    if (editing) {
+      acts = '<button type="button" class="fw-cbtn pri" data-cact="save">Save</button>'
+        + '<button type="button" class="fw-cbtn ghost" data-cact="cancel">Cancel</button>';
+    } else {
+      acts = '<button type="button" class="fw-cbtn' + (rawMode ? " on" : "") + '" data-cact="raw" aria-pressed="' + (rawMode ? "true" : "false") + '" title="Raw">Raw</button>'
+        + '<button type="button" class="fw-cbtn ghost" data-cact="theme" title="' + (theme === "light" ? "Dark theme" : "Light theme") + '">' + cbarSvg(theme === "light" ? "moon" : "sun") + "</button>"
+        + '<button type="button" class="fw-cbtn ghost" data-cact="copy" title="Copy">' + cbarSvg("copy") + "</button>"
+        + '<button type="button" class="fw-cbtn ghost" data-cact="dl" title="Download">' + cbarSvg("dl") + "</button>"
+        + '<button type="button" class="fw-cbtn" data-cact="edit" title="Edit file">' + cbarSvg("edit") + " Edit</button>";
+    }
+    const bar = '<div class="fw-cbar"><span class="fw-cinfo">' + esc(info) + "</span><div class=\"fw-cacts\">" + acts + "</div></div>";
+    if (editing) {
+      const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
+      const gut = lines.map(function (_, i) { return '<i class="' + (i + 1 === cur ? "cur" : "") + '">' + (i + 1) + "</i>"; }).join("");
+      return '<div class="fw-codeview editing" data-theme="' + theme + '" data-ed="' + side + '" data-path="' + esc(path) + '">' + bar
+        + '<div class="fw-editpane"><div class="fw-ln" id="' + (side === "right" ? "fwLnR" : "fwLn") + '">' + gut + "</div>"
+        + '<textarea class="fw-edit-ta" id="' + id + '" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-path="' + esc(path) + '" data-side="' + side + '">' + esc(val) + "</textarea></div></div>";
+    }
+    const htmlLines = highlightLines(val, ext, rawMode);
+    const rows = htmlLines.map(function (html, i) {
+      return '<tr><td class="fw-cln">' + (i + 1) + '</td><td class="fw-ccode">' + (html || "") + "</td></tr>";
+    }).join("");
+    return '<div class="fw-codeview" data-theme="' + theme + '" data-ed="' + side + '" data-path="' + esc(path) + '">' + bar
+      + '<div class="fw-cscroll"><table class="fw-ctable" aria-label="File contents"><tbody>' + rows + "</tbody></table></div></div>";
   }
 
   function highlightCode(raw, ext) {
@@ -612,39 +698,6 @@
   }
   function visText(s) {
     return String(s == null ? "" : s).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  }
-  function overlayInner(raw, ext) {
-    raw = String(raw == null ? "" : raw);
-    let html;
-    try { html = highlightCode(raw, ext); } catch (e) { html = esc(raw); }
-    if (raw.endsWith("\n") || raw === "") html += "\n";
-    return html;
-  }
-  function setOverlay(pre, raw, ext) {
-    if (!pre) return false;
-    raw = String(raw == null ? "" : raw);
-    const wrap = pre.closest(".fw-edwrap");
-    let code = pre.querySelector("code");
-    if (!code) {
-      code = document.createElement("code");
-      pre.textContent = "";
-      pre.appendChild(code);
-    }
-    let ok = false;
-    try {
-      code.innerHTML = highlightCode(raw, ext);
-      ok = visText(code.textContent) === visText(raw);
-    } catch (e) {
-      ok = false;
-    }
-    if (!ok) code.innerHTML = esc(raw);
-    if (raw.endsWith("\n") || raw === "") code.appendChild(document.createTextNode("\n"));
-    if (wrap) {
-      wrap.classList.toggle("fallback", !ok);
-      const ta = wrap.querySelector("textarea");
-      if (ta && !isPlainEditor()) ta.style.color = ok ? "" : "#1e2433";
-    }
-    return ok;
   }
   function hlPush(out, text, cls) {
     if (!text) return;
@@ -967,8 +1020,8 @@
         paintProject($("#fwHost"));
       };
     });
-    const code = $("#fwCode", main) || $("#fwCodeR", main);
-    if (code) bindEditor(code, side);
+    const view = main.querySelector(".fw-codeview");
+    if (view) bindCodeView(view, side);
     const raw = $("#fwRaw", main);
     if (raw) raw.oninput = function () {
       const path = raw.dataset.path || (side === "right" ? FW.splitPath : FW.path);
@@ -997,20 +1050,6 @@
     if (histBtn) histBtn.onclick = function () { if (side === "left") { FW.showHist = !FW.showHist; paintProject($("#fwHost")); } };
     const saveBtn = act("save");
     if (saveBtn) saveBtn.onclick = function () { saveCurrent(side); };
-    const plainBtn = act("plain");
-    if (plainBtn) {
-      plainBtn.classList.toggle("on", isPlainEditor());
-      plainBtn.setAttribute("aria-pressed", isPlainEditor() ? "true" : "false");
-      plainBtn.onclick = function () {
-        setPlainEditor(!isPlainEditor());
-        const on = isPlainEditor();
-        $$(".fw-edwrap").forEach(function (w) { w.classList.toggle("plain", on); });
-        $$('[data-act="plain"]').forEach(function (b) {
-          b.classList.toggle("on", on);
-          b.setAttribute("aria-pressed", on ? "true" : "false");
-        });
-      };
-    }
     if ($("#fwCmp", main)) $("#fwCmp", main).onclick = function () { compareVersions(); };
     $$("[data-env]", main).forEach(function (b) { b.onclick = function () { openFile(b.dataset.env); }; });
     $$("[data-pm]", main).forEach(function (b) { b.onclick = function () { FW.previewMode = b.dataset.pm; paintProject($("#fwHost")); }; });
@@ -1030,9 +1069,50 @@
     bindFolderSummary(main);
   }
 
-  function bindEditor(ta, side) {
-    const wrap = ta.closest(".fw-edwrap");
-    const path = ta.dataset.path || (side === "right" ? FW.splitPath : FW.path);
+  function bindCodeView(view, side) {
+    if (!view) return;
+    const path = view.dataset.path || (side === "right" ? FW.splitPath : FW.path);
+    const main = view.closest(".fw-main");
+    const cact = function (name) { return view.querySelector('[data-cact="' + name + '"]'); };
+    const repaint = function () { const host = $("#fwHost"); if (host) paintProject(host); };
+    if (cact("raw")) cact("raw").onclick = function () {
+      setPlainEditor(!isPlainEditor());
+      repaint();
+    };
+    if (cact("theme")) cact("theme").onclick = function () {
+      setCodeTheme(codeTheme() === "light" ? "dark" : "light");
+      repaint();
+    };
+    if (cact("copy")) cact("copy").onclick = async function () {
+      try {
+        await navigator.clipboard.writeText(currentContent(path));
+        toast("Copied");
+      } catch (e) { toast("Could not copy"); }
+    };
+    if (cact("dl")) cact("dl").onclick = function () {
+      const name = pathName(path) || "file.txt";
+      const blob = new Blob([currentContent(path)], { type: "text/plain;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    };
+    if (cact("edit")) cact("edit").onclick = function () {
+      setEditing(side, true);
+      repaint();
+    };
+    if (cact("cancel")) cact("cancel").onclick = function () {
+      delete FW.unsaved[path];
+      setEditing(side, false);
+      if (main) markDirtyUi(main, path);
+      repaint();
+    };
+    if (cact("save")) cact("save").onclick = function () { saveCurrent(side); };
+    const ta = view.querySelector("textarea.fw-edit-ta");
+    if (!ta) return;
+    const gut = view.querySelector(".fw-ln");
     function caretPos() {
       const v = ta.value;
       const pos = ta.selectionStart || 0;
@@ -1043,31 +1123,15 @@
       else { FW.cursorLine = line; FW.cursorCol = col; }
       const stat = document.querySelector('.fw-stat[data-stat="' + side + '"] .fw-lncol');
       if (stat) stat.textContent = "Ln " + line + ", Col " + col;
-      if (wrap) {
-        $$("i", wrap.querySelector(".fw-ln") || wrap).forEach(function (el, i) {
-          el.classList.toggle("cur", i + 1 === line);
-        });
-      }
+      if (gut) $$("i", gut).forEach(function (el, i) { el.classList.toggle("cur", i + 1 === line); });
     }
     function syncScroll() {
-      if (!wrap) return;
-      const hl = wrap.querySelector(".fw-hl");
-      const gut = wrap.querySelector(".fw-ln");
-      const sbW = ta.offsetWidth - ta.clientWidth;
-      const sbH = ta.offsetHeight - ta.clientHeight;
-      if (hl) {
-        hl.style.right = sbW + "px";
-        hl.style.bottom = sbH + "px";
-        hl.scrollTop = ta.scrollTop;
-        hl.scrollLeft = ta.scrollLeft;
-      }
       if (gut) {
-        gut.style.marginBottom = sbH + "px";
+        gut.style.marginBottom = (ta.offsetHeight - ta.clientHeight) + "px";
         gut.scrollTop = ta.scrollTop;
       }
     }
     function renderGutter() {
-      const gut = wrap && wrap.querySelector(".fw-ln");
       if (!gut) return;
       const n = String(ta.value || "").split("\n").length;
       const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
@@ -1079,39 +1143,24 @@
         $$("i", gut).forEach(function (el, i) { el.classList.toggle("cur", i + 1 === cur); });
       }
     }
-    function refresh() {
-      if (wrap) {
-        setOverlay(wrap.querySelector(".fw-hl"), ta.value, extOf(path));
-        renderGutter();
-      }
+    ta.oninput = function () {
+      caretPos();
+      renderGutter();
       syncScroll();
       const orig = paneOriginal(path, side);
       if (ta.value !== orig) FW.unsaved[path] = ta.value;
       else delete FW.unsaved[path];
-      markDirtyUi(ta.closest(".fw-main"), path);
-    }
-    ta.oninput = function () { caretPos(); refresh(); };
+      markDirtyUi(main, path);
+    };
     ta.onkeyup = ta.onclick = ta.onselect = function () { caretPos(); };
     ta.onscroll = syncScroll;
     ta.onfocus = function () { FW.splitFocus = side; };
-    if (wrap) wrap.onscroll = syncScroll;
     if (typeof ResizeObserver === "function") {
-      if (wrap && wrap._fwRo) wrap._fwRo.disconnect();
+      if (view._fwRo) view._fwRo.disconnect();
       const ro = new ResizeObserver(function () { syncScroll(); });
-      if (wrap) wrap._fwRo = ro;
+      view._fwRo = ro;
       ro.observe(ta);
-      if (wrap) ro.observe(wrap);
     }
-    if (!FW._edResize) {
-      FW._edResize = function () {
-        $$(".fw-edstack textarea").forEach(function (el) {
-          const ev = el.onscroll;
-          if (typeof ev === "function") ev.call(el);
-        });
-      };
-      window.addEventListener("resize", FW._edResize);
-    }
-    if (wrap) setOverlay(wrap.querySelector(".fw-hl"), ta.value, extOf(path));
     syncScroll();
   }
 
@@ -1229,6 +1278,7 @@
     try {
       await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "PUT", body: { path: path, content: content, note: "Edited" } });
       delete FW.unsaved[path];
+      setEditing(side, false);
       toast("Saved");
       if (side === "right") await openFileIn("right", path);
       else await openFile(path);
