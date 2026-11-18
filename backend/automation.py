@@ -1079,4 +1079,9 @@ def attach(current) -> APIRouter:
     def _recs(sess=Depends(current)):
         return list_recordings_impl(sess)
 
+    from . import framework as framework_api
+    from . import runner as runner_api
+    framework_api.attach(router, current)
+    runner_api.attach(router, current)
+
     return router
