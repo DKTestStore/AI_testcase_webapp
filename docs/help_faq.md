@@ -118,6 +118,16 @@ Robot Framework is its own language (`.robot` files), not a Python framework. Re
 
 Deleting a language, type, or framework in Settings hides it from Generate; scripts already saved keep the value they stored.
 
+## Project framework, Check & Run
+
+On **Automation Scripts**, use the **Project** tab for the workspace that belongs to the current project and language. **Generate** walks through three steps only: choose test cases (filter **Not automated yet** or open **Recently generated**, and preview **Steps** or **Code**), tell the AI anything it should know, then review proposed files (New / Changed / Reused) and apply, Check, or Run. The existing Generate modal on the Review page is unchanged.
+
+The file tree supports icons, new / rename / move / delete, and an unsaved marker. Open a file to edit it, split or full-screen the editor, or compare versions (times are shown in IST). Locators, assertions, and test data have table editors and **Suggest with AI**. Framework env files (for example `config/staging.env`) open as a key–value table with secrets masked — that is not the application `.env`. Test data files preview as a grid or tree (xlsx, csv, JSON, XML, YAML).
+
+The Test Case Repo Scripts column also shows whether a case already has a script, is out of date, or was just regenerated, and offers **Update script** when steps changed after the last generate.
+
+**Check** runs a preflight (syntax, runtime, missing libraries). **Run** copies the project into a temp folder and executes it, streaming the log, with Stop, pass/fail results, optional failure screenshots, run history, and **Fix with AI**. Runner paths and the temp folder are under **Settings → Script options → Runner**. Folder layouts for new frameworks are under **Folder templates**.
+
 ## Voice input limits
 
 Voice input uses the browser’s **Web Speech API** (no AI model, no API key, no backend call).

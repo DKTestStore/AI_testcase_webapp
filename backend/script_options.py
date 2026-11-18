@@ -117,6 +117,42 @@ DEFAULT_AUTOMATION_PREFS = {
     "use_pom": True,
     "include_assertions": True,
     "one_file_per_test": False,
+    "runner_python": "",
+    "runner_java": "",
+    "runner_mvn": "",
+    "runner_dotnet": "",
+    "runner_node": "",
+    "runner_timeout": "120",
+    "runner_headless": True,
+    "runner_temp_folder": "",
+    "runner_keep_artifacts_days": "7",
+}
+
+# Default folder trees used when setting up a project framework (editable in Settings).
+DEFAULT_FOLDER_TEMPLATES = {
+    "python": [
+        "config/", "utils/", "pages/", "fixtures/",
+        "tests/ui/", "tests/api/", "tests/db/", "test_data/", "reports/",
+        "requirements.txt", "pytest.ini", "README.md",
+    ],
+    "java": [
+        "src/main/java/", "src/test/java/", "src/test/resources/",
+        "pom.xml", "README.md",
+    ],
+    "dotnet": [
+        "src/", "tests/", "test_data/", "README.md",
+    ],
+    "javascript": [
+        "pages/", "tests/", "fixtures/", "test_data/",
+        "package.json", "playwright.config.js", "README.md",
+    ],
+    "typescript": [
+        "pages/", "tests/", "fixtures/", "test_data/",
+        "package.json", "playwright.config.ts", "README.md",
+    ],
+    "robot": [
+        "resources/", "keywords/", "tests/", "test_data/", "README.md",
+    ],
 }
 
 
@@ -281,7 +317,58 @@ def get_automation_prefs() -> Dict[str, Any]:
             out[k] = [str(x) for x in (v or []) if str(x).strip()][:20]
         else:
             out[k] = str(v or "")[:300]
+    out["folder_templates"] = get_folder_templates()
     return out
+
+
+def get_folder_templates() -> Dict[str, list]:
+    """Merge saved folder templates with built-in defaults (additive)."""
+    raw = settings_store._app().get("automation_prefs")
+    saved = raw.get("folder_templates") if isinstance(raw, dict) else None
+    out = {k: list(v) for k, v in DEFAULT_FOLDER_TEMPLATES.items()}
+    if isinstance(saved, dict):
+        for k, v in saved.items():
+            key = str(k or "").strip().lower()[:40]
+            if not key or not isinstance(v, list):
+                continue
+            cleaned = []
+            for item in v:
+                s = str(item or "").strip().replace("\\", "/").lstrip("/")[:200]
+                if not s or ".." in s:
+                    continue
+                cleaned.append(s)
+                if len(cleaned) >= 80:
+                    break
+            if cleaned:
+                out[key] = cleaned
+    return out
+
+
+def set_folder_templates(value) -> Dict[str, list]:
+    if not isinstance(value, dict):
+        raise ValueError("Folder templates must be an object.")
+    cur = get_folder_templates()
+    for k, v in value.items():
+        key = str(k or "").strip().lower()[:40]
+        if not key or not isinstance(v, list):
+            continue
+        cleaned = []
+        for item in v:
+            s = str(item or "").strip().replace("\\", "/").lstrip("/")[:200]
+            if not s or ".." in s:
+                continue
+            cleaned.append(s)
+            if len(cleaned) >= 80:
+                break
+        cur[key] = cleaned or cur.get(key, [])
+    from .db import update_app_settings
+    prefs = settings_store._app().get("automation_prefs")
+    if not isinstance(prefs, dict):
+        prefs = {}
+    prefs = dict(prefs)
+    prefs["folder_templates"] = cur
+    update_app_settings({"automation_prefs": prefs})
+    return get_folder_templates()
 
 
 def set_automation_prefs(value) -> Dict[str, Any]:
@@ -300,6 +387,8 @@ def set_automation_prefs(value) -> Dict[str, Any]:
                 cur[k] = str(v or "")[:300]
     from .db import update_app_settings
     update_app_settings({"automation_prefs": cur})
+    if isinstance(value.get("folder_templates"), dict):
+        set_folder_templates(value["folder_templates"])
     return get_automation_prefs()
 
 

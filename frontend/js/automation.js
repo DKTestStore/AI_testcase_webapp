@@ -700,7 +700,7 @@
     const loc = ST.set.local; const tab = ST.set.tab || "languages";
     wrap.innerHTML = '<div class="sub" style="margin:0 0 8px">These options drive the Generate Automation Script chips. Deleting a built-in option hides it from Generate; saved scripts keep their stored value.</div><div class="modebar">Selection mode: '
       + ["language", "type", "framework"].map((k) => "<label>" + esc(k) + ' <select data-mode="' + k + '"><option value="single"' + (loc.modes[k] === "single" ? " selected" : "") + '>single</option><option value="multi"' + (loc.modes[k] === "multi" ? " selected" : "") + ">multi</option></select></label>").join("")
-      + '<span style="flex:1"></span><button type="button" class="btn g sm" id="asResetDef">Reset to defaults</button></div><div class="set-subtabs" role="tablist"><button type="button" data-stab="languages" class="' + (tab === "languages" ? "a" : "") + '">Languages</button><button type="button" data-stab="types" class="' + (tab === "types" ? "a" : "") + '">Types</button><button type="button" data-stab="frameworks" class="' + (tab === "frameworks" ? "a" : "") + '">Frameworks</button></div><div id="asSetTbl"></div><div style="margin-top:8px"><button type="button" class="btn g sm" id="asAddOpt">Add ' + esc(tab.replace(/s$/, "")) + "</button></div>";
+      + '<span style="flex:1"></span><button type="button" class="btn g sm" id="asResetDef">Reset to defaults</button></div><div class="set-subtabs" role="tablist"><button type="button" data-stab="languages" class="' + (tab === "languages" ? "a" : "") + '">Languages</button><button type="button" data-stab="types" class="' + (tab === "types" ? "a" : "") + '">Types</button><button type="button" data-stab="frameworks" class="' + (tab === "frameworks" ? "a" : "") + '">Frameworks</button><button type="button" data-stab="folders" class="' + (tab === "folders" ? "a" : "") + '">Folder templates</button><button type="button" data-stab="runner" class="' + (tab === "runner" ? "a" : "") + '">Runner</button></div><div id="asSetTbl"></div><div style="margin-top:8px"><button type="button" class="btn g sm" id="asAddOpt">Add ' + esc(tab.replace(/s$/, "")) + "</button></div>";
     $$("[data-stab]", wrap).forEach((b) => { b.onclick = function () { ST.set.tab = b.dataset.stab; paintSet(); }; });
     $$("[data-mode]", wrap).forEach((s) => { s.onchange = function () { loc.modes[s.dataset.mode] = s.value; markSetDirty(); }; });
     $("#asResetDef", wrap).onclick = function () {
@@ -713,7 +713,15 @@
       }).catch(function (e) { toast(e.message); });
     };
     $("#asAddOpt", wrap).onclick = function () { editOption(tab, null); };
-    paintSetTable(tab);
+    if (tab === "folders" && typeof window.asPaintFolderTemplates === "function") {
+      const add = $("#asAddOpt", wrap); if (add) add.style.display = "none";
+      window.asPaintFolderTemplates($("#asSetTbl"));
+    } else if (tab === "runner" && typeof window.asPaintRunner === "function") {
+      const add = $("#asAddOpt", wrap); if (add) add.style.display = "none";
+      window.asPaintRunner($("#asSetTbl"));
+    } else {
+      paintSetTable(tab);
+    }
     if (typeof setUpdateDirty === "function") setUpdateDirty();
   }
   function paintSetTable(tab) {
@@ -933,6 +941,8 @@
   if (document.getElementById("view")) mo.observe(document.getElementById("view"), { childList: true, subtree: true });
 
   window.viewScripts = viewScripts;
+  window.asRenderLibrary = renderLibrary;
+  window.asLoadOptions = loadOptions;
   window.asOpenGenerate = asOpenGenerate;
   window.asReviewBadge = badgeHtml;
   window.asHookReview = asHookReview;

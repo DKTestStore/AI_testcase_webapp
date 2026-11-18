@@ -319,3 +319,146 @@ class ScriptVersion(Base):
     created: Mapped[str] = mapped_column(String(40), nullable=False, default="")
 
     __table_args__ = (UniqueConstraint("script_id", "version", name="uq_script_version"),)
+
+
+class ProjectFramework(Base):
+    """One automation framework folder structure per project + language."""
+    __tablename__ = "project_frameworks"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    language: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    framework: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    types: Mapped[Any] = mapped_column(JSON, nullable=False)
+    options: Mapped[Any] = mapped_column(JSON, nullable=False)
+    created: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    updated: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+
+    __table_args__ = (UniqueConstraint("project", "language", name="uq_project_framework_lang"),)
+
+
+class FrameworkFile(Base):
+    """A file or folder in a project framework (content lives in the DB, not on disk)."""
+    __tablename__ = "framework_files"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_frameworks.id"), nullable=False
+    )
+    path: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    is_dir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    updated_by: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+
+    __table_args__ = (UniqueConstraint("framework_id", "path", name="uq_framework_file_path"),)
+
+
+class FrameworkFileVersion(Base):
+    """Immutable snapshot of one framework file."""
+    __tablename__ = "framework_file_versions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    file_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("framework_files.id"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    author: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+
+    __table_args__ = (UniqueConstraint("file_id", "version", name="uq_framework_file_version"),)
+
+
+class FrameworkLocator(Base):
+    """Manual or AI-suggested locator for a page object in the framework."""
+    __tablename__ = "framework_locators"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_frameworks.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    strategy: Mapped[str] = mapped_column(String(40), nullable=False, default="css")
+    value: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    page: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="Draft")
+
+
+class FrameworkAssertion(Base):
+    """Manual or AI-suggested assertion for a test case in the framework."""
+    __tablename__ = "framework_assertions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_frameworks.id"), nullable=False
+    )
+    tc_id: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    typ: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    target: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    expected: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+
+
+class FrameworkMapping(Base):
+    """How a test case maps columns in a test-data file to parameters."""
+    __tablename__ = "framework_mappings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_frameworks.id"), nullable=False
+    )
+    file_path: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    tc_id: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    mapping: Mapped[Any] = mapped_column(JSON, nullable=False)
+    rows: Mapped[Any] = mapped_column(JSON, nullable=False)
+
+
+class TcScriptMap(Base):
+    """Sync mapping between a test case and a generated script file."""
+    __tablename__ = "tc_script_map"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tc_id: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    framework_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_frameworks.id"), nullable=False
+    )
+    file_path: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    script_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ready")
+    steps_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    generated_at: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    updated: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+
+    __table_args__ = (UniqueConstraint("tc_id", "framework_id", "file_path", name="uq_tc_script_map"),)
+
+
+class AutomationRun(Base):
+    """A Check/Run of a project framework in a temp workspace."""
+    __tablename__ = "automation_runs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    framework_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_frameworks.id"), nullable=False
+    )
+    scope: Mapped[Any] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    command: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    env: Mapped[Any] = mapped_column(JSON, nullable=False)
+    headless: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    started: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    finished: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    log: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    summary: Mapped[Any] = mapped_column(JSON, nullable=False)
+    artifacts_dir: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class AutomationRunResult(Base):
+    """Per-test-case outcome for an automation run."""
+    __tablename__ = "automation_run_results"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("automation_runs.id"), nullable=False
+    )
+    tc_id: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    name: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    file: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    stack: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    screenshot: Mapped[str] = mapped_column(String(400), nullable=False, default="")
