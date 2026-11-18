@@ -273,3 +273,40 @@
 .fw-body.split .fw-fcard{padding:8px 10px 6px}
 .fw-body.split .fw-fcard .fn{font-size:14px}
 .tid{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:4px;background:#1e293b;color:#fff;font-size:10px;font-weight:700;line-height:18px;font-family:ui-monospace,Consolas,monospace}
+
+/* v12 unified workspace: Generated versions, repo landing, where-used */
+.fw-verbtn{position:relative}
+.fw-verbtn.on{background:#eef2ff;border-radius:8px;color:#3046c4}
+.fw-vercnt{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;margin-left:5px;padding:0 5px;border-radius:8px;background:#eef2ff;color:#3046c4;font-size:10.5px;font-weight:750}
+.fw-verbtn.on .fw-vercnt{background:#4361ee;color:#fff}
+.fw-crumb{display:flex;align-items:center;gap:7px;flex-shrink:0;margin:0 0 8px;min-height:28px;font-size:13px;color:#5b6475}
+.fw-crumb a{color:#4361ee;font-weight:650;text-decoration:none;cursor:pointer}
+.fw-crumb .sep{color:#8b93a7}
+.fw-crumb .ttl{color:#1e2433}
+.fw-crumb .btn{margin-left:auto;padding:4px 10px;font-size:12.5px}
+.fw-crumb .btn.on{background:#eef2ff;border-color:#c9d3ff;color:#3046c4}
+.fw-body.used{grid-template-columns:200px minmax(0,1fr) 268px}
+.fw-usedp{background:#fff;border:1px solid #e3e7f0;border-radius:14px;padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0}
+.fw-usedp h3{font-size:13px;font-weight:750;margin:0 0 2px;letter-spacing:.01em;text-transform:uppercase;color:#6b7385}
+.fw-usedp .who{font-size:14px;font-weight:750;color:#1e2433;margin:0 0 10px}
+.fw-usedp .blk{margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid #f0f2f7}
+.fw-usedp .blk:last-child{margin:0;padding:0;border:0}
+.fw-usedp .lab{font-size:11px;font-weight:750;color:#6b7385;text-transform:uppercase;letter-spacing:.04em;margin:0 0 5px}
+.fw-usedp .item{display:flex;align-items:flex-start;gap:7px;font-size:12.5px;color:#1e2433;padding:2px 0;line-height:1.35;min-width:0}
+.fw-usedp .item>div{min-width:0;flex:1}
+.fw-usedp .item .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;overflow-wrap:break-word;word-break:normal}
+.fw-usedp .item .sub{color:#6b7385;font-size:11.5px}
+.fw-usedp .item a{color:#4361ee;font-weight:650;text-decoration:none;cursor:pointer}
+.fw-usedp .okdot{width:8px;height:8px;border-radius:50%;background:#12a150;flex-shrink:0;margin-top:4px}
+.fw-usedp .faildot{width:8px;height:8px;border-radius:50%;background:#d33;flex-shrink:0;margin-top:4px}
+.fw-verintro{padding:10px 14px 8px;border-bottom:1px solid #f0f2f7}
+.fw-verintro .fn{font-size:16px;font-weight:750;letter-spacing:-.02em}
+.fw-verintro .sub{margin:4px 0 0;color:#5b6475;font-size:12.5px}
+.fw-veracts{display:flex;flex-wrap:nowrap;gap:12px;margin-top:3px}
+.fw-veracts a{color:#4361ee;font-size:12px;font-weight:650;text-decoration:none;cursor:pointer;white-space:nowrap}
+.fw-veracts a.pri{font-weight:750}
+.as-ed.preview .as-ed-meta #asEdSave,
+.as-ed.preview .as-ed-meta #asEdRegen{display:none}
+.as-prevbar{display:flex;align-items:center;gap:10px;padding:8px 0 0;font-size:13px;color:#5b6475}
+.as-prevbar a{color:#4361ee;font-weight:650;text-decoration:none;cursor:pointer}
+#asEdCode[readonly]{background:#f7f8fb}

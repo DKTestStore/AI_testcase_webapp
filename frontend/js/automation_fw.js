@@ -31,6 +31,11 @@
     cursorLine: 1,
     cursorCol: 1,
     editing: { left: false, right: false },
+    panel: "files",
+    fromTc: "",
+    showUsed: false,
+    usage: null,
+    verCount: 0,
   };
 
   function projectId() {
@@ -202,27 +207,31 @@
       return _viewScripts(v);
     }
     const q = hash.split("?")[1] || "";
-    if (/tab=library/.test(q)) FW.tab = "library";
-    else if (/tab=project/.test(q) || !q) FW.tab = FW.tab || "project";
+    const params = new URLSearchParams(q);
+    const tc = params.get("tc") || "";
+    const view = params.get("view") || "";
+    const tab = params.get("tab") || "";
+    if (view === "versions" || tab === "library") FW.panel = "versions";
+    else FW.panel = "files";
+    FW.tab = FW.panel === "versions" ? "library" : "project";
+    FW.fromTc = tc;
+    FW.showUsed = params.get("used") === "1";
+    if (!tc) FW.usage = null;
+    const verOn = FW.panel === "versions" ? " on" : "";
     v.innerHTML = '<div class="fw-shell asv"><div class="fw-head"><div><h1>Automation Scripts</h1><p class="lead">Project workspace for ' + esc(projectId()) + " · " + esc(langLabel()) + "</p></div>"
       + '<div class="acts"><div class="fw-langwrap"><button type="button" class="fw-pill" id="fwLangBtn">' + esc(langLabel()) + '</button><div class="fw-langmenu" id="fwLangMenu" hidden></div></div>'
       + '<button type="button" class="btn pri" id="fwGen">Generate</button>'
       + '<span class="fw-splitbtn" id="fwRunWrap"><button type="button" class="btn fw-runmain" id="fwRun">Run</button>'
       + '<button type="button" class="fw-runcaret" id="fwRunCaret" title="Check, runner options">▾</button>'
       + '<div class="fw-runmenu" id="fwRunMenu" hidden><button type="button" id="fwCheck">Check</button><button type="button" id="fwRunMenuGo">Run</button></div></span>'
-      + '<button type="button" class="fw-hist" id="fwRuns">' + clockSvg() + " Run history</button></div></div>"
-      + '<div class="fw-tabs" role="tablist"><button type="button" data-fwtab="project" class="' + (FW.tab === "project" ? "a" : "") + '">Project</button>'
-      + '<button type="button" data-fwtab="library" class="' + (FW.tab === "library" ? "a" : "") + '">Library</button></div>'
+      + '<button type="button" class="fw-hist" id="fwRuns">' + clockSvg() + " Run history</button>"
+      + '<button type="button" class="fw-hist fw-verbtn' + verOn + '" id="fwVersions">Generated versions<span class="fw-vercnt" id="fwVerCnt">' + (FW.verCount || "") + "</span></button></div></div>"
+      + '<div id="fwCrumb"></div>'
       + '<div id="fwHost" style="flex:1;min-height:0;display:flex;flex-direction:column"></div></div>';
     await fillLangSelect();
-    $$("[data-fwtab]", v).forEach((b) => {
-      b.onclick = function () {
-        FW.tab = b.dataset.fwtab;
-        if (typeof go === "function") go("scripts?tab=" + FW.tab);
-        else viewScriptsWrapped(v);
-      };
-    });
     bindHeaderChrome(v);
+    loadVerCount();
+    paintCrumb();
     await renderHost();
   };
 
@@ -236,7 +245,13 @@
         const rm = $("#fwRunMenu"); if (rm) rm.hidden = true;
       };
     }
-    if ($("#fwGen")) $("#fwGen").onclick = function () { openWizard(); };
+    if ($("#fwGen")) $("#fwGen").onclick = function () { openWizard(FW.fromTc ? { tcId: FW.fromTc } : {}); };
+    if ($("#fwVersions")) $("#fwVersions").onclick = function () {
+      const qs = [];
+      if (FW.fromTc) qs.push("tc=" + encodeURIComponent(FW.fromTc));
+      if (FW.panel !== "versions") qs.push("view=versions");
+      goScripts(qs.join("&"));
+    };
     if ($("#fwRun")) $("#fwRun").onclick = function () { startRun(); };
     if ($("#fwRunMenuGo")) $("#fwRunMenuGo").onclick = function () { const m = $("#fwRunMenu"); if (m) m.hidden = true; startRun(); };
     if ($("#fwCheck")) $("#fwCheck").onclick = function () { const m = $("#fwRunMenu"); if (m) m.hidden = true; startCheck(); };
@@ -300,17 +315,196 @@
     if (sel) sel.innerHTML = langs.map((l) => "<option value=\"" + esc(l.id) + "\"" + (l.id === FW.lang ? " selected" : "") + ">" + esc(l.name) + "</option>").join("");
   }
 
+  function goScripts(query) {
+    const dest = query ? ("scripts?" + query) : "scripts";
+    if (typeof go === "function") go(dest);
+    else {
+      location.hash = dest;
+      const v = document.getElementById("view");
+      if (v && typeof window.viewScripts === "function") window.viewScripts(v);
+    }
+  }
+
+  async function loadVerCount() {
+    try {
+      const f = await api("/api/automation/folders");
+      const n = (f.folders || []).reduce(function (s, x) { return s + (x.count || 0); }, 0) + (f.unfiled || 0);
+      FW.verCount = n;
+      const el = $("#fwVerCnt");
+      if (el) el.textContent = n ? String(n) : "";
+    } catch (e) {}
+  }
+
+  function paintCrumb() {
+    const box = $("#fwCrumb");
+    if (!box) return;
+    if (!FW.fromTc || FW.panel === "versions") { box.innerHTML = ""; return; }
+    const usage = FW.usage || {};
+    const title = usage.title || "";
+    const mapped = !!usage.mapped;
+    const usedOn = FW.showUsed ? " on" : "";
+    box.innerHTML = '<div class="fw-crumb"><a data-nav="repo">Test Case Repo</a><span class="sep">›</span>'
+      + '<span class="tid">' + esc(FW.fromTc) + "</span>"
+      + (title ? '<span class="ttl">' + esc(title) + "</span>" : "")
+      + (mapped ? '<span class="pill g">In project</span>' : '<span class="pill gr">No script</span>')
+      + (mapped ? '<button type="button" class="btn g sm' + usedOn + '" id="fwWhereBtn">Where is this used</button>' : "")
+      + "</div>";
+    const link = box.querySelector("[data-nav=repo]");
+    if (link) link.onclick = function (e) { e.preventDefault(); if (typeof go === "function") go("repo"); };
+    const btn = $("#fwWhereBtn", box);
+    if (btn) btn.onclick = function () {
+      FW.showUsed = !FW.showUsed;
+      const qs = ["tc=" + encodeURIComponent(FW.fromTc)];
+      if (FW.showUsed) qs.push("used=1");
+      goScripts(qs.join("&"));
+    };
+  }
+
+  function revealPath(path) {
+    const parts = String(path || "").replace(/\\/g, "/").split("/").filter(Boolean);
+    let acc = "";
+    for (let i = 0; i < parts.length - 1; i++) {
+      acc = acc ? acc + "/" + parts[i] : parts[i];
+      delete FW.collapsed[acc];
+      delete FW.collapsed[acc + "/"];
+    }
+  }
+
+  function pickTestFile(usage) {
+    const files = (usage && usage.test_files) || [];
+    if (!files.length) return "";
+    const hit = files.find(function (f) {
+      const p = String((f && f.path) || f || "").toLowerCase();
+      const base = p.split("/").pop();
+      return p.indexOf("/tests/") >= 0 || p.indexOf("tests/") === 0 || base.indexOf("test_") === 0;
+    });
+    return (hit && (hit.path || hit)) || files[0].path || files[0] || "";
+  }
+
+  async function landFromTc(tcId) {
+    const host = $("#fwHost");
+    try {
+      const q = "/tc-usage?tc_id=" + encodeURIComponent(tcId)
+        + "&project=" + encodeURIComponent(projectId())
+        + (FW.fid ? "&framework_id=" + encodeURIComponent(FW.fid) : "");
+      const usage = await fwApi(q);
+      FW.usage = usage || {};
+      paintCrumb();
+      if (usage && usage.mapped) {
+        const path = pickTestFile(usage);
+        if (path) {
+          revealPath(path);
+          await openFile(path);
+          return;
+        }
+      }
+      FW.path = ""; FW.file = null;
+      if (host) paintProject(host);
+    } catch (e) {
+      FW.usage = { tc_id: tcId, mapped: false, title: "", versions: [] };
+      paintCrumb();
+      FW.path = ""; FW.file = null;
+      if (host) paintProject(host);
+      toast(e.message || String(e));
+    }
+  }
+
+  function whereUsedHtml(usage) {
+    usage = usage || FW.usage || {};
+    const tc = usage.tc_id || FW.fromTc || "";
+    const title = usage.title || "";
+    function fileItem(path, extra) {
+      if (!path) return "";
+      const parts = String(path).replace(/\\/g, "/");
+      const cut = parts.lastIndexOf("/");
+      const shown = cut > 0 ? (parts.slice(0, cut + 1) + "<wbr>" + parts.slice(cut + 1)) : parts;
+      return '<div class="item">' + fwIcon(path, false) + '<div><a data-open="' + esc(path) + '" class="mono">' + shown + "</a>"
+        + (extra ? '<div class="sub">' + extra + "</div>" : "") + "</div></div>";
+    }
+    const tests = (usage.test_files || []).map(function (f) { return fileItem(f.path || f); }).join("") || '<div class="item"><span class="sub">Not in this project framework.</span></div>';
+    const pages = (usage.page_objects || []).map(function (f) { return fileItem(f.path || f); }).join("") || '<div class="item"><span class="sub">None detected yet.</span></div>';
+    const locs = (usage.locators || []).map(function (l) {
+      return '<div class="item"><span class="mono">' + esc(l.name || "") + '</span> <span class="sub">' + esc((l.strategy ? l.strategy + " " : "") + (l.value || "")) + "</span></div>";
+    }).join("");
+    const data = (usage.test_data || []).map(function (d) {
+      return fileItem(d.path, d.note ? esc(d.note) : "");
+    }).join("");
+    const locBlk = (locs || data)
+      ? (locs + data)
+      : '<div class="item"><span class="sub">None recorded yet.</span></div>';
+    const run = usage.last_run;
+    let runHtml = '<div class="item"><span class="sub">No run recorded yet.</span></div>';
+    if (run) {
+      const ok = /pass/i.test(run.status || "");
+      const fail = /fail|error/i.test(run.status || "");
+      const dur = run.duration_ms ? ((run.duration_ms / 1000).toFixed(1) + "s") : "";
+      runHtml = '<div class="item"><span class="' + (fail ? "faildot" : "okdot") + '"></span><div><div><span class="pill ' + (ok ? "g" : fail ? "r" : "gr") + '">' + esc(run.status || "") + "</span> "
+        + esc(run.id || "") + (dur ? " · " + dur : "") + '</div><div class="sub">' + esc(run.started || run.finished || "") + "</div></div></div>";
+    }
+    const vers = (usage.versions || []).map(function (s) {
+      return '<div class="item"><a data-preview="' + esc(s.id) + '" class="mono" style="color:#4361ee;font-weight:700">' + esc(s.id) + "</a> <span>v" + esc(s.version || 1) + '</span> <span class="sub">' + esc(s.updated || "") + "</span></div>";
+    }).join("") || '<div class="item"><span class="sub">No generated versions linked to this case.</span></div>';
+    return '<aside class="fw-usedp" id="fwUsedP"><h3>Where is this used</h3>'
+      + '<div class="who"><span class="tid">' + esc(tc) + "</span> " + esc(title) + "</div>"
+      + '<div class="blk"><div class="lab">Test file</div>' + tests + "</div>"
+      + '<div class="blk"><div class="lab">Page objects</div>' + pages + "</div>"
+      + '<div class="blk"><div class="lab">Locators &amp; test data</div>' + locBlk + "</div>"
+      + '<div class="blk"><div class="lab">Last run</div>' + runHtml + "</div>"
+      + '<div class="blk"><div class="lab">Generated versions</div>' + vers + "</div></aside>";
+  }
+
+  function bindWhereUsed(root) {
+    if (!root) return;
+    $$("[data-open]", root).forEach(function (a) {
+      a.onclick = function (e) { e.preventDefault(); if (a.dataset.open) openFile(a.dataset.open); };
+    });
+    $$("[data-preview]", root).forEach(function (a) {
+      a.onclick = function (e) {
+        e.preventDefault();
+        if (typeof go === "function") go("scripts/" + a.dataset.preview + "?preview=1");
+      };
+    });
+  }
+
+  async function addLibraryToProject(sid) {
+    try {
+      await ensureFramework();
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/from-library?script_id=" + encodeURIComponent(sid));
+      const ch = (j.changes || []).map(function (c) { return Object.assign({}, c, { include: c.include !== false, show: false }); });
+      FW.wiz = {
+        step: 3, cases: [], sel: {}, filter: "all", tab: "all", preview: null, context: "",
+        changes: ch, result: { changes: j.changes || [], mapping: j.mapping || [] },
+        mapping: j.mapping || [], fromLibrary: sid, libraryName: j.name || sid,
+      };
+      const ov = document.createElement("div");
+      ov.className = "fw-wiz"; ov.id = "fwWiz";
+      ov.innerHTML = '<div class="box"><div class="hd"><h2>Review changes</h2><span style="flex:1"></span><div class="fw-steps" id="fwWizSteps"></div></div><div class="bd" id="fwWizBd">Loading…</div><div class="ft" id="fwWizFt"></div></div>';
+      document.body.appendChild(ov);
+      paintWiz();
+    } catch (e) { toast(e.message || String(e)); }
+  }
+
+  async function renderVersions(host) {
+    const intro = '<div class="fw-verintro"><div class="fn">Generated versions</div>'
+      + '<div class="sub">Former Library bundles — nothing is deleted. Add a version into the project framework when you want it in the tree.</div></div>';
+    host.innerHTML = intro + '<div id="asLibHost">Loading…</div>';
+    if (window.ST && ST.lib) ST.lib.mode = "versions";
+    if (typeof window.asRenderLibrary === "function") await window.asRenderLibrary($("#asLibHost"));
+  }
+
   async function renderHost() {
     const host = $("#fwHost");
     if (!host) return;
-    if (FW.tab === "library") {
-      host.innerHTML = '<div id="asLibHost">Loading…</div>';
-      if (typeof window.asRenderLibrary === "function") await window.asRenderLibrary($("#asLibHost"));
+    paintCrumb();
+    if (FW.panel === "versions" || FW.tab === "library") {
+      try { await renderVersions(host); } catch (e) { host.innerHTML = '<div class="error">' + esc(e.message || e) + "</div>"; }
       return;
     }
+    if (window.ST && ST.lib) ST.lib.mode = "";
     try {
       await ensureFramework();
-      paintProject(host);
+      if (FW.fromTc) await landFromTc(FW.fromTc);
+      else paintProject(host);
     } catch (e) {
       host.innerHTML = '<div class="error">' + esc(e.message || e) + "</div>";
     }
@@ -319,16 +513,20 @@
   function paintProject(host) {
     const split = !!FW.split && FW.path && !(FW.file && FW.file.is_dir);
     const full = FW.full && FW.path && !(FW.file && FW.file.is_dir);
-    host.innerHTML = '<div class="fw-body' + (split ? " split" : "") + (full ? " full" : "") + '" id="fwBody">'
+    const used = !!(FW.showUsed && FW.fromTc && FW.panel !== "versions") && !split && !full;
+    host.innerHTML = '<div class="fw-body' + (split ? " split" : "") + (full ? " full" : "") + (used ? " used" : "") + '" id="fwBody">'
       + '<div class="fw-tree" id="fwTree">' + treePanel() + "</div>"
       + paneHtml("fwMain", FW.path, FW.file, "left")
       + (split ? paneHtml("fwMain2", FW.splitPath, FW.splitFile, "right") : "")
+      + (used ? whereUsedHtml(FW.usage) : "")
       + "</div>";
     const body = $("#fwBody");
     if (full && body) body.classList.add("fw-full");
     bindTree($("#fwTree"));
     bindMain($("#fwMain"), "left");
     if (split) bindMain($("#fwMain2"), "right");
+    if (used) bindWhereUsed($("#fwUsedP"));
+    paintCrumb();
   }
 
   function treePanel() {
@@ -540,6 +738,21 @@
   }
 
   function emptyStateHtml() {
+    if (FW.fromTc) {
+      const usage = FW.usage || {};
+      const vers = usage.versions || [];
+      const bundles = vers.length
+        ? ('<div class="fw-veracts" style="margin:0 0 14px;justify-content:center;flex-wrap:wrap">' + vers.map(function (s) {
+            return '<a data-preview="' + esc(s.id) + '">' + esc(s.id) + " v" + esc(s.version || 1) + "</a>";
+          }).join("") + "</div>")
+        : "";
+      return '<div class="fw-empty-state"><div class="ill"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/><path d="M9 12h6"/></svg></div>'
+        + "<h2>No script for " + esc(FW.fromTc) + " yet</h2>"
+        + "<p>This case is not in the project framework. Generate a script from the case, or link an existing generated version.</p>"
+        + bundles
+        + '<div class="acts"><button type="button" class="btn pri" id="fwEmptyGenTc">Generate script</button>'
+        + '<button type="button" class="btn g" id="fwEmptyLink">Link existing</button></div></div>';
+    }
     return '<div class="fw-empty-state"><div class="ill"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></div>'
       + "<h2>Pick a file to get started</h2>"
       + "<p>This project framework is ready. Open a file from the tree, or use a shortcut below.</p>"
@@ -1191,8 +1404,22 @@
   }
 
   function bindEmptyState(main) {
+    const genTc = $("#fwEmptyGenTc", main);
+    if (genTc) genTc.onclick = function () { openWizard({ tcId: FW.fromTc }); };
+    const link = $("#fwEmptyLink", main);
+    if (link) link.onclick = function () {
+      const qs = ["view=versions"];
+      if (FW.fromTc) qs.unshift("tc=" + encodeURIComponent(FW.fromTc));
+      goScripts(qs.join("&"));
+    };
+    $$("[data-preview]", main).forEach(function (a) {
+      a.onclick = function (e) {
+        e.preventDefault();
+        if (typeof go === "function") go("scripts/" + a.dataset.preview + "?preview=1");
+      };
+    });
     const gen = $("#fwEmptyGen", main);
-    if (gen) gen.onclick = function () { openWizard(); };
+    if (gen) gen.onclick = function () { openWizard(FW.fromTc ? { tcId: FW.fromTc } : {}); };
     const read = $("#fwEmptyRead", main);
     if (read) read.onclick = function () {
       const row = (FW.tree || []).find(function (r) { return /(?:^|\/)readme\.md$/i.test(r.path || ""); });
@@ -1372,8 +1599,11 @@
     }
   }
 
-  function openWizard() {
-    FW.wiz = { step: 1, cases: [], sel: {}, filter: "all", tab: "all", preview: null, context: "", changes: null, result: null };
+  function openWizard(opts) {
+    opts = opts || {};
+    const sel = {};
+    if (opts.tcId) sel[opts.tcId] = true;
+    FW.wiz = { step: 1, cases: [], sel: sel, filter: "all", tab: "all", preview: null, previewId: opts.tcId || null, context: "", changes: null, result: null };
     const ov = document.createElement("div");
     ov.className = "fw-wiz"; ov.id = "fwWiz";
     ov.innerHTML = '<div class="box"><div class="hd"><h2>Generate into project framework</h2><span style="flex:1"></span><div class="fw-steps" id="fwWizSteps"></div></div><div class="bd" id="fwWizBd">Loading…</div><div class="ft" id="fwWizFt"></div></div>';
@@ -1384,10 +1614,20 @@
 
   function paintWiz() {
     const w = FW.wiz; if (!w || !$("#fwWiz")) return;
-    $("#fwWizSteps").innerHTML = ["1. Choose test cases", "2. Generate", "3. Review & Run"].map(function (s, i) {
-      return "<span class=\"" + (w.step === i + 1 ? "a" : "") + "\">" + s + "</span>";
-    }).join(" → ");
-    if (w.step === 1) paintWiz1();
+    const h2 = $("#fwWiz h2");
+    if (w.fromLibrary) {
+      if (h2) h2.textContent = "Review changes";
+      $("#fwWizSteps").innerHTML = '<span class="sub">Adding <b>' + esc(w.fromLibrary) + "</b>"
+        + (w.libraryName && w.libraryName !== w.fromLibrary ? " (" + esc(w.libraryName) + ")" : "")
+        + " into the project framework</span>";
+    } else {
+      if (h2) h2.textContent = "Generate into project framework";
+      $("#fwWizSteps").innerHTML = ["1. Choose test cases", "2. Generate", "3. Review & Run"].map(function (s, i) {
+        return "<span class=\"" + (w.step === i + 1 ? "a" : "") + "\">" + s + "</span>";
+      }).join(" → ");
+    }
+    if (w.fromLibrary) paintWiz3();
+    else if (w.step === 1) paintWiz1();
     else if (w.step === 2) paintWiz2();
     else paintWiz3();
   }
@@ -1551,7 +1791,10 @@
       + '<button type="button" class="btn" id="fwWizApply">Apply selected</button>'
       + '<button type="button" class="btn g" id="fwWizChk">Check</button>'
       + '<button type="button" class="btn" id="fwWizRun">Run</button>';
-    $("#fwWizBack").onclick = function () { FW.wiz.step = 2; paintWiz(); };
+    $("#fwWizBack").onclick = function () {
+      if (FW.wiz && FW.wiz.fromLibrary) { closeWiz(); return; }
+      FW.wiz.step = 2; paintWiz();
+    };
     $$("[data-inc]").forEach(function (ck) { ck.onchange = function () { FW.wiz.changes[+ck.dataset.inc].include = ck.checked; }; });
     $$("[data-diff]").forEach(function (b) { b.onclick = function () { const i = +b.dataset.diff; FW.wiz.changes[i].show = !FW.wiz.changes[i].show; paintWiz3(); }; });
     $("#fwWizApply").onclick = applyChanges;
@@ -1827,6 +2070,7 @@
     }
   }
 
+  window.fwAddLibraryToProject = addLibraryToProject;
   const _renderLib = window.asRenderLibrary;
   if (typeof _renderLib === "function") {
     window.asRenderLibrary = async function (host) {

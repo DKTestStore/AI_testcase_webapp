@@ -477,7 +477,14 @@
   }
   function listHtml(scripts) {
     if (!scripts.length) return '<div class="card"><div class="sub" style="margin:0">No scripts in this folder.</div></div>';
-    return '<table class="rt"><tr><th></th><th>ID</th><th>Name</th><th>Language</th><th>Types</th><th>Frameworks</th><th>Linked</th><th>Ver</th><th></th></tr>' + scripts.map((s) => '<tr class="clk" data-id="' + esc(s.id) + '"><td><input type="checkbox" class="asCk"' + (ST.lib.sel.has(s.id) ? " checked" : "") + '></td><td><b style="color:#4361ee">' + esc(s.id) + "</b></td><td>" + esc(s.name) + "</td><td>" + esc(s.language || "-") + "</td><td>" + (s.types || []).map((t) => '<span class="as-pill">' + esc(t) + "</span>").join("") + "</td><td>" + (s.frameworks || []).map((t) => '<span class="as-pill">' + esc(t) + "</span>").join(" ") + "</td><td>" + (s.linked_ids || []).map((t) => '<span class="tid">' + esc(t) + "</span>").join(" ") + "</td><td>v" + (s.version || 1) + '</td><td><button type="button" class="ib" data-row="' + esc(s.id) + '" title="Actions">...</button></td></tr>').join("") + "</table>";
+    const ver = ST.lib && ST.lib.mode === "versions";
+    if (ver) {
+      return '<table class="rt"><tr><th></th><th>ID</th><th>Name</th><th>Linked</th><th>Ver</th><th>Date</th><th></th></tr>' + scripts.map((s) => {
+        const acts = '<div class="fw-veracts"><a data-preview="' + esc(s.id) + '">Preview</a><a class="pri" data-addfw="' + esc(s.id) + '">Add to project framework</a><a data-zip="' + esc(s.id) + '">Download zip</a></div>';
+        return '<tr class="clk" data-id="' + esc(s.id) + '"><td><input type="checkbox" class="asCk"' + (ST.lib.sel.has(s.id) ? " checked" : "") + '></td><td><b style="color:#4361ee">' + esc(s.id) + "</b></td><td><div>" + esc(s.name) + "</div>" + acts + "</td><td>" + (s.linked_ids || []).map((tid) => '<span class="tid">' + esc(tid) + "</span>").join(" ") + "</td><td>v" + (s.version || 1) + '</td><td class="sub" style="white-space:nowrap;margin:0">' + esc(s.updated || "") + '</td><td><button type="button" class="ib" data-row="' + esc(s.id) + '" title="Actions">...</button></td></tr>';
+      }).join("") + "</table>";
+    }
+    return '<table class="rt"><tr><th></th><th>ID</th><th>Name</th><th>Language</th><th>Types</th><th>Frameworks</th><th>Linked</th><th>Ver</th><th></th></tr>' + scripts.map((s) => '<tr class="clk" data-id="' + esc(s.id) + '"><td><input type="checkbox" class="asCk"' + (ST.lib.sel.has(s.id) ? " checked" : "") + '></td><td><b style="color:#4361ee">' + esc(s.id) + "</b></td><td>" + esc(s.name) + "</td><td>" + esc(s.language || "-") + "</td><td>" + (s.types || []).map((typ) => '<span class="as-pill">' + esc(typ) + "</span>").join("") + "</td><td>" + (s.frameworks || []).map((typ) => '<span class="as-pill">' + esc(typ) + "</span>").join(" ") + "</td><td>" + (s.linked_ids || []).map((tid) => '<span class="tid">' + esc(tid) + "</span>").join(" ") + "</td><td>v" + (s.version || 1) + '</td><td><button type="button" class="ib" data-row="' + esc(s.id) + '" title="Actions">...</button></td></tr>').join("") + "</table>";
   }
   function bindLibrary(host) {
     const L = ST.lib;
@@ -494,9 +501,29 @@
     const lf = $("#asLangF", host);
     if (lf) lf.onchange = function () { L.language = lf.value; reload(); };
     $$("#asList tr.clk", host).forEach((tr) => {
-      tr.onclick = function (e) { if (e.target.closest("input,button,[data-row]")) return; openEditor(tr.dataset.id); };
+      tr.onclick = function (e) {
+        if (e.target.closest("input,button,[data-row],a")) return;
+        if (ST.lib && ST.lib.mode === "versions") openPreview(tr.dataset.id);
+        else openEditor(tr.dataset.id);
+      };
       tr.draggable = true;
       tr.ondragstart = function (e) { e.dataTransfer.setData("text/script-id", tr.dataset.id); };
+    });
+    $$("[data-preview]", host).forEach((a) => {
+      a.onclick = function (e) { e.preventDefault(); e.stopPropagation(); openPreview(a.dataset.preview); };
+    });
+    $$("[data-addfw]", host).forEach((a) => {
+      a.onclick = function (e) {
+        e.preventDefault(); e.stopPropagation();
+        if (typeof window.fwAddLibraryToProject === "function") window.fwAddLibraryToProject(a.dataset.addfw);
+        else toast("Open the project workspace to add this version.");
+      };
+    });
+    $$("[data-zip]", host).forEach((a) => {
+      a.onclick = function (e) {
+        e.preventDefault(); e.stopPropagation();
+        window.location = "/api/automation/scripts/" + encodeURIComponent(a.dataset.zip) + "/download";
+      };
     });
     $$(".asCk", host).forEach((ck) => { ck.onclick = function (e) { e.stopPropagation(); const id = ck.closest("tr").dataset.id; if (ck.checked) L.sel.add(id); else L.sel.delete(id); }; });
     $$("[data-row]", host).forEach((b) => { b.onclick = function (e) { e.stopPropagation(); rowMenu(b, b.dataset.row); }; });
@@ -547,13 +574,20 @@
     const menu = document.createElement("div");
     menu.id = "asFm"; menu.className = "as-fm";
     menu.style.cssText = "position:fixed;top:" + (r.bottom + 4) + "px;left:" + Math.max(8, r.right - 180) + "px";
-    menu.innerHTML = '<div data-a="open">Open</div><div data-a="dl">Download zip</div><div data-a="dup">Duplicate</div><div data-a="regen">Regenerate</div><div data-a="del" class="danger">Delete</div>';
+    const ver = ST.lib && ST.lib.mode === "versions";
+    menu.innerHTML = (ver ? '<div data-a="preview">Preview</div><div data-a="addfw">Add to project framework</div>' : "")
+      + '<div data-a="open">Open</div><div data-a="dl">Download zip</div><div data-a="dup">Duplicate</div><div data-a="regen">Regenerate</div><div data-a="del" class="danger">Delete</div>';
     document.body.appendChild(menu);
     $$("div[data-a]", menu).forEach((x) => {
       x.onclick = async function () {
         const a = x.dataset.a; closeFm();
         try {
-          if (a === "open") openEditor(sid);
+          if (a === "preview") openPreview(sid);
+          else if (a === "addfw") {
+            if (typeof window.fwAddLibraryToProject === "function") window.fwAddLibraryToProject(sid);
+            else toast("Open the project workspace to add this version.");
+          }
+          else if (a === "open") openEditor(sid);
           else if (a === "dl") window.location = "/api/automation/scripts/" + encodeURIComponent(sid) + "/download";
           else if (a === "dup") { const j = await api("/api/automation/scripts/" + encodeURIComponent(sid) + "/duplicate", { method: "POST", body: {} }); toast("Duplicated as " + j.script.id); await renderLibrary($("#asLib") || $("#view")); }
           else if (a === "regen") {
@@ -570,6 +604,17 @@
       };
     });
   }
+  function isPreviewEditor() {
+    const hash = String((typeof S !== "undefined" && S.view) || location.hash.slice(1) || "");
+    return /(?:\?|&)preview=1(?:&|$)/.test(hash);
+  }
+  function openPreview(sid) {
+    if (typeof go === "function") go("scripts/" + sid + "?preview=1");
+    else { location.hash = "scripts/" + sid + "?preview=1"; viewEditor($("#view"), sid); }
+  }
+  function backFromEditor() {
+    if (typeof go === "function") go(isPreviewEditor() ? "scripts?view=versions" : "scripts");
+  }
   function openEditor(sid) {
     if (typeof go === "function") go("scripts/" + sid);
     else { location.hash = "scripts/" + sid; viewEditor($("#view"), sid); }
@@ -583,7 +628,7 @@
       paintEditor(v);
     } catch (e) {
       v.innerHTML = '<div class="asv"><div class="error">' + esc(e.message) + '</div><button type="button" class="btn g" id="asBackLib">Library</button></div>';
-      $("#asBackLib").onclick = function () { go("scripts"); };
+      $("#asBackLib").onclick = function () { backFromEditor(); };
     }
   }
   function paintEditor(v) {
@@ -594,15 +639,19 @@
     const groups = groupPaths(files);
     const tree = Object.keys(groups).map((g) => '<div class="grp">' + esc(g) + "</div>" + groups[g].map((p) => '<a data-p="' + esc(p) + '" class="' + (p === ST.ed.file ? "on" : "") + '">' + esc(p) + "</a>").join("")).join("");
     const vers = (ST.ed.versions || []).map((x) => '<li data-v="' + x.version + '" class="' + (ST.ed.showDiff === x.version ? "on" : "") + '">v' + x.version + " · " + esc(x.created || "") + '<div class="sub" style="margin:0">' + esc(x.note || "") + "</div></li>").join("");
-    v.innerHTML = '<div class="asv as-ed"><div class="as-ed-head"><div><button type="button" class="btn g sm" id="asBackLib">Library</button><h1 style="display:inline;margin-left:8px">' + esc(s.name) + '</h1><div class="sub" style="margin:4px 0 0">' + esc(s.id) + " · " + esc(s.language || "") + " · v" + (s.version || 1) + " " + (s.linked_ids || []).map((t) => '<span class="tid">' + esc(t) + "</span>").join(" ") + '</div></div><div class="as-ed-meta"><span class="as-ind" data-as="script" hidden></span><button type="button" class="btn g" id="asEdSave">Save as new version</button><button type="button" class="btn g" id="asEdZip">Download zip</button><button type="button" class="btn g" id="asEdRegen">Regenerate</button></div></div><div class="as-ed-body"><div class="as-ftree">' + (tree || '<div class="sub">No files</div>') + '</div><div class="as-codewrap"><textarea id="asEdCode" class="as-ed-code">' + esc(files[ST.ed.file] || "") + '</textarea></div><div class="as-side"><div class="card"><h3>Notes</h3><textarea id="asEdNotes" rows="4">' + esc(s.notes || "") + '</textarea></div><div class="card" style="margin-top:10px"><h3>Linked cases</h3><div>' + ((s.linked_ids || []).map((t) => '<span class="tid">' + esc(t) + "</span>").join(" ") || '<span class="sub">None</span>') + '</div></div><div class="card" style="margin-top:10px"><h3>Version history</h3><ul class="as-ver">' + (vers || '<li class="sub">No snapshots yet</li>') + '</ul><div id="asDiff" style="margin-top:8px"></div></div></div></div></div>';
-    $("#asBackLib").onclick = function () { if (typeof go === "function") go("scripts"); };
-    $$(".as-ftree a").forEach((a) => { a.onclick = function () { flushEditorFile(); ST.ed.file = a.dataset.p; paintEditor(v); }; });
+    const preview = isPreviewEditor();
+    const backLabel = preview ? "Generated versions" : "Workspace";
+    const prevBar = preview ? '<div class="as-prevbar">Preview of <b>' + esc(s.id) + '</b> · read-only <a id="asPrevEdit">Open to edit</a></div>' : "";
+    v.innerHTML = '<div class="asv as-ed' + (preview ? " preview" : "") + '"><div class="as-ed-head"><div><button type="button" class="btn g sm" id="asBackLib">' + backLabel + '</button><h1 style="display:inline;margin-left:8px">' + esc(s.name) + '</h1><div class="sub" style="margin:4px 0 0">' + esc(s.id) + " · " + esc(s.language || "") + " · v" + (s.version || 1) + " " + (s.linked_ids || []).map((tid) => '<span class="tid">' + esc(tid) + "</span>").join(" ") + "</div>" + prevBar + '</div><div class="as-ed-meta"><span class="as-ind" data-as="script" hidden></span><button type="button" class="btn g" id="asEdSave">Save as new version</button><button type="button" class="btn g" id="asEdZip">Download zip</button><button type="button" class="btn g" id="asEdRegen">Regenerate</button></div></div><div class="as-ed-body"><div class="as-ftree">' + (tree || '<div class="sub">No files</div>') + '</div><div class="as-codewrap"><textarea id="asEdCode" class="as-ed-code"' + (preview ? " readonly" : "") + '>' + esc(files[ST.ed.file] || "") + '</textarea></div><div class="as-side"><div class="card"><h3>Notes</h3><textarea id="asEdNotes" rows="4"' + (preview ? " readonly" : "") + '>' + esc(s.notes || "") + '</textarea></div><div class="card" style="margin-top:10px"><h3>Linked cases</h3><div>' + ((s.linked_ids || []).map((tid) => '<span class="tid">' + esc(tid) + "</span>").join(" ") || '<span class="sub">None</span>') + '</div></div><div class="card" style="margin-top:10px"><h3>Version history</h3><ul class="as-ver">' + (vers || '<li class="sub">No snapshots yet</li>') + '</ul><div id="asDiff" style="margin-top:8px"></div></div></div></div></div>';
+    $("#asBackLib").onclick = function () { backFromEditor(); };
+    if ($("#asPrevEdit")) $("#asPrevEdit").onclick = function (e) { e.preventDefault(); openEditor(s.id); };
+    $$(".as-ftree a").forEach((a) => { a.onclick = function () { if (!preview) flushEditorFile(); ST.ed.file = a.dataset.p; paintEditor(v); }; });
     const ta = $("#asEdCode");
-    ta.oninput = function () { s.files[ST.ed.file] = ta.value; scheduleScriptSave(); };
-    $("#asEdNotes").oninput = function (e) { s.notes = e.target.value; scheduleScriptSave(); };
-    $("#asEdSave").onclick = function () { saveNewVersion(); };
+    if (!preview) ta.oninput = function () { s.files[ST.ed.file] = ta.value; scheduleScriptSave(); };
+    if (!preview) $("#asEdNotes").oninput = function (e) { s.notes = e.target.value; scheduleScriptSave(); };
+    if ($("#asEdSave")) $("#asEdSave").onclick = function () { saveNewVersion(); };
     $("#asEdZip").onclick = function () { window.location = "/api/automation/scripts/" + encodeURIComponent(s.id) + "/download"; };
-    $("#asEdRegen").onclick = async function () {
+    if ($("#asEdRegen")) $("#asEdRegen").onclick = async function () {
       const cases = await resolveCases(s.linked_ids || []);
       if (!cases.length) { toast("No linked test cases are available to regenerate from."); return; }
       asOpenGenerate(cases, { language: s.language, types: s.types, frameworks: s.frameworks });

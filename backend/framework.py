@@ -24,6 +24,8 @@ from . import services, token_usage
 from .config import env
 from .db.engine import session_scope
 from .db.models import (
+    AutomationRun,
+    AutomationRunResult,
     AutomationScript,
     Counter,
     FrameworkAssertion,
@@ -641,7 +643,85 @@ def _parse_json_blob(raw: str) -> Any:
 
 # --------------------------------------------------------------------------- routes (attached below)
 
+
+def _files_dict(val) -> Dict[str, str]:
+    if isinstance(val, dict):
+        return {str(k): ("" if v is None else str(v)) for k, v in val.items()}
+    return {}
+
+
+def _module_to_existing(mod: str, existing: List[str]) -> Optional[str]:
+    rel = (mod or "").replace(".", "/").strip("/")
+    if not rel:
+        return None
+    names = set(existing)
+    for ext in (".py", ".java", ".js", ".ts", ".cs", ".robot"):
+        cand = rel + ext
+        if cand in names:
+            return cand
+    last = rel.split("/")[-1].lower()
+    hits = []
+    for path in existing:
+        base = path.rstrip("/").split("/")[-1]
+        stem = base.rsplit(".", 1)[0].lower()
+        if stem != last:
+            continue
+        low = "/" + path.replace("\\", "/")
+        if "/pages/" in low or low.startswith("pages/") or "/pageobjects/" in low or "/keywords/" in low:
+            hits.append(path)
+    return hits[0] if hits else None
+
+
+def infer_related_paths(content: str, existing: List[str]) -> Dict[str, List[str]]:
+    """Best-effort page-object and test-data paths mentioned in a test file."""
+    text = content or ""
+    existing = [p for p in existing if p]
+    pages: List[str] = []
+    data: List[str] = []
+
+    def add(bucket: List[str], path: str) -> None:
+        path = (path or "").replace("\\", "/").lstrip("./")
+        if path and path not in bucket:
+            bucket.append(path)
+
+    for m in re.finditer(r"^\s*from\s+([A-Za-z_][\w.]*)\s+import\s+", text, re.M):
+        hit = _module_to_existing(m.group(1), existing)
+        if hit:
+            add(pages, hit)
+    for m in re.finditer(r"^\s*import\s+([A-Za-z_][\w.]*)", text, re.M):
+        hit = _module_to_existing(m.group(1).split(",")[0].strip(), existing)
+        if hit:
+            add(pages, hit)
+    for m in re.finditer(
+        r"(?:(?<=[\"'`])|(?<![A-Za-z0-9_]))((?:pages|pageobjects|page_objects|keywords|components)/[A-Za-z0-9_./-]+\.\w+)",
+        text,
+        re.I,
+    ):
+        path = m.group(1).replace("\\", "/")
+        if path in existing:
+            add(pages, path)
+    for m in re.finditer(
+        r"(?:(?<=[\"'`])|(?<![A-Za-z0-9_]))((?:test_data|testdata|data|resources)/[A-Za-z0-9_./-]+\.(?:csv|xlsx|xls|json|xml|ya?ml))",
+        text,
+        re.I,
+    ):
+        path = m.group(1).replace("\\", "/")
+        if path in existing or True:
+            add(data, path)
+    return {"page_objects": pages, "test_data": data}
+
+
+def _is_test_path(path: str) -> bool:
+    n = (path or "").replace("\\", "/").lower()
+    base = n.split("/")[-1]
+    return (
+        "/tests/" in n or n.startswith("tests/") or n.startswith("test/") or "/test/" in n
+        or base.startswith("test_") or base.endswith("_test.py") or "spec." in base
+    )
+
+
 def attach(parent: APIRouter, current) -> None:
+
     """Register framework routes on the existing /api/automation router."""
 
     from . import automation as auto
@@ -952,6 +1032,204 @@ def attach(parent: APIRouter, current) -> None:
                 if tid not in by:
                     by[tid] = {"tc_id": tid, "status": "none", "label": "No script", "files": []}
             return {"ok": True, "statuses": by}
+
+    @parent.get("/tc-usage")
+    def tc_usage(tc_id: str = Query(""), project: str = Query(""), framework_id: str = Query("")):
+        """Read-only 'Where is this used' + mapping payload for one test case."""
+        tid = (tc_id or "").strip()
+        if not tid:
+            raise ServiceError("tc_id is required.")
+        with session_scope() as session:
+            q = session.query(TcScriptMap).filter(TcScriptMap.tc_id == tid)
+            if framework_id:
+                q = q.filter(TcScriptMap.framework_id == framework_id)
+            elif project:
+                fids = [
+                    f.id for f in session.query(ProjectFramework)
+                    .filter(ProjectFramework.project == project).all()
+                ]
+                if fids:
+                    q = q.filter(TcScriptMap.framework_id.in_(fids))
+            rows = q.order_by(TcScriptMap.updated.desc()).all()
+            refresh_map_status(session, rows)
+            session.commit()
+            fid = framework_id or (rows[0].framework_id if rows else "")
+            if not fid and project:
+                fw = (
+                    session.query(ProjectFramework)
+                    .filter(ProjectFramework.project == project)
+                    .order_by(ProjectFramework.updated.desc())
+                    .first()
+                )
+                if fw:
+                    fid = fw.id
+            existing_rows = []
+            if fid:
+                existing_rows = (
+                    session.query(FrameworkFile)
+                    .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+                    .all()
+                )
+            existing = {r.path: (r.content or "") for r in existing_rows}
+            existing_paths = list(existing.keys())
+            test_files = []
+            seen_paths = set()
+            for r in rows:
+                if not r.file_path or r.file_path in seen_paths:
+                    continue
+                seen_paths.add(r.file_path)
+                test_files.append({
+                    "path": r.file_path,
+                    "status": r.status,
+                    "label": _status_payload(r).get("label"),
+                    "framework_id": r.framework_id,
+                    "updated": r.updated,
+                })
+            # prefer reading content of the primary test file
+            primary = None
+            for item in test_files:
+                if _is_test_path(item["path"]):
+                    primary = item["path"]
+                    break
+            if not primary and test_files:
+                primary = test_files[0]["path"]
+            content = existing.get(primary or "") or ""
+            related = infer_related_paths(content, existing_paths)
+            page_objects = [{"path": p} for p in related["page_objects"]]
+            # locators for those pages (and any locator.page matching the stem)
+            stems = set()
+            for p in related["page_objects"]:
+                stems.add(p.rstrip("/").split("/")[-1].rsplit(".", 1)[0].lower())
+                stems.add(p.lower())
+            locators = []
+            if fid:
+                for loc in session.query(FrameworkLocator).filter(FrameworkLocator.framework_id == fid).all():
+                    page = (loc.page or "").lower()
+                    if not stems or page in stems or any(s in page or page in s for s in stems if s):
+                        locators.append({
+                            "id": loc.id, "name": loc.name, "strategy": loc.strategy,
+                            "value": loc.value, "page": loc.page, "status": loc.status,
+                        })
+            data_files = []
+            seen_data = set()
+            for path in related["test_data"]:
+                if path in seen_data:
+                    continue
+                seen_data.add(path)
+                data_files.append({"path": path, "note": ""})
+            if fid:
+                maps = (
+                    session.query(FrameworkMapping)
+                    .filter(FrameworkMapping.framework_id == fid, FrameworkMapping.tc_id == tid)
+                    .all()
+                )
+                for mrow in maps:
+                    note = ""
+                    rows_val = mrow.rows if isinstance(mrow.rows, list) else []
+                    if rows_val:
+                        note = str(len(rows_val)) + " mapped row" + ("s" if len(rows_val) != 1 else "")
+                    if mrow.file_path not in seen_data:
+                        seen_data.add(mrow.file_path)
+                        data_files.append({"path": mrow.file_path, "note": note})
+                    else:
+                        for d in data_files:
+                            if d["path"] == mrow.file_path and note and not d.get("note"):
+                                d["note"] = note
+            last_run = None
+            rq = (
+                session.query(AutomationRunResult, AutomationRun)
+                .join(AutomationRun, AutomationRunResult.run_id == AutomationRun.id)
+            )
+            if fid:
+                rq = rq.filter(AutomationRun.framework_id == fid)
+            file_list = [x["path"] for x in test_files]
+            if file_list:
+                rq = rq.filter(
+                    (AutomationRunResult.tc_id == tid)
+                    | (AutomationRunResult.file.in_(file_list))
+                    | (AutomationRunResult.name.ilike("%" + tid + "%"))
+                )
+            else:
+                rq = rq.filter(
+                    (AutomationRunResult.tc_id == tid)
+                    | (AutomationRunResult.name.ilike("%" + tid + "%"))
+                )
+            hit = rq.order_by(AutomationRun.started.desc()).first()
+            if hit:
+                res, run = hit
+                last_run = {
+                    "id": run.id,
+                    "status": res.status or run.status,
+                    "started": run.started,
+                    "finished": run.finished,
+                    "duration_ms": res.duration_ms,
+                    "file": res.file,
+                    "name": res.name,
+                    "tc_id": res.tc_id,
+                    "error": res.error or "",
+                }
+            versions = []
+            for s in session.query(AutomationScript).order_by(AutomationScript.updated.desc()).all():
+                if tid in (s.linked_ids or []):
+                    versions.append({
+                        "id": s.id, "name": s.name, "version": int(s.version or 1),
+                        "updated": s.updated or "", "linked_ids": list(s.linked_ids or []),
+                        "folder_id": s.folder_id or "", "language": s.language or "",
+                    })
+            title = ""
+            try:
+                case = _repo_cases_by_id([tid]).get(tid) or {}
+                title = case.get("title") or case.get("name") or ""
+            except Exception:
+                title = ""
+            return {
+                "ok": True,
+                "tc_id": tid,
+                "title": title,
+                "mapped": bool(test_files),
+                "framework_id": fid,
+                "test_files": test_files,
+                "page_objects": page_objects,
+                "locators": locators,
+                "test_data": data_files,
+                "last_run": last_run,
+                "versions": versions,
+            }
+
+    @parent.get("/frameworks/{fid}/from-library")
+    def from_library(fid: str, script_id: str = Query(...)):
+        """Classify a Library bundle against the project framework (read-only)."""
+        sid = (script_id or "").strip()
+        if not sid:
+            raise ServiceError("script_id is required.")
+        with session_scope() as session:
+            _fw_or_404(session, fid)
+            script = session.get(AutomationScript, sid)
+            if not script:
+                raise ServiceError("Script not found.", 404)
+            existing_rows = (
+                session.query(FrameworkFile)
+                .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+                .all()
+            )
+            existing = {r.path: (r.content or "") for r in existing_rows}
+            incoming = _files_dict(script.files)
+            mapping = list(script.mapping or [])
+            changes = classify_files(existing, incoming, mapping)
+            linked = list(script.linked_ids or [])
+            if linked:
+                for ch in changes:
+                    if not ch.get("tc_ids"):
+                        ch["tc_ids"] = linked
+            return {
+                "ok": True,
+                "script_id": script.id,
+                "name": script.name,
+                "version": int(script.version or 1),
+                "linked_ids": linked,
+                "mapping": mapping,
+                "changes": changes,
+            }
 
     @parent.post("/update-script")
     def update_script(data: Dict[str, Any] = Body(...), sess=Depends(current)):
