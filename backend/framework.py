@@ -871,6 +871,13 @@ def attach(parent: APIRouter, current) -> None:
         with session_scope() as session:
             fw = _fw_or_404(session, fid)
             applied = []
+            seen_map = set()
+            def _map_once(tid, p):
+                key = (str(tid or "").strip(), p)
+                if not key[0] or not p or key in seen_map:
+                    return
+                seen_map.add(key)
+                _upsert_map(session, key[0], fid, p, status="regen" if data.get("regenerated") else "ready")
             for ch in changes:
                 if ch.get("include") is False:
                     continue
@@ -879,13 +886,17 @@ def attach(parent: APIRouter, current) -> None:
                 row = _upsert_file(session, fid, path, content, author=author, note=str(ch.get("kind") or "Applied"))
                 applied.append(_file_dict(row))
                 for tid in ch.get("tc_ids") or []:
-                    _upsert_map(session, tid, fid, path, status="regen" if data.get("regenerated") else "ready")
+                    _map_once(tid, path)
             # mapping from generate
             for m in data.get("mapping") or []:
                 path = str(m.get("file") or m.get("path") or "")
                 tid = str(m.get("tc_id") or m.get("id") or "")
                 if path and tid:
-                    _upsert_map(session, tid, fid, path, status="regen" if data.get("regenerated") else "ready")
+                    try:
+                        path = safe_path(path)
+                    except Exception:
+                        continue
+                    _map_once(tid, path)
             fw.updated = now_ist()
             session.commit()
             return {"ok": True, "applied": applied, "tree": _tree_payload(session, fid)}
@@ -909,6 +920,9 @@ def attach(parent: APIRouter, current) -> None:
                 tc_id=tc_id, framework_id=fid, file_path=path, script_id="",
                 status=status, steps_hash=h, generated_at=now, updated=now,
             ))
+            # Flush so a second upsert for the same (tc_id, framework, path) in this
+            # request finds this row instead of inserting a duplicate (autoflush=False).
+            session.flush()
 
     @parent.get("/tc-status")
     def tc_status(ids: str = Query(""), project: str = Query("")):
