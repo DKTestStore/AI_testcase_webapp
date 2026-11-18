@@ -21,6 +21,15 @@
     wiz: null,
     run: null,
     poll: 0,
+    collapsed: {},
+    treeQ: "",
+    markers: {},
+    splitPath: "",
+    splitFile: null,
+    splitFocus: "left",
+    langs: [],
+    cursorLine: 1,
+    cursorCol: 1,
   };
 
   function projectId() {
@@ -44,12 +53,50 @@
     return i >= 0 ? n.slice(i + 1).toLowerCase() : "";
   }
   function fwIcon(path, isDir) {
-    if (isDir) return '<span class="fw-ico dir">dir</span>';
+    if (isDir) return '<span class="fw-foldico" title="Folder"></span>';
     const e = extOf(path);
-    const map = { py: "py", java: "java", js: "js", ts: "ts", json: "json", xml: "xml", xlsx: "xlsx", csv: "csv", md: "md", env: "env", robot: "robot", cs: "cs", yaml: "yaml", yml: "yml", ini: "ini", properties: "properties", feature: "feature" };
+    const map = { py: "py", java: "java", js: "js", ts: "ts", json: "json", xml: "xml", xlsx: "xlsx", csv: "csv", md: "md", env: "env", robot: "robot", cs: "cs", yaml: "yaml", yml: "yml", ini: "ini", properties: "properties", feature: "feature", txt: "txt", html: "html", htm: "html" };
     const cls = map[e] || "file";
-    const lab = (e || "file").slice(0, 4);
-    return '<span class="fw-ico ' + cls + '">' + esc(lab) + "</span>";
+    const lab = ({ properties: "PR", feature: "FT", robot: "RF", yaml: "YML", yml: "YML", html: "HTM", htm: "HTM" }[e]) || (e || "file").slice(0, 4);
+    return '<span class="fw-ico ' + cls + '" title=".' + esc(e || "file") + '">' + esc(lab) + "</span>";
+  }
+  function fwIconLg(path, isDir) {
+    if (isDir) return '<span class="ico-lg dir" title="Folder"></span>';
+    const e = extOf(path);
+    const map = { py: "py", java: "java", js: "js", ts: "ts", json: "json", xml: "xml", xlsx: "xlsx", csv: "csv", md: "md", env: "env", robot: "robot", cs: "cs", yaml: "yaml", yml: "yml", ini: "ini", properties: "properties", feature: "feature", txt: "txt", html: "html", htm: "html" };
+    const cls = map[e] || "file";
+    const lab = ({ properties: "PR", feature: "FT", robot: "RF", yaml: "YML", yml: "YML", html: "HTM", htm: "HTM" }[e]) || (e || "file").slice(0, 4);
+    return '<span class="ico-lg fw-ico ' + cls + '">' + esc(lab) + "</span>";
+  }
+  function langLabel() {
+    const list = FW.langs || [];
+    const hit = list.find(function (l) { return l.id === FW.lang; });
+    return (hit && hit.name) || FW.lang || "Python";
+  }
+  function pathName(path) {
+    return String(path || "").replace(/\/$/, "").split("/").pop() || path || "";
+  }
+  function normDir(path) {
+    const s = String(path || "");
+    if (!s) return "";
+    return s.endsWith("/") ? s : s + "/";
+  }
+  function isChildPath(parent, path) {
+    const pre = parent ? normDir(parent) : "";
+    if (pre) {
+      if (path === parent || path === pre) return false;
+      if (path.indexOf(pre) !== 0) return false;
+      return path.slice(pre.length).replace(/\/$/, "").indexOf("/") < 0;
+    }
+    return String(path || "").replace(/\/$/, "").indexOf("/") < 0;
+  }
+  function descendantOf(parent, path) {
+    if (!parent) return true;
+    const pre = normDir(parent);
+    return path === parent || path === pre || path.indexOf(pre) === 0;
+  }
+  function clockSvg() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>';
   }
   function isEnvPath(path) {
     const n = (path || "").split("/").pop() || "";
@@ -93,11 +140,13 @@
     const q = hash.split("?")[1] || "";
     if (/tab=library/.test(q)) FW.tab = "library";
     else if (/tab=project/.test(q) || !q) FW.tab = FW.tab || "project";
-    v.innerHTML = '<div class="fw-shell asv"><div class="fw-head"><div><h1>Automation Scripts</h1><div class="sub" style="margin:0">Project workspace and script library for ' + esc(projectId()) + ".</div></div>"
-      + '<span style="flex:1"></span><label>Language <select id="fwLang"></select></label>'
-      + '<button type="button" class="btn" id="fwGen">Generate</button>'
-      + '<button type="button" class="btn g" id="fwCheck">Check</button>'
-      + '<button type="button" class="btn" id="fwRun">Run</button><button type="button" class="btn g" id="fwRuns">Run history</button></div>'
+    v.innerHTML = '<div class="fw-shell asv"><div class="fw-head"><div><h1>Automation Scripts</h1><p class="lead">Project workspace for ' + esc(projectId()) + " · " + esc(langLabel()) + "</p></div>"
+      + '<div class="acts"><div class="fw-langwrap"><button type="button" class="fw-pill" id="fwLangBtn">' + esc(langLabel()) + '</button><div class="fw-langmenu" id="fwLangMenu" hidden></div></div>'
+      + '<button type="button" class="btn pri" id="fwGen">Generate</button>'
+      + '<span class="fw-splitbtn" id="fwRunWrap"><button type="button" class="btn fw-runmain" id="fwRun">Run</button>'
+      + '<button type="button" class="fw-runcaret" id="fwRunCaret" title="Check, runner options">▾</button>'
+      + '<div class="fw-runmenu" id="fwRunMenu" hidden><button type="button" id="fwCheck">Check</button><button type="button" id="fwRunMenuGo">Run</button></div></span>'
+      + '<button type="button" class="fw-hist" id="fwRuns">' + clockSvg() + " Run history</button></div></div>"
       + '<div class="fw-tabs" role="tablist"><button type="button" data-fwtab="project" class="' + (FW.tab === "project" ? "a" : "") + '">Project</button>'
       + '<button type="button" data-fwtab="library" class="' + (FW.tab === "library" ? "a" : "") + '">Library</button></div>'
       + '<div id="fwHost" style="flex:1;min-height:0;display:flex;flex-direction:column"></div></div>';
@@ -109,16 +158,55 @@
         else viewScriptsWrapped(v);
       };
     });
-    $("#fwLang").onchange = async function () {
-      FW.lang = this.value; FW.path = ""; FW.file = null; FW.fid = "";
-      await renderHost();
-    };
-    $("#fwGen").onclick = function () { openWizard(); };
-    $("#fwCheck").onclick = function () { startCheck(); };
-    $("#fwRun").onclick = function () { startRun(); };
-    if ($("#fwRuns")) $("#fwRuns").onclick = function () { showHistory(); };
+    bindHeaderChrome(v);
     await renderHost();
   };
+
+  function bindHeaderChrome(v) {
+    const btn = $("#fwLangBtn", v);
+    const menu = $("#fwLangMenu", v);
+    if (btn && menu) {
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+        const rm = $("#fwRunMenu"); if (rm) rm.hidden = true;
+      };
+    }
+    if ($("#fwGen")) $("#fwGen").onclick = function () { openWizard(); };
+    if ($("#fwRun")) $("#fwRun").onclick = function () { startRun(); };
+    if ($("#fwRunMenuGo")) $("#fwRunMenuGo").onclick = function () { const m = $("#fwRunMenu"); if (m) m.hidden = true; startRun(); };
+    if ($("#fwCheck")) $("#fwCheck").onclick = function () { const m = $("#fwRunMenu"); if (m) m.hidden = true; startCheck(); };
+    if ($("#fwRunCaret")) $("#fwRunCaret").onclick = function (e) {
+      e.stopPropagation();
+      const m = $("#fwRunMenu");
+      if (m) m.hidden = !m.hidden;
+      if (menu) menu.hidden = true;
+    };
+    if ($("#fwRuns")) $("#fwRuns").onclick = function () { showHistory(); };
+    if (!FW._menuHide) {
+      FW._menuHide = function (ev) {
+        if (!ev.target || !ev.target.closest) return;
+        if (!ev.target.closest(".fw-langwrap")) { const m = $("#fwLangMenu"); if (m) m.hidden = true; }
+        if (!ev.target.closest(".fw-splitbtn")) { const m = $("#fwRunMenu"); if (m) m.hidden = true; }
+      };
+      document.addEventListener("click", FW._menuHide);
+    }
+  }
+
+  async function setLanguage(id) {
+    FW.lang = id; FW.path = ""; FW.file = null; FW.fid = ""; FW.splitPath = ""; FW.splitFile = null;
+    const host = document.getElementById("view") || document.getElementById("fwHost");
+    if (typeof go === "function" && FW.tab) {
+      /* stay on scripts; re-render header label via view */
+    }
+    const v = $("#fwHost") && $("#fwHost").closest(".fw-shell");
+    if (v) {
+      const lead = v.querySelector(".lead");
+      if (lead) lead.textContent = "Project workspace for " + projectId() + " · " + langLabel();
+      const b = $("#fwLangBtn"); if (b) b.textContent = langLabel();
+    }
+    await renderHost();
+  }
 
   async function fillLangSelect() {
     let langs = [{ id: "python", name: "Python" }, { id: "java", name: "Java" }, { id: "javascript", name: "JavaScript" }, { id: "typescript", name: "TypeScript" }, { id: "dotnet", name: ".NET" }, { id: "robot", name: "Robot Framework" }];
@@ -128,9 +216,24 @@
       if (cat.length) langs = cat.filter((l) => l.enabled !== false).map((l) => ({ id: l.id, name: l.name || l.id }));
     } catch (e) {}
     if (!langs.some((l) => l.id === FW.lang)) FW.lang = (langs[0] && langs[0].id) || "python";
+    FW.langs = langs;
+    const btn = $("#fwLangBtn");
+    if (btn) btn.textContent = langLabel();
+    const menu = $("#fwLangMenu");
+    if (menu) {
+      menu.innerHTML = langs.map((l) => "<button type=\"button\" data-lang=\"" + esc(l.id) + "\" class=\"" + (l.id === FW.lang ? "on" : "") + "\">" + esc(l.name) + "</button>").join("");
+      $$("[data-lang]", menu).forEach(function (b) {
+        b.onclick = async function (e) {
+          e.stopPropagation();
+          menu.hidden = true;
+          await setLanguage(b.dataset.lang);
+        };
+      });
+    }
+    const lead = document.querySelector(".fw-shell .lead");
+    if (lead) lead.textContent = "Project workspace for " + projectId() + " · " + langLabel();
     const sel = $("#fwLang");
-    if (!sel) return;
-    sel.innerHTML = langs.map((l) => "<option value=\"" + esc(l.id) + "\"" + (l.id === FW.lang ? " selected" : "") + ">" + esc(l.name) + "</option>").join("");
+    if (sel) sel.innerHTML = langs.map((l) => "<option value=\"" + esc(l.id) + "\"" + (l.id === FW.lang ? " selected" : "") + ">" + esc(l.name) + "</option>").join("");
   }
 
   async function renderHost() {
@@ -150,35 +253,126 @@
   }
 
   function paintProject(host) {
-    host.innerHTML = '<div class="fw-body"><div class="fw-tree" id="fwTree">' + treeHtml(FW.tree) + "</div>"
-      + '<div class="fw-main' + (FW.full ? " fw-full" : "") + '" id="fwMain">' + mainHtml() + "</div></div>";
+    const split = !!FW.split && FW.path && !(FW.file && FW.file.is_dir);
+    const full = FW.full && FW.path && !(FW.file && FW.file.is_dir);
+    host.innerHTML = '<div class="fw-body' + (split ? " split" : "") + (full ? " full" : "") + '" id="fwBody">'
+      + '<div class="fw-tree" id="fwTree">' + treePanel() + "</div>"
+      + paneHtml("fwMain", FW.path, FW.file, "left")
+      + (split ? paneHtml("fwMain2", FW.splitPath, FW.splitFile, "right") : "")
+      + "</div>";
+    const body = $("#fwBody");
+    if (full && body) body.classList.add("fw-full");
     bindTree($("#fwTree"));
-    bindMain($("#fwMain"));
+    bindMain($("#fwMain"), "left");
+    if (split) bindMain($("#fwMain2"), "right");
+  }
+
+  function treePanel() {
+    return '<div class="fw-th"><span class="fw-ttl">Files</span><button type="button" class="btn fw-new" id="fwTreeNew">＋ New</button></div>'
+      + '<input class="fw-search" id="fwTreeQ" type="search" placeholder="Search files" value="' + esc(FW.treeQ || "") + '">'
+      + '<div class="fw-t" id="fwT">' + treeHtml(FW.tree) + "</div>";
   }
 
   function treeHtml(rows) {
-    const items = (rows || []).slice().sort(function (a, b) {
-      if (!!a.is_dir !== !!b.is_dir) return a.is_dir ? -1 : 1;
-      return String(a.path).localeCompare(String(b.path));
-    });
+    const items = (rows || []).slice();
     if (!items.length) return '<div class="fw-empty">No files yet. Generate scripts to fill this project framework.</div>';
-    return items.map(function (r) {
-      const name = (r.path || "").replace(/\/$/, "").split("/").pop() || r.path;
-      const pad = Math.max(0, String(r.path || "").replace(/\/$/, "").split("/").length - 1) * 12;
-      const on = FW.path === r.path ? " a" : "";
-      const dirty = FW.unsaved[r.path] ? '<span class="dot" title="Unsaved"></span>' : "";
-      return '<div class="fw-ti' + on + '" draggable="true" data-path="' + esc(r.path) + '" data-dir="' + (r.is_dir ? "1" : "0") + '" style="padding-left:' + (8 + pad) + 'px">'
-        + fwIcon(r.path, r.is_dir) + '<span style="overflow:hidden;text-overflow:ellipsis">' + esc(name) + "</span>" + dirty + "</div>";
-    }).join("");
+    const q = String(FW.treeQ || "").toLowerCase();
+    function matches(r) {
+      if (!q) return true;
+      const name = pathName(r.path).toLowerCase();
+      return name.indexOf(q) >= 0 || String(r.path).toLowerCase().indexOf(q) >= 0;
+    }
+    function hasMatch(parent) {
+      if (!q) return true;
+      return items.some(function (r) { return descendantOf(parent, r.path) && matches(r); });
+    }
+    function kids(parent) {
+      return items.filter(function (r) { return isChildPath(parent, r.path); })
+        .filter(function (r) { return !q || matches(r) || hasMatch(r.path); })
+        .sort(function (a, b) {
+          if (!!a.is_dir !== !!b.is_dir) return a.is_dir ? -1 : 1;
+          return pathName(a.path).localeCompare(pathName(b.path));
+        });
+    }
+    function countOf(folder) {
+      return items.filter(function (r) { return r.path !== folder && descendantOf(folder, r.path) && !r.is_dir; }).length;
+    }
+    function isOpen(folder) {
+      if (q && hasMatch(folder)) return true;
+      return !FW.collapsed[folder];
+    }
+    let html = "";
+    function walk(parent, lvl) {
+      kids(parent).forEach(function (r) {
+        const name = pathName(r.path);
+        const on = (FW.path === r.path || (r.is_dir && (FW.path === r.path || FW.path === normDir(r.path)))) ? " a" : "";
+        const dirty = FW.unsaved[r.path] ? '<span class="udot" title="Unsaved changes"></span>' : "";
+        const mk = markerHtml(r.path);
+        const pad = 6 + Math.max(0, lvl) * 12;
+        if (r.is_dir) {
+          const open = isOpen(r.path);
+          html += '<div class="fw-ti' + on + '" draggable="true" data-path="' + esc(r.path) + '" data-dir="1" style="padding-left:' + pad + 'px">'
+            + '<span class="fw-ch" data-ch="' + esc(r.path) + '">' + (open ? "▾" : "▸") + "</span>"
+            + fwIcon(r.path, true) + '<span class="nm">' + esc(name) + '</span><span class="cnt">' + countOf(r.path) + "</span></div>";
+          if (open) walk(r.path, lvl + 1);
+        } else {
+          html += '<div class="fw-ti' + on + '" draggable="true" data-path="' + esc(r.path) + '" data-dir="0" style="padding-left:' + (pad + 12) + 'px">'
+            + fwIcon(r.path, false) + mk + '<span class="nm">' + esc(name) + "</span>" + dirty + "</div>";
+        }
+      });
+    }
+    walk("", 0);
+    return html || '<div class="fw-empty">No files match this search.</div>';
+  }
+
+  function markerHtml(path) {
+    const k = (FW.markers || {})[path];
+    if (k === "new") return '<span class="fw-mk n" title="New">New</span>';
+    if (k === "changed" || k === "chg") return '<span class="fw-mk c" title="Changed">Chg</span>';
+    return "";
+  }
+
+  function toggleFold(path) {
+    if (FW.collapsed[path]) delete FW.collapsed[path];
+    else FW.collapsed[path] = true;
+    const t = $("#fwT");
+    if (t) { t.innerHTML = treeHtml(FW.tree); bindTreeRows(t); }
   }
 
   function bindTree(tree) {
     if (!tree) return;
-    $$(".fw-ti", tree).forEach(function (el) {
+    const q = $("#fwTreeQ", tree);
+    if (q) {
+      q.oninput = function () {
+        FW.treeQ = q.value;
+        const box = $("#fwT");
+        if (box) { box.innerHTML = treeHtml(FW.tree); bindTreeRows(box); }
+      };
+    }
+    const neu = $("#fwTreeNew", tree);
+    if (neu) neu.onclick = function (e) {
+      e.stopPropagation();
+      const r = neu.getBoundingClientRect();
+      showTreeMenu(r.left, r.bottom + 4, FW.path && (FW.file && FW.file.is_dir) ? FW.path : "", true);
+    };
+    tree.oncontextmenu = function (e) {
+      if (e.target === tree || e.target.id === "fwT") { e.preventDefault(); showTreeMenu(e.clientX, e.clientY, "", true); }
+    };
+    bindTreeRows($("#fwT", tree) || tree);
+  }
+
+  function bindTreeRows(root) {
+    if (!root) return;
+    $$(".fw-ti", root).forEach(function (el) {
       el.onclick = function (e) {
         e.preventDefault();
-        if (el.dataset.dir === "1") { FW.path = el.dataset.path; return; }
-        openFile(el.dataset.path);
+        if (e.target && e.target.dataset && e.target.dataset.ch != null) {
+          e.stopPropagation();
+          toggleFold(e.target.dataset.ch);
+          return;
+        }
+        if (el.dataset.dir === "1") { openFolder(el.dataset.path); return; }
+        pickTreeFile(el.dataset.path);
       };
       el.oncontextmenu = function (e) {
         e.preventDefault();
@@ -193,9 +387,321 @@
         if (el.dataset.dir === "1" && src) moveFile(src, el.dataset.path);
       };
     });
-    tree.oncontextmenu = function (e) {
-      if (e.target === tree) { e.preventDefault(); showTreeMenu(e.clientX, e.clientY, "", true); }
-    };
+  }
+
+  function pickTreeFile(path) {
+    if (FW.split && FW.splitFocus === "right") return openFileIn("right", path);
+    if (FW.split && FW.path && path !== FW.path && !FW.splitPath) return openFileIn("right", path);
+    return openFile(path);
+  }
+
+  async function openFolder(path) {
+    FW.path = path;
+    FW.split = false;
+    FW.splitPath = "";
+    FW.splitFile = null;
+    const row = (FW.tree || []).find(function (r) { return r.path === path || r.path === normDir(path); }) || { path: path, is_dir: true };
+    FW.file = { path: path, is_dir: true, updated: row.updated || "", version: row.version || 1, updated_by: row.updated_by || "" };
+    FW.preview = null;
+    const host = $("#fwHost");
+    if (host) paintProject(host);
+  }
+
+  async function reloadTree() {
+    const res = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/tree");
+    FW.tree = res.tree || [];
+    const host = $("#fwHost");
+    if (host && FW.tab === "project") paintProject(host);
+  }
+
+  async function openFile(path) {
+    FW.path = path;
+    FW.splitFocus = "left";
+    try {
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/file?path=" + encodeURIComponent(path));
+      FW.file = j.file || {};
+      if (FW.file.is_dir) return openFolder(path);
+      FW.file.used_by = j.used_by || [];
+      FW.file.versions = j.versions || [];
+      if (isDataPath(path) || isEnvPath(path)) {
+        try {
+          const pr = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/preview?path=" + encodeURIComponent(path));
+          FW.preview = pr.preview || null;
+          if (pr.used_by) FW.file.used_by = pr.used_by;
+        } catch (e2) { FW.preview = null; }
+      } else FW.preview = null;
+      const host = $("#fwHost");
+      if (host) paintProject(host);
+    } catch (e) { toast(e.message || String(e)); }
+  }
+
+  async function openFileIn(side, path) {
+    if (side !== "right") return openFile(path);
+    FW.splitPath = path;
+    FW.splitFocus = "right";
+    try {
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/file?path=" + encodeURIComponent(path));
+      FW.splitFile = j.file || {};
+      FW.splitFile.used_by = j.used_by || [];
+      FW.splitFile.versions = j.versions || [];
+      const host = $("#fwHost");
+      if (host) paintProject(host);
+    } catch (e) { toast(e.message || String(e)); }
+  }
+
+  function currentContent(path) {
+    const pth = path == null ? FW.path : path;
+    if (!pth) return "";
+    if (Object.prototype.hasOwnProperty.call(FW.unsaved, pth)) return FW.unsaved[pth];
+    if (pth === FW.splitPath && FW.splitFile) return FW.splitFile.content || "";
+    if (pth === FW.path && FW.file) return FW.file.content || "";
+    return (FW.file && FW.file.content) || "";
+  }
+
+  function paneHtml(id, path, file, side) {
+    return '<div class="fw-main" id="' + id + '" data-side="' + side + '">' + mainHtml(path, file, side) + "</div>";
+  }
+
+  function mainHtml(path, file, side) {
+    path = path == null ? FW.path : path;
+    file = file == null ? FW.file : file;
+    side = side || "left";
+    if (!path) return emptyStateHtml();
+    if (file && file.is_dir) return folderSummaryHtml(path, file);
+    return fileViewHtml(path, file, side);
+  }
+
+  function emptyStateHtml() {
+    return '<div class="fw-empty-state"><div class="ill"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></div>'
+      + "<h2>Pick a file to get started</h2>"
+      + "<p>This project framework is ready. Open a file from the tree, or use a shortcut below.</p>"
+      + '<div class="acts"><button type="button" class="btn pri" id="fwEmptyGen">Generate tests</button>'
+      + '<button type="button" class="btn g" id="fwEmptyRead">Open README</button>'
+      + '<button type="button" class="btn g" id="fwEmptyData">Add test data</button></div></div>';
+  }
+
+  function folderSummaryHtml(path, file) {
+    const kids = (FW.tree || []).filter(function (r) { return isChildPath(path, r.path); })
+      .sort(function (a, b) { if (!!a.is_dir !== !!b.is_dir) return a.is_dir ? -1 : 1; return pathName(a.path).localeCompare(pathName(b.path)); });
+    const pre = normDir(path);
+    const desc = (FW.tree || []).filter(function (r) { return r.path !== path && r.path !== pre && descendantOf(path, r.path); });
+    const nFiles = desc.filter(function (r) { return !r.is_dir; }).length;
+    const nDirs = desc.filter(function (r) { return r.is_dir; }).length;
+    const last = desc.concat([file || {}]).reduce(function (m, r) { return (r.updated || "") > m ? r.updated : m; }, "");
+    const cards = kids.map(function (r) {
+      const ico = r.is_dir ? '<span class="fw-foldico"></span>' : fwIcon(r.path, false);
+      const kind = r.is_dir ? "Folder" : ("." + (r.ext || extOf(r.path) || "file")).replace("..", ".");
+      return '<div class="fw-card" data-open="' + esc(r.path) + '" data-dir="' + (r.is_dir ? "1" : "0") + '">'
+        + ico + "<div><div class=\"nm\">" + esc(pathName(r.path)) + (r.is_dir ? "/" : "") + "</div>"
+        + '<div class="sub">' + esc(kind) + "</div></div>"
+        + '<span class="muted">' + esc(r.updated || "") + "</span></div>";
+    }).join("") || '<div class="fw-empty">This folder is empty.</div>';
+    const name = pathName(path) || path;
+    return fileCardHtml({ path: path, name: name, isDir: true, version: "", used: [], unsaved: false, updated: last })
+      + '<div class="fw-fold"><div class="sum"><span><b>' + (nFiles + nDirs) + " item" + (nFiles + nDirs === 1 ? "" : "s") + "</b> · "
+      + nFiles + " file" + (nFiles === 1 ? "" : "s") + ", " + nDirs + " folder" + (nDirs === 1 ? "" : "s") + "</span>"
+      + (last ? "<span>Last updated " + esc(last) + "</span>" : "") + "</div>"
+      + '<div class="acts"><button type="button" class="btn pri" id="fwFoldNew">New file</button>'
+      + '<button type="button" class="btn g sm" id="fwFoldUp">Upload</button>'
+      + '<button type="button" class="btn g sm" id="fwFoldRen">Rename</button></div>'
+      + '<div class="fw-cards">' + cards + "</div></div>";
+  }
+
+  function fileCardHtml(opts) {
+    const used = opts.used || [];
+    const chips = used.map(function (id) { return '<span class="tid">' + esc(id) + "</span>"; }).join("");
+    const usedHtml = used.length ? '<span class="fw-used">Used by ' + used.length + " test" + (used.length === 1 ? "" : "s") + " " + chips + "</span>" : "";
+    const crumb = breadcrumb(opts.path, opts.isDir);
+    const ico = opts.isDir ? '<span class="ico-lg dir" title="Folder"></span>' : fwIconLg(opts.path, false);
+    return '<div class="fw-fcard">' + ico + '<div class="who"><div class="fn">' + esc(opts.name)
+      + (opts.unsaved ? '<span class="udot" title="Unsaved changes"></span>' : "") + "</div>"
+      + '<div class="crumb">' + crumb + "</div>"
+      + '<div class="meta">' + (opts.version ? '<span class="fw-vchip">' + esc(opts.version) + "</span>" : "") + usedHtml + "</div></div></div>";
+  }
+
+  function breadcrumb(path, isDir) {
+    const proj = esc(projectId());
+    const parts = String(path || "").replace(/\/$/, "").split("/").filter(Boolean);
+    if (!parts.length) return "<b>" + proj + "</b> /";
+    const last = parts.pop();
+    const head = parts.map(function (s) { return esc(s); }).join(" / ");
+    return "<b>" + proj + "</b> / " + (head ? head + " / " : "") + "<b>" + esc(last) + (isDir ? " /" : "") + "</b>";
+  }
+
+  function fileViewHtml(path, file, side) {
+    const unsaved = !!FW.unsaved[path];
+    const used = (file && file.used_by) || [];
+    const ver = file && file.version ? ("v" + file.version) : "";
+    const tabs = [];
+    if (isEnvPath(path)) tabs.push(["env", "Variables"]);
+    if (isDataPath(path)) tabs.push(["preview", "Preview"]);
+    tabs.push(["code", "Code"]);
+    tabs.push(["loc", "Locators"]);
+    tabs.push(["asrt", "Assertions"]);
+    if (isDataPath(path)) tabs.push(["map", "Data mapping"]);
+    let pane = FW.viewPane || "code";
+    if (side === "right") pane = FW.viewPaneRight || "code";
+    if (!tabs.some(function (t) { return t[0] === pane; })) pane = tabs[0][0];
+    let body = "";
+    if (pane === "env") body = envHtml();
+    else if (pane === "preview") body = previewHtml();
+    else if (pane === "loc") body = locHtml();
+    else if (pane === "asrt") body = asrtHtml();
+    else if (pane === "map") body = mapHtml();
+    else body = codeHtml(path, side);
+    const splitIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>';
+    const fullIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+    const histIco = clockSvg();
+    const bar = '<div class="fw-bar"><div class="fw-seg">'
+      + tabs.map(function (t) { return '<button type="button" data-pane="' + t[0] + '" class="' + (pane === t[0] ? "on" : "") + '">' + t[1] + "</button>"; }).join("")
+      + '</div><div class="fw-ibar">'
+      + '<button type="button" class="fw-ico-btn" data-act="split" title="Split view">' + splitIco + '<span class="tip">Split view</span></button>'
+      + '<button type="button" class="fw-ico-btn" data-act="full" title="Full screen">' + fullIco + '<span class="tip">Full screen</span></button>'
+      + '<button type="button" class="fw-ico-btn" data-act="hist" title="Version history">' + histIco + '<span class="tip">Version history</span></button>'
+      + '</div><button type="button" class="btn pri save" data-act="save"' + (unsaved ? "" : " disabled") + ">Save</button></div>";
+    const hist = (FW.showHist && pane === "code" && side === "left") ? histHtml() : "";
+    const stat = pane === "code" ? statusBarHtml(path, side) : "";
+    return fileCardHtml({ path: path, name: pathName(path), isDir: false, version: ver, used: used, unsaved: unsaved })
+      + bar + '<div class="fw-code" id="fwPane">' + body + hist + "</div>" + stat;
+  }
+
+  function statusBarHtml(path, side) {
+    const line = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
+    const col = side === "right" ? (FW.cursorColR || 1) : (FW.cursorCol || 1);
+    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">Ln " + line + ", Col " + col + "</span><span style=\"margin-left:auto\">" + esc(path) + "</span></div>";
+  }
+
+  function codeHtml(path, side) {
+    const val = currentContent(path);
+    const ext = extOf(path);
+    const lines = String(val || "").split("\n");
+    const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
+    const ln = lines.map(function (_, i) { return '<i class="' + (i + 1 === cur ? "cur" : "") + '">' + (i + 1) + "</i>"; }).join("");
+    const id = side === "right" ? "fwCodeR" : "fwCode";
+    const hl = side === "right" ? "fwHlR" : "fwHl";
+    const gutter = side === "right" ? "fwLnR" : "fwLn";
+    return '<div class="fw-edwrap" data-ed="' + side + '"><div class="fw-ln" id="' + gutter + '">' + ln + "</div>"
+      + '<div class="fw-edstack"><pre class="fw-hl" id="' + hl + '">' + highlightCode(val, ext) + "</pre>"
+      + '<textarea id="' + id + '" spellcheck="false" data-path="' + esc(path) + '" data-side="' + side + '">' + esc(val) + "</textarea></div></div>";
+  }
+
+  function highlightCode(raw, ext) {
+    raw = String(raw == null ? "" : raw);
+    ext = (ext || "").toLowerCase();
+    if (ext === "py") return hlPython(raw);
+    if (ext === "js" || ext === "ts") return hlJs(raw);
+    if (ext === "ini" || ext === "cfg" || ext === "properties") return hlIni(raw);
+    if (ext === "json") return hlGeneric(raw);
+    if (ext === "env") return hlEnv(raw);
+    if (ext === "md") return hlMd(raw);
+    if (ext === "yaml" || ext === "yml") return hlYaml(raw);
+    if (ext === "xml" || ext === "html" || ext === "htm") return hlXml(raw);
+    return esc(raw);
+  }
+  function hlParts(src, next) {
+    const out = [];
+    let i = 0;
+    const n = src.length;
+    while (i < n) {
+      const hit = next(src, i);
+      if (!hit) { out.push(esc(src.slice(i))); break; }
+      if (hit.start > i) out.push(esc(src.slice(i, hit.start)));
+      if (hit.cls) out.push('<span class="' + hit.cls + '">' + esc(src.slice(hit.start, hit.end)) + "</span>");
+      else out.push(esc(src.slice(hit.start, hit.end)));
+      i = hit.end;
+      if (hit.end <= hit.start) { out.push(esc(src.slice(i))); break; }
+    }
+    return out.join("");
+  }
+  function hlPython(src) {
+    const kw = /^(def|class|return|import|from|as|if|elif|else|for|while|try|except|finally|with|yield|lambda|pass|break|continue|and|or|not|in|is|None|True|False|self|async|await)\b/;
+    return hlParts(src, function (s, i) {
+      if (s[i] === "#") { const e = s.indexOf("\n", i); return { start: i, end: e < 0 ? s.length : e, cls: "c" }; }
+      const tq = String.fromCharCode(34, 34, 34);
+      const tqs = String.fromCharCode(39, 39, 39);
+      if (s.startsWith(tq, i) || s.startsWith(tqs, i)) {
+        const q = s.slice(i, i + 3); const e = s.indexOf(q, i + 3); return { start: i, end: e < 0 ? s.length : e + 3, cls: "s" };
+      }
+      if (s[i] === '"' || s[i] === "'") {
+        const q = s[i]; let j = i + 1;
+        while (j < s.length && s[j] !== q) { if (s[j] === "\\") j++; j++; }
+        return { start: i, end: Math.min(s.length, j + 1), cls: "s" };
+      }
+      if (s.startsWith("def ", i) || s.startsWith("class ", i)) {
+        const m = s.slice(i).match(/^(def|class)\s+(\w+)/);
+        if (m) return { start: i + m[1].length + 1, end: i + m[0].length, cls: "f" };
+      }
+      if (/[A-Za-z_]/.test(s[i])) {
+        const m = s.slice(i).match(/^[A-Za-z_]\w*/);
+        if (m && kw.test(m[0])) return { start: i, end: i + m[0].length, cls: "k" };
+        return { start: i, end: i + (m ? m[0].length : 1), cls: "" };
+      }
+      return null;
+    });
+  }
+  function hlJs(src) {
+    const kw = /^(function|const|let|var|return|import|from|export|as|if|else|for|while|try|catch|finally|class|new|this|async|await|true|false|null|undefined)\b/;
+    return hlParts(src, function (s, i) {
+      if (s.startsWith("//", i)) { const e = s.indexOf("\n", i); return { start: i, end: e < 0 ? s.length : e, cls: "c" }; }
+      if (s.startsWith("/*", i)) { const e = s.indexOf("*/", i + 2); return { start: i, end: e < 0 ? s.length : e + 2, cls: "c" }; }
+      if (s[i] === '"' || s[i] === "'" || s[i] === "`") {
+        const q = s[i]; let j = i + 1;
+        while (j < s.length && s[j] !== q) { if (s[j] === "\\") j++; j++; }
+        return { start: i, end: Math.min(s.length, j + 1), cls: "s" };
+      }
+      if (/[A-Za-z_$]/.test(s[i])) {
+        const m = s.slice(i).match(/^[A-Za-z_$][\w$]*/);
+        if (m && kw.test(m[0])) return { start: i, end: i + m[0].length, cls: "k" };
+        return { start: i, end: i + (m ? m[0].length : 1), cls: "" };
+      }
+      return null;
+    });
+  }
+  function hlIni(src) {
+    return src.split("\n").map(function (line) {
+      if (/^\s*[;#]/.test(line)) return '<span class="c">' + esc(line) + "</span>";
+      if (/^\s*\[/.test(line)) return '<span class="sec">' + esc(line) + "</span>";
+      const m = line.match(/^(\s*[^=]+?)(\s*=\s*)(.*)$/);
+      if (m) return '<span class="key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="s">' + esc(m[3]) + "</span>";
+      return esc(line);
+    }).join("\n");
+  }
+  function hlEnv(src) {
+    return src.split("\n").map(function (line) {
+      if (/^\s*#/.test(line)) return '<span class="c">' + esc(line) + "</span>";
+      const m = line.match(/^(\s*[^=]+)(\s*=\s*)(.*)$/);
+      if (m) return '<span class="key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="s">' + esc(m[3]) + "</span>";
+      return esc(line);
+    }).join("\n");
+  }
+  function hlMd(src) {
+    return esc(src).replace(/^#{1,6} .+$/gm, function (m) { return '<span class="k">' + m + "</span>"; })
+      .replace(/`[^`]+`/g, function (m) { return '<span class="s">' + m + "</span>"; });
+  }
+  function hlYaml(src) {
+    return src.split("\n").map(function (line) {
+      if (/^\s*#/.test(line)) return '<span class="c">' + esc(line) + "</span>";
+      const m = line.match(/^(\s*[\w-]+\s*:)(\s*)(.*)$/);
+      if (m) return '<span class="key">' + esc(m[1]) + "</span>" + esc(m[2]) + '<span class="s">' + esc(m[3]) + "</span>";
+      return esc(line);
+    }).join("\n");
+  }
+  function hlXml(src) {
+    return esc(src)
+      .replace(/&lt;!--[\s\S]*?--&gt;/g, function (m) { return '<span class="c">' + m + "</span>"; })
+      .replace(/&lt;\/?[\w:-]+/g, function (m) { return '<span class="k">' + m + "</span>"; })
+      .replace(/&gt;/g, '<span class="k">&gt;</span>');
+  }
+  function hlGeneric(src) {
+    return esc(src).replace(/(&quot;.*?&quot;|&#39;.*?&#39;)/g, function (m) { return '<span class="s">' + m + "</span>"; });
+  }
+
+  function histHtml() {
+    const vs = (FW.file && FW.file.versions) || [];
+    const rows = vs.map(function (v) {
+      return '<label><input type="checkbox" data-ver="' + v.version + '"> v' + v.version + " · " + esc(v.created || "") + " · " + esc(v.author || "") + "</label>";
+    }).join("") || '<div class="sub">No versions yet.</div>';
+    return '<div class="fw-side" id="fwHistBox"><b>Version history (IST)</b>' + rows + '<div style="margin-top:8px"><button type="button" class="btn g sm" id="fwCmp">Compare selected</button></div><div id="fwCmpOut"></div></div>';
   }
 
   function showTreeMenu(x, y, path, isDir) {
@@ -251,79 +757,6 @@
       if (FW.unsaved[src]) { FW.unsaved[dest] = FW.unsaved[src]; delete FW.unsaved[src]; }
       await reloadTree();
     } catch (e) { toast(e.message || String(e)); }
-  }
-
-  async function reloadTree() {
-    const t = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/tree");
-    FW.tree = t.tree || [];
-    const host = $("#fwHost");
-    if (host && FW.tab === "project") paintProject(host);
-  }
-
-  async function openFile(path) {
-    FW.path = path;
-    try {
-      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/file?path=" + encodeURIComponent(path));
-      FW.file = j.file || {};
-      FW.file.used_by = j.used_by || [];
-      FW.file.versions = j.versions || [];
-      if (isDataPath(path) || isEnvPath(path)) {
-        try {
-          const p = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/preview?path=" + encodeURIComponent(path));
-          FW.preview = p.preview || null;
-          if (p.used_by) FW.file.used_by = p.used_by;
-        } catch (e2) { FW.preview = null; }
-      } else FW.preview = null;
-      const host = $("#fwHost");
-      if (host) paintProject(host);
-    } catch (e) { toast(e.message || String(e)); }
-  }
-
-  function currentContent() {
-    if (!FW.path) return "";
-    if (Object.prototype.hasOwnProperty.call(FW.unsaved, FW.path)) return FW.unsaved[FW.path];
-    return (FW.file && FW.file.content) || "";
-  }
-
-  function mainHtml() {
-    if (!FW.path || (FW.file && FW.file.is_dir)) {
-      return '<div class="fw-empty">Select a file in the project tree, or click Generate to add tests to this framework.</div>';
-    }
-    const dirty = FW.unsaved[FW.path] ? " • unsaved" : "";
-    const tabs = [];
-    if (isEnvPath(FW.path)) tabs.push(["env", "Variables"]);
-    if (isDataPath(FW.path)) tabs.push(["preview", "Preview"]);
-    tabs.push(["code", "Code"]);
-    tabs.push(["loc", "Locators"]);
-    tabs.push(["asrt", "Assertions"]);
-    if (isDataPath(FW.path)) tabs.push(["map", "Data mapping"]);
-    FW.viewPane = FW.viewPane || (isEnvPath(FW.path) ? "env" : (isDataPath(FW.path) ? "preview" : "code"));
-    if (!tabs.some(function (t) { return t[0] === FW.viewPane; })) FW.viewPane = tabs[0][0];
-    let body = "";
-    if (FW.viewPane === "env") body = envHtml();
-    else if (FW.viewPane === "preview") body = previewHtml();
-    else if (FW.viewPane === "loc") body = locHtml();
-    else if (FW.viewPane === "asrt") body = asrtHtml();
-    else if (FW.viewPane === "map") body = mapHtml();
-    else body = codeHtml();
-    return '<div class="fw-toolbar"><span class="path">' + esc(FW.path) + esc(dirty) + "</span>"
-      + tabs.map(function (t) { return '<button type="button" class="btn g sm' + (FW.viewPane === t[0] ? " on" : "") + '" data-pane="' + t[0] + '">' + t[1] + "</button>"; }).join("")
-      + (FW.viewPane === "code" ? '<button type="button" class="btn g sm" id="fwSplit">Split</button><button type="button" class="btn g sm" id="fwFull">Full screen</button><button type="button" class="btn g sm" id="fwHist">Version history</button>' : "")
-      + '<button type="button" class="btn sm" id="fwSave"' + (FW.unsaved[FW.path] ? "" : " disabled") + ">Save</button></div>"
-      + '<div class="fw-code" id="fwPane">' + body + (FW.showHist && FW.viewPane === "code" ? histHtml() : "") + "</div>";
-  }
-
-  function codeHtml() {
-    const val = currentContent();
-    const split = FW.split ? '<textarea id="fwCode2" spellcheck="false">' + esc(val) + "</textarea>" : "";
-    return '<textarea id="fwCode" spellcheck="false">' + esc(val) + "</textarea>" + split;
-  }
-  function histHtml() {
-    const vs = (FW.file && FW.file.versions) || [];
-    const rows = vs.map(function (v) {
-      return '<label><input type="checkbox" data-ver="' + v.version + '"> v' + v.version + " · " + esc(v.created || "") + " · " + esc(v.author || "") + "</label>";
-    }).join("") || '<div class="sub">No versions yet.</div>';
-    return '<div class="fw-side" id="fwHistBox"><b>Version history (IST)</b>' + rows + '<div style="margin-top:8px"><button type="button" class="btn g sm" id="fwCmp">Compare selected</button></div><div id="fwCmpOut"></div></div>';
   }
 
   function envHtml() {
@@ -417,46 +850,241 @@
       + '<div id="fwMapBody"></div><button type="button" class="btn sm" id="fwMapSave">Save mapping</button></div>';
   }
 
-  function bindMain(main) {
+  function bindMain(main, side) {
     if (!main) return;
+    side = side || main.dataset.side || "left";
+    main.addEventListener("mousedown", function () { FW.splitFocus = side; });
     $$("[data-pane]", main).forEach(function (b) {
       b.onclick = async function () {
-        FW.viewPane = b.dataset.pane;
-        if (FW.viewPane === "loc") await loadLocators();
-        if (FW.viewPane === "asrt") await loadAssertions();
-        if (FW.viewPane === "map") await loadMapping();
+        if (side === "right") FW.viewPaneRight = b.dataset.pane;
+        else FW.viewPane = b.dataset.pane;
+        const pane = b.dataset.pane;
+        if (pane === "loc") await loadLocators();
+        if (pane === "asrt") await loadAssertions();
+        if (pane === "map") await loadMapping();
         paintProject($("#fwHost"));
       };
     });
-    const code = $("#fwCode", main);
-    if (code) {
-      code.oninput = function () {
-        FW.unsaved[FW.path] = code.value;
-        const s = $("#fwSave"); if (s) s.disabled = false;
-        const t = $("#fwTree"); if (t) { t.innerHTML = treeHtml(FW.tree); bindTree(t); }
-      };
-    }
+    const code = $("#fwCode", main) || $("#fwCodeR", main);
+    if (code) bindEditor(code, side);
     const raw = $("#fwRaw", main);
-    if (raw) raw.oninput = function () { FW.unsaved[FW.path] = raw.value; const s = $("#fwSave"); if (s) s.disabled = false; };
-    if ($("#fwSplit")) $("#fwSplit").onclick = function () { FW.split = !FW.split; paintProject($("#fwHost")); };
-    if ($("#fwFull")) $("#fwFull").onclick = function () { FW.full = !FW.full; paintProject($("#fwHost")); };
-    if ($("#fwHist")) $("#fwHist").onclick = function () { FW.showHist = !FW.showHist; paintProject($("#fwHost")); };
-    if ($("#fwSave")) $("#fwSave").onclick = function () { saveCurrent(); };
-    if ($("#fwCmp")) $("#fwCmp").onclick = function () { compareVersions(); };
+    if (raw) raw.oninput = function () {
+      const path = raw.dataset.path || (side === "right" ? FW.splitPath : FW.path);
+      FW.unsaved[path] = raw.value;
+      markDirtyUi(main, path);
+    };
+    const act = function (name) { return main.querySelector('[data-act="' + name + '"]'); };
+    const splitBtn = act("split");
+    if (splitBtn) splitBtn.onclick = function () {
+      if (FW.split) {
+        FW.split = false;
+        FW.splitPath = "";
+        FW.splitFile = null;
+        FW.splitFocus = "left";
+      } else {
+        if (FW.file && FW.file.is_dir) return;
+        FW.split = true;
+        FW.splitFocus = "right";
+        if (!FW.splitPath) FW.splitFile = null;
+      }
+      paintProject($("#fwHost"));
+    };
+    const fullBtn = act("full");
+    if (fullBtn) fullBtn.onclick = function () { FW.full = !FW.full; paintProject($("#fwHost")); };
+    const histBtn = act("hist");
+    if (histBtn) histBtn.onclick = function () { if (side === "left") { FW.showHist = !FW.showHist; paintProject($("#fwHost")); } };
+    const saveBtn = act("save");
+    if (saveBtn) saveBtn.onclick = function () { saveCurrent(side); };
+    if ($("#fwCmp", main)) $("#fwCmp", main).onclick = function () { compareVersions(); };
     $$("[data-env]", main).forEach(function (b) { b.onclick = function () { openFile(b.dataset.env); }; });
     $$("[data-pm]", main).forEach(function (b) { b.onclick = function () { FW.previewMode = b.dataset.pm; paintProject($("#fwHost")); }; });
     $$("[data-sheet]", main).forEach(function (b) { b.onclick = function () { FW.sheet = b.dataset.sheet; paintProject($("#fwHost")); }; });
-    if ($("#fwEnvAdd")) $("#fwEnvAdd").onclick = function () { addEnvRow(); };
+    if ($("#fwEnvAdd", main)) $("#fwEnvAdd", main).onclick = function () { addEnvRow(); };
     $$("[data-ek],[data-ev]", main).forEach(function (inp) { inp.oninput = function () { collectEnv(); }; });
-    if ($("#fwLocAdd")) $("#fwLocAdd").onclick = function () { FW.locators.push({ name: "", strategy: "css", value: "", page: "", status: "Draft" }); paintProject($("#fwHost")); };
-    if ($("#fwAsAdd")) $("#fwAsAdd").onclick = function () { FW.assertions.push({ tc_id: "", typ: "", target: "", expected: "" }); paintProject($("#fwHost")); };
-    if ($("#fwLocSave")) $("#fwLocSave").onclick = function () { saveLocators(); };
-    if ($("#fwAsSave")) $("#fwAsSave").onclick = function () { saveAssertions(); };
-    if ($("#fwLocAi")) $("#fwLocAi").onclick = function () { suggestAi("locator"); };
-    if ($("#fwAsAi")) $("#fwAsAi").onclick = function () { suggestAi("assertion"); };
+    if ($("#fwLocAdd", main)) $("#fwLocAdd", main).onclick = function () { FW.locators.push({ name: "", strategy: "css", value: "", page: "", status: "Draft" }); paintProject($("#fwHost")); };
+    if ($("#fwAsAdd", main)) $("#fwAsAdd", main).onclick = function () { FW.assertions.push({ tc_id: "", typ: "", target: "", expected: "" }); paintProject($("#fwHost")); };
+    if ($("#fwLocSave", main)) $("#fwLocSave", main).onclick = function () { saveLocators(); };
+    if ($("#fwAsSave", main)) $("#fwAsSave", main).onclick = function () { saveAssertions(); };
+    if ($("#fwLocAi", main)) $("#fwLocAi", main).onclick = function () { suggestAi("locator"); };
+    if ($("#fwAsAi", main)) $("#fwAsAi", main).onclick = function () { suggestAi("assertion"); };
     $$("[data-loc]", main).forEach(function (inp) { inp.oninput = inp.onchange = function () { const i = +inp.dataset.loc; if (FW.locators[i]) FW.locators[i][inp.dataset.f] = inp.value; }; });
     $$("[data-asrt]", main).forEach(function (inp) { inp.oninput = function () { const i = +inp.dataset.asrt; if (FW.assertions[i]) FW.assertions[i][inp.dataset.f] = inp.value; }; });
-    if ($("#fwMapSave")) $("#fwMapSave").onclick = function () { saveMapping(); };
+    if ($("#fwMapSave", main)) $("#fwMapSave", main).onclick = function () { saveMapping(); };
+    bindEmptyState(main);
+    bindFolderSummary(main);
+  }
+
+  function bindEditor(ta, side) {
+    const wrap = ta.closest(".fw-edwrap");
+    const path = ta.dataset.path || (side === "right" ? FW.splitPath : FW.path);
+    function caretPos() {
+      const v = ta.value;
+      const pos = ta.selectionStart || 0;
+      const before = v.slice(0, pos);
+      const line = before.split("\n").length;
+      const col = (before.split("\n").pop() || "").length + 1;
+      if (side === "right") { FW.cursorLineR = line; FW.cursorColR = col; }
+      else { FW.cursorLine = line; FW.cursorCol = col; }
+      const stat = document.querySelector('.fw-stat[data-stat="' + side + '"] .fw-lncol');
+      if (stat) stat.textContent = "Ln " + line + ", Col " + col;
+      if (wrap) {
+        $$("i", wrap.querySelector(".fw-ln") || wrap).forEach(function (el, i) {
+          el.classList.toggle("cur", i + 1 === line);
+        });
+      }
+    }
+    function syncScroll() {
+      if (!wrap) return;
+      const hl = wrap.querySelector(".fw-hl");
+      const gut = wrap.querySelector(".fw-ln");
+      if (hl) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
+      if (gut) gut.scrollTop = ta.scrollTop;
+    }
+    function refresh() {
+      if (wrap) {
+        const hl = wrap.querySelector(".fw-hl");
+        if (hl) hl.innerHTML = highlightCode(ta.value, extOf(path));
+        const gut = wrap.querySelector(".fw-ln");
+        if (gut) {
+          const n = String(ta.value || "").split("\n").length;
+          const cur = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
+          if (gut.children.length !== n) {
+            let html = "";
+            for (let i = 1; i <= n; i++) html += '<i class="' + (i === cur ? "cur" : "") + '">' + i + "</i>";
+            gut.innerHTML = html;
+          }
+        }
+      }
+      syncScroll();
+      const orig = paneOriginal(path, side);
+      if (ta.value !== orig) FW.unsaved[path] = ta.value;
+      else delete FW.unsaved[path];
+      markDirtyUi(ta.closest(".fw-main"), path);
+    }
+    ta.oninput = function () { caretPos(); refresh(); };
+    ta.onkeyup = ta.onclick = ta.onselect = function () { caretPos(); };
+    ta.onscroll = syncScroll;
+    ta.onfocus = function () { FW.splitFocus = side; };
+  }
+
+  function paneOriginal(path, side) {
+    if (side === "right" && FW.splitFile && FW.splitPath === path) return FW.splitFile.content || "";
+    if (FW.file && FW.path === path) return FW.file.content || "";
+    return "";
+  }
+
+  function markDirtyUi(main, path) {
+    const dirty = Object.prototype.hasOwnProperty.call(FW.unsaved, path);
+    if (main) {
+      const save = main.querySelector('[data-act="save"]');
+      if (save) save.disabled = !dirty;
+      const fn = main.querySelector(".fw-fcard .fn");
+      if (fn) {
+        let dot = fn.querySelector(".udot");
+        if (dirty && !dot) {
+          dot = document.createElement("span");
+          dot.className = "udot";
+          dot.title = "Unsaved changes";
+          fn.appendChild(dot);
+        } else if (!dirty && dot) dot.remove();
+      }
+    }
+    const t = $("#fwT");
+    if (t) { t.innerHTML = treeHtml(FW.tree); bindTreeRows(t); }
+  }
+
+  function bindEmptyState(main) {
+    const gen = $("#fwEmptyGen", main);
+    if (gen) gen.onclick = function () { openWizard(); };
+    const read = $("#fwEmptyRead", main);
+    if (read) read.onclick = function () {
+      const row = (FW.tree || []).find(function (r) { return /(?:^|\/)readme\.md$/i.test(r.path || ""); });
+      if (row) openFile(row.path);
+      else toast("No README.md in this project yet.");
+    };
+    const data = $("#fwEmptyData", main);
+    if (data) data.onclick = function () {
+      const folder = (FW.tree || []).find(function (r) {
+        return r.is_dir && (r.path === "test_data" || r.path === "test_data/");
+      });
+      if (folder) openFolder(folder.path);
+      else treeAction("newf", "test_data/", true);
+    };
+  }
+
+  function bindFolderSummary(main) {
+    $$("[data-open]", main).forEach(function (card) {
+      card.onclick = function () {
+        if (card.dataset.dir === "1") openFolder(card.dataset.open);
+        else openFile(card.dataset.open);
+      };
+    });
+    const folder = (FW.file && FW.file.is_dir) ? FW.path : "";
+    if ($("#fwFoldNew", main)) $("#fwFoldNew", main).onclick = function () { treeAction("newf", folder, true); };
+    if ($("#fwFoldRen", main)) $("#fwFoldRen", main).onclick = function () { treeAction("ren", folder, true); };
+    if ($("#fwFoldUp", main)) $("#fwFoldUp", main).onclick = function () { uploadInto(folder); };
+  }
+
+  function bytesToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+
+  function uploadInto(folder) {
+    let inp = document.getElementById("fwUpload");
+    if (!inp) {
+      inp = document.createElement("input");
+      inp.type = "file";
+      inp.id = "fwUpload";
+      inp.style.display = "none";
+      document.body.appendChild(inp);
+    }
+    inp.value = "";
+    inp.onchange = async function () {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const dest = (folder ? normDir(folder) : "") + f.name;
+      try {
+        if (/\.xlsx$/i.test(f.name)) {
+          const buf = await f.arrayBuffer();
+          await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/import-xlsx", {
+            method: "POST",
+            body: { path: dest, content_base64: bytesToBase64(buf) },
+          });
+        } else {
+          const text = await f.text();
+          try {
+            await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "PUT", body: { path: dest, content: text, note: "Uploaded" } });
+          } catch (e1) {
+            await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "POST", body: { path: dest, content: text } });
+          }
+        }
+        toast("Uploaded " + f.name);
+        FW.markers[dest] = "new";
+        await reloadTree();
+        await openFile(dest);
+      } catch (e) { toast(e.message || String(e)); }
+    };
+    inp.click();
+  }
+
+  async function saveCurrent(side) {
+    side = side || FW.splitFocus || "left";
+    const path = side === "right" ? FW.splitPath : FW.path;
+    if (!path) return;
+    const content = currentContent(path);
+    try {
+      await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "PUT", body: { path: path, content: content, note: "Edited" } });
+      delete FW.unsaved[path];
+      toast("Saved");
+      if (side === "right") await openFileIn("right", path);
+      else await openFile(path);
+    } catch (e) { toast(e.message || String(e)); }
   }
 
   function addEnvRow() {
@@ -475,18 +1103,7 @@
     const text = rows.map(function (r) { return r.key ? (r.key + "=" + (r.value || "")) : ""; }).filter(Boolean).join("\n") + "\n";
     FW.preview = FW.preview || { kind: "env" }; FW.preview.rows = rows;
     FW.unsaved[FW.path] = text;
-    const s = $("#fwSave"); if (s) s.disabled = false;
-  }
-
-  async function saveCurrent() {
-    if (!FW.path) return;
-    const content = currentContent();
-    try {
-      await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/files", { method: "PUT", body: { path: FW.path, content: content, note: "Edited" } });
-      delete FW.unsaved[FW.path];
-      toast("Saved");
-      await openFile(FW.path);
-    } catch (e) { toast(e.message || String(e)); }
+    markDirtyUi($("#fwMain") || document.querySelector(".fw-main"), FW.path);
   }
 
   async function compareVersions() {
@@ -768,6 +1385,12 @@
         body: { changes: changes, mapping: (FW.wiz.result && FW.wiz.result.mapping) || [], author: "AI" },
       });
       toast("Changes applied to the project framework.");
+      changes.forEach(function (c) {
+        const k = String(c.kind || c.action || "").toLowerCase();
+        if (!c.path) return;
+        if (k === "new" || k === "created" || k === "add") FW.markers[c.path] = "new";
+        else FW.markers[c.path] = "changed";
+      });
       await reloadTree();
     } catch (e) { toast(e.message || String(e)); }
   }
