@@ -95,7 +95,7 @@ This is separate from inline editing, AC mapping, duplicate detection (local, no
 The **Review** step (step 3) is where you work with generated (or uploaded) cases before export or upload.
 
 - Edit names, descriptions, preconditions and steps inline. Set priority, AC tags and review status.
-- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (opens the shared provider/model picker, then Confirm), **Generate Automation Script**, Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin). A **Scripts (n)** badge on each case opens the Automation Scripts library filtered to that id.
+- Toolbar: ＋ Test case, Save changes, Run AI Reviewer (opens the shared provider/model picker, then Confirm), **Generate Automation Script**, Check duplicates, **Generate test data**, **Boost coverage**, Upload Excel, Save & Download Excel, Export (Excel / CSV / qTest / Gherkin). A **Scripts (n)** badge on each case opens the Automation Scripts workspace with that case selected (`#scripts?tc=…`).
 - A provider badge shows the Generate provider, or the Settings default when the run has none. Coverage chips count Positive / Negative / Boundary / Security cases. Each step has a **Test Data** column (edit, regenerate, or ⚡ insert from the Edge library).
 - Additive tools also include Edit mode, AC coverage (List / Matrix), type tags, version history and a local quality score.
 - When you are happy, **Save to Test Case Repo** or **Execute now**, or continue to **qTest Upload**. Test data is appended into the qTest step description; the six-column layout is unchanged.
@@ -112,7 +112,7 @@ From **Review** (action row or bulk bar) or the **Test Case Repo** (bulk bar or 
 3. Pick a provider and model with the shared AI picker, then Generate. Optional: reuse locators from an accessible Recorder session.
 4. Review files, mapping and warnings. Copy, download one file or a `.zip`, or **Save to Script Library** (new script, or overwrite an existing one as a new version). **Mirror Test Case Repo folders** copies the current repo folder path into the script library.
 
-Open **Automation Scripts** in the sidebar to browse folders, edit files (Auto Save keeps the working copy; **Save as new version** snapshots history), or Regenerate from linked cases.
+Open **Automation Scripts** in the sidebar for the project workspace. **Generated versions** in the header is the former Script Library (folders and AS-#### bundles are unchanged). **Preview** opens a bundle read-only; **Add to project framework** reviews the files against the current framework; the editable editor at `#scripts/AS-####` still works. Auto Save keeps a working copy; **Save as new version** snapshots history; you can still Regenerate from linked cases.
 
 Robot Framework is its own language (`.robot` files), not a Python framework. Record’s no-AI Playwright export on the Input step is unchanged.
 
@@ -120,7 +120,9 @@ Deleting a language, type, or framework in Settings hides it from Generate; scri
 
 ## Project framework, Check & Run
 
-On **Automation Scripts**, use the **Project** tab for the workspace that belongs to the current project and language. **Generate** walks through three steps only: choose test cases (filter **Not automated yet** or open **Recently generated**, and preview **Steps** or **Code**), tell the AI anything it should know, then review proposed files (New / Changed / Reused) and apply, Check, or Run. The existing Generate modal on the Review page is unchanged. The Project workspace shows file-type icons, a searchable tree, and a file header with breadcrumbs and version. Click a folder to see its summary (not a leftover file). The editor includes line numbers and lightweight highlighting. Check lives under the Run menu; Run history is a text link.
+**Automation Scripts** is a single project workspace for the current project and language (no Project / Library tabs). **Generate** walks through three steps only: choose test cases (filter **Not automated yet** or open **Recently generated**, and preview **Steps** or **Code**), tell the AI anything it should know, then review proposed files (New / Changed / Reused) and apply, Check, or Run. The existing Generate modal on the Review page is unchanged. The workspace shows file-type icons, a searchable tree, and a file header with breadcrumbs and version. Click a folder to see its summary (not a leftover file). The file view is a GitHub-style read table with line numbers and lightweight highlighting; use **Edit** to change a file. Check lives under the Run menu; Run history and **Generated versions** are text links in the header.
+
+From the Test Case Repo, **Scripts (n)** / **Open scripts** lands on the mapped test file with a breadcrumb back to the Repo. **Where is this used** shows the test file, page objects, locators and test data, last run, and generated versions. A case with no script in the framework gets **Generate script** and **Link existing**.
 
 The file tree supports icons, new / rename / move / delete, and an unsaved marker. Open a file to edit it, split or full-screen the editor, or compare versions (times are shown in IST). Locators, assertions, and test data have table editors and **Suggest with AI**. Framework env files (for example `config/staging.env`) open as a key–value table with secrets masked — that is not the application `.env`. Test data files preview as a grid or tree (xlsx, csv, JSON, XML, YAML).
 
