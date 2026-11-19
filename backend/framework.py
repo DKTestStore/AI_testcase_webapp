@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from . import script_options as so
 from . import services, token_usage
 from . import framework_layout as fl
+from . import libindex as li
 from .config import env
 from .db.engine import session_scope
 from .db.models import (
@@ -1826,6 +1827,103 @@ def attach(parent: APIRouter, current) -> None:
                     "value": r.value,
                 })
             return {"ok": True, "symbols": symbols}
+
+    def _lib_context(session, fid: str):
+        fw = _fw_or_404(session, fid)
+        req = (
+            session.query(FrameworkFile)
+            .filter(FrameworkFile.framework_id == fid, FrameworkFile.path == "requirements.txt", FrameworkFile.is_dir.is_(False))
+            .one_or_none()
+        )
+        if req is None:
+            rows = (
+                session.query(FrameworkFile)
+                .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+                .all()
+            )
+            req = next((r for r in rows if str(r.path or "").endswith("requirements.txt")), None)
+        req_text = (req.content or "") if req is not None else ""
+        opts = fw.options if isinstance(fw.options, dict) else {}
+        settings = li.normalize_settings(opts.get("libindex") if isinstance(opts.get("libindex"), dict) else {})
+        prefs = so.get_automation_prefs()
+        runs = (
+            session.query(AutomationRun)
+            .filter(AutomationRun.framework_id == fid)
+            .order_by(AutomationRun.started.desc())
+            .limit(8)
+            .all()
+        )
+        extra = [r.artifacts_dir for r in runs if r.artifacts_dir]
+        return fw, req_text, settings, prefs, extra
+
+    @parent.get("/frameworks/{fid}/libindex")
+    def get_libindex(fid: str):
+        """Status for the Libraries panel: interpreter, package count, settings."""
+        with session_scope() as session:
+            _fw, req_text, settings, prefs, extra = _lib_context(session, fid)
+            return li.index_status(
+                fid,
+                requirements_text=req_text,
+                settings=settings,
+                prefs=prefs,
+                extra_roots=extra,
+            )
+
+    @parent.post("/frameworks/{fid}/libindex")
+    def post_libindex(fid: str, data: Dict[str, Any] = Body(default={})):
+        """Save Libraries settings and optionally re-index installed packages."""
+        data = data or {}
+        with session_scope() as session:
+            fw, req_text, settings, prefs, extra = _lib_context(session, fid)
+            incoming = dict(settings)
+            if "only_requirements" in data:
+                incoming["only_requirements"] = bool(data.get("only_requirements"))
+            if "exclude" in data and isinstance(data.get("exclude"), list):
+                incoming["exclude"] = data.get("exclude")
+            settings = li.normalize_settings(incoming)
+            opts = dict(fw.options or {})
+            opts["libindex"] = settings
+            fw.options = opts
+            fw.updated = now_ist()
+            session.commit()
+            force = data.get("reindex") is not False
+            if force:
+                return li.reindex(
+                    fid,
+                    requirements_text=req_text,
+                    settings=settings,
+                    prefs=prefs,
+                    extra_roots=extra,
+                )
+            return li.index_status(
+                fid,
+                requirements_text=req_text,
+                settings=settings,
+                prefs=prefs,
+                extra_roots=extra,
+                force=False,
+            )
+
+    @parent.get("/frameworks/{fid}/libsymbols")
+    def get_libsymbols(
+        fid: str,
+        module: str = Query("", description="Dotted module to inspect (members)."),
+        prefix: str = Query("", description="Prefix for members or import names."),
+        q: str = Query("", description="Alias for prefix."),
+    ):
+        """Members of an installed module, or import-name suggestions when module is empty."""
+        prefix = prefix or q or ""
+        with session_scope() as session:
+            _fw, req_text, settings, prefs, extra = _lib_context(session, fid)
+            return li.lib_symbols(
+                fid,
+                module=module or "",
+                prefix=prefix,
+                requirements_text=req_text,
+                settings=settings,
+                prefs=prefs,
+                extra_roots=extra,
+            )
 
     @parent.get("/frameworks/{fid}/preview")
     def get_preview(fid: str, path: str = Query(...)):
