@@ -230,6 +230,7 @@
       + '<button type="button" class="fw-runcaret" id="fwRunCaret" title="Check, runner options">▾</button>'
       + '<div class="fw-runmenu" id="fwRunMenu" hidden><button type="button" id="fwCheck">Check</button><button type="button" id="fwRunMenuGo">Run</button></div></span>'
       + '<button type="button" class="fw-hist" id="fwRuns">' + clockSvg() + " Run history</button>"
+      + '<button type="button" class="fw-hist fw-termbtn" id="fwTermBtn" title="Terminal (Ctrl+`)">' + termSvg() + " Terminal</button>"
       + '<button type="button" class="fw-hist fw-verbtn' + verOn + '" id="fwVersions">Generated versions<span class="fw-vercnt" id="fwVerCnt">' + (FW.verCount || "") + "</span></button></div></div>"
       + '<div id="fwCrumb"></div>'
       + '<div id="fwHost" style="flex:1;min-height:0;display:flex;flex-direction:column"></div></div>';
@@ -239,6 +240,7 @@
     loadVerCount();
     paintCrumb();
     await renderHost();
+    mountTerm();
   };
 
   function bindHeaderChrome(v) {
@@ -268,6 +270,7 @@
       if (menu) menu.hidden = true;
     };
     if ($("#fwRuns")) $("#fwRuns").onclick = function () { showHistory(); };
+    if ($("#fwTermBtn")) $("#fwTermBtn").onclick = function () { toggleTerm(); };
     if (!FW._menuHide) {
       FW._menuHide = function (ev) {
         if (!ev.target || !ev.target.closest) return;
@@ -2229,6 +2232,8 @@
     FW._keysBound = true;
     document.addEventListener("keydown", function (e) {
       if (!$(".fw-shell")) return;
+      onTermGlobalKey(e);
+      if (e.defaultPrevented) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
@@ -2825,4 +2830,880 @@
       } catch (e) {}
     };
   }
+
+
+  /* ---- v14 flexible terminal (additive) ---- */
+  var TERM_STORE = "atg.fw.term.layout";
+  var TERM_FLAGS = ["-m","-k","-v","-vv","-q","-x","-s","-n","--lf","--ff","--headed","--headless","--tb=short","--tb=long","--tb=line","--browser","--maxfail=1","--collect-only","--tracing=retain-on-failure","--junitxml=reports/junit.xml"];
+
+  function termSvg() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/></svg>';
+  }
+  function defaultTermFavs() {
+    return [
+      { name: "UI smoke", cmd: "pytest tests/web -m ui" },
+      { name: "Rerun failed", cmd: "pytest --lf" },
+      { name: "Headed Chromium", cmd: "pytest tests --headed --browser chromium" },
+      { name: "API only", cmd: "pytest tests/api" },
+    ];
+  }
+  function newTermTab(title, kind) {
+    return {
+      id: "t" + Date.now().toString(36) + Math.floor(Math.random() * 1000),
+      title: title || "Terminal",
+      kind: kind || "cmd",
+      cmd: "",
+      runId: "",
+      log: "",
+      status: "idle",
+      startedAt: 0,
+      exitCode: null,
+      summary: null,
+      lineTimes: [],
+    };
+  }
+  function defaultTermState() {
+    return {
+      open: false,
+      dock: "bottom",
+      theme: "follow",
+      remember: true,
+      timeoutMin: 30,
+      shell: false,
+      height: 322,
+      width: 420,
+      float: { left: 240, top: 80, w: 640, h: 400 },
+      maximized: false,
+      collapsed: false,
+      tabs: [newTermTab("Run all", "all")],
+      active: 0,
+      split: false,
+      favs: defaultTermFavs(),
+      hist: [],
+      histIdx: -1,
+      filter: "all",
+      wrap: false,
+      font: 12,
+      timestamps: false,
+      findOpen: false,
+      findQ: "",
+      findIdx: 0,
+      browser: "chromium",
+      headed: false,
+      envName: "staging",
+      settingsOpen: false,
+      histOpen: false,
+      cmdDraft: "",
+      acOpen: false,
+      acItems: [],
+      acSel: 0,
+    };
+  }
+  function ensureTermState() {
+    if (FW.term) return FW.term;
+    const t = defaultTermState();
+    try {
+      const raw = localStorage.getItem(TERM_STORE);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        ["dock","theme","remember","timeoutMin","shell","height","width","browser","headed","envName","wrap","font","timestamps","open"].forEach(function (k) {
+          if (saved[k] != null) t[k] = saved[k];
+        });
+        if (saved.float && typeof saved.float === "object") t.float = Object.assign(t.float, saved.float);
+        if (Array.isArray(saved.favs) && saved.favs.length) t.favs = saved.favs;
+        if (Array.isArray(saved.hist)) t.hist = saved.hist.slice(0, 30);
+      }
+    } catch (e) {}
+    t.shell = !!t.shell;
+    if (!t.tabs || !t.tabs.length) t.tabs = [newTermTab("Run all", "all")];
+    FW.term = t;
+    return t;
+  }
+  function saveTermLayout() {
+    const t = ensureTermState();
+    if (!t.remember) return;
+    try {
+      localStorage.setItem(TERM_STORE, JSON.stringify({
+        dock: t.dock, theme: t.theme, remember: t.remember, timeoutMin: t.timeoutMin,
+        shell: !!t.shell, height: t.height, width: t.width, float: t.float,
+        browser: t.browser, headed: t.headed, envName: t.envName,
+        wrap: t.wrap, font: t.font, timestamps: t.timestamps, open: t.open,
+        favs: t.favs, hist: (t.hist || []).slice(0, 30),
+      }));
+    } catch (e) {}
+  }
+  function termActive() {
+    const t = ensureTermState();
+    return t.tabs[t.active] || t.tabs[0];
+  }
+  function termTheme() {
+    const t = ensureTermState();
+    if (t.theme === "light") return "light";
+    return "dark";
+  }
+  function toggleTerm(force) {
+    const t = ensureTermState();
+    if (typeof force === "boolean") t.open = force;
+    else t.open = !t.open;
+    if (t.open) t.collapsed = false;
+    saveTermLayout();
+    mountTerm();
+  }
+  function mountTerm() {
+    const shell = document.querySelector(".fw-shell");
+    if (!shell) return;
+    ensureTermState();
+    let root = $("#fwTermRoot");
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "fwTermRoot";
+      shell.appendChild(root);
+    }
+    applyTermLayout();
+    paintTerm();
+  }
+  function applyTermLayout() {
+    const shell = document.querySelector(".fw-shell");
+    const t = ensureTermState();
+    if (!shell) return;
+    shell.classList.toggle("fw-term-on", !!t.open);
+    shell.classList.toggle("fw-term-off", !t.open);
+    shell.classList.toggle("fw-term-bot", t.dock === "bottom");
+    shell.classList.toggle("fw-term-right", t.dock === "right");
+    shell.classList.toggle("fw-term-float", t.dock === "float");
+    shell.classList.toggle("fw-term-collapsed", !!(t.open && t.collapsed));
+    shell.classList.toggle("fw-term-max", !!(t.dock === "float" && t.maximized && !t.collapsed));
+    shell.style.setProperty("--fw-term-h", (t.height || 322) + "px");
+    shell.style.setProperty("--fw-term-w", (t.width || 420) + "px");
+    const fl = t.float || {};
+    shell.style.setProperty("--fw-term-x", (fl.left || 240) + "px");
+    shell.style.setProperty("--fw-term-y", (fl.top || 80) + "px");
+    shell.style.setProperty("--fw-term-fw", (fl.w || 640) + "px");
+    shell.style.setProperty("--fw-term-fh", (fl.h || 400) + "px");
+    const btn = $("#fwTermBtn");
+    if (btn) btn.classList.toggle("on", !!t.open);
+  }
+  function istClock(d) {
+    d = d || new Date();
+    const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+    const ist = new Date(utc + 5.5 * 3600000);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(ist.getHours()) + ":" + p(ist.getMinutes()) + ":" + p(ist.getSeconds());
+  }
+  function istStamp(d) {
+    d = d || new Date();
+    const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+    const ist = new Date(utc + 5.5 * 3600000);
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return ist.getDate() + " " + months[ist.getMonth()] + " " + ist.getFullYear() + ", " + istClock(d).slice(0, 5) + " IST";
+  }
+  function assignLineTimes(tab, text) {
+    tab.lineTimes = tab.lineTimes || [];
+    const n = String(text || "").split("\n").length;
+    while (tab.lineTimes.length < n) tab.lineTimes.push(istClock());
+    if (tab.lineTimes.length > n) tab.lineTimes.length = n;
+  }
+  function ansiToHtml(s) {
+    s = String(s == null ? "" : s);
+    const out = [];
+    let cur = "";
+    const re = /\x1b\[([0-9;]*)m/g;
+    let last = 0, m;
+    function flush(cls) {
+      if (!cur) return;
+      const body = linkifyLog(cur);
+      out.push(cls ? '<span class="' + cls + '">' + body + "</span>" : body);
+      cur = "";
+    }
+    let cls = "";
+    while ((m = re.exec(s))) {
+      cur += s.slice(last, m.index);
+      last = re.lastIndex;
+      flush(cls);
+      const parts = (m[1] || "0").split(";");
+      cls = "";
+      parts.forEach(function (p) {
+        if (p === "0" || p === "") cls = "";
+        else if (p === "31" || p === "91") cls = "err";
+        else if (p === "32" || p === "92") cls = "ok";
+        else if (p === "33" || p === "93") cls = "run";
+        else if (p === "36" || p === "96") cls = "dim";
+        else if (p === "35" || p === "95") cls = "warn";
+      });
+    }
+    cur += s.slice(last);
+    flush(cls);
+    return out.join("");
+  }
+  function linkifyLog(s) {
+    const re = /([A-Za-z0-9_./\\-]+\.(?:py|robot|js|ts|java|cs)):(\d+)/g;
+    let last = 0, m, html = "";
+    while ((m = re.exec(s))) {
+      html += esc(s.slice(last, m.index));
+      html += '<a class="fw-term-link" href="#" data-tpath="' + esc(m[1].replace(/\\/g, "/")) + '" data-tline="' + esc(m[2]) + '">' + esc(m[0]) + "</a>";
+      last = re.lastIndex;
+    }
+    html += esc(s.slice(last));
+    return html;
+  }
+  function colorizeLine(line) {
+    const raw = String(line || "");
+    if (/\x1b\[/.test(raw)) return ansiToHtml(raw);
+    const t = raw;
+    let cls = "";
+    if (/\bFAILED\b|\bERROR\b|AssertionError|E\s{2,}/.test(t)) cls = "err";
+    else if (/\bPASSED\b|\bpassed\b/.test(t) && !/\bfailed\b/i.test(t)) cls = "ok";
+    else if (/\bRUNNING\b|\bQUEUED\b/.test(t)) cls = "run";
+    else if (/\bWARNING\b|\bwarn\b/i.test(t)) cls = "warn";
+    else if (/^=======|^collected |^platform |^BASE_URL/.test(t)) cls = "dim";
+    const body = linkifyLog(t);
+    return cls ? '<span class="' + cls + '">' + body + "</span>" : body;
+  }
+  function filterLogLine(line, filter) {
+    if (!filter || filter === "all") return true;
+    const t = String(line || "");
+    if (filter === "failures") return /\bFAILED\b|AssertionError/.test(t);
+    if (filter === "errors") return /\bERROR\b|\bError\b/.test(t);
+    if (filter === "warnings") return /\bWARNING\b|\bwarn\b/i.test(t);
+    return true;
+  }
+  function renderTermLog(tab, t) {
+    t = t || ensureTermState();
+    tab = tab || termActive();
+    const raw = String((tab && tab.log) || "");
+    assignLineTimes(tab, raw);
+    const lines = raw.split("\n");
+    const q = (t.findOpen && t.findQ) ? String(t.findQ) : "";
+    let marks = 0;
+    const html = lines.map(function (line, i) {
+      if (!filterLogLine(line, t.filter)) return "";
+      let inner = colorizeLine(line);
+      if (q) {
+        const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(safe, "gi");
+        inner = inner.replace(re, function (h) {
+          if (h.indexOf("<") >= 0) return h;
+          marks += 1;
+          return "<mark>" + h + "</mark>";
+        });
+      }
+      const ts = t.timestamps ? '<span class="fw-term-ts">' + esc((tab.lineTimes && tab.lineTimes[i]) || "") + "</span>" : "";
+      return ts + inner;
+    }).filter(Boolean).join("\n");
+    tab._findCount = marks;
+    return html || '<span class="dim">Ready.</span>';
+  }
+  function paintTerm() {
+    const root = $("#fwTermRoot");
+    const t = ensureTermState();
+    if (!root) return;
+    if (!t.open) { root.innerHTML = ""; return; }
+    if (t.collapsed) {
+      root.innerHTML = termStatusBarHtml();
+      bindTermChrome(root);
+      return;
+    }
+    const tab = termActive();
+    const showSplit = (t.split || t.dock === "right") && t.tabs.length > 1;
+    const theme = termTheme();
+    root.innerHTML = '<div class="fw-term' + (t.dock === "right" ? " fw-term-right-inner" : "") + '" data-theme="' + theme + '">'
+      + (t.dock === "float" ? termTitleHtml(tab) : "")
+      + (t.dock !== "right" ? '<div class="fw-term-grip" id="fwTermGrip" title="Drag to resize"><i></i></div>' : '<div class="fw-term-grip" id="fwTermGrip" title="Drag to resize"><i></i></div>')
+      + termTabsHtml()
+      + termQuickActsHtml()
+      + termToolsHtml()
+      + termFavsHtml()
+      + '<div class="fw-term-body"><div class="fw-term-mid">'
+      + (showSplit ? termSplitHtml() : ('<div class="fw-term-log' + (t.wrap ? " wrap" : "") + '" id="fwTermLog" style="font-size:' + (t.font || 12) + 'px">' + renderTermLog(tab, t) + "</div>"))
+      + (t.histOpen ? termHistHtml() : "")
+      + "</div>"
+      + termCmdHtml()
+      + (t.acOpen ? termAcHtml() : "")
+      + (t.settingsOpen ? termSettingsHtml() : "")
+      + "</div></div>";
+    bindTermChrome(root);
+    scrollTermLog();
+  }
+  function termTitleHtml(tab) {
+    const t = ensureTermState();
+    const live = tab && tab.status === "running";
+    return '<div class="fw-term-title" id="fwTermTitle"><span class="ttl">' + (live ? '<span class="dot"></span>' : "") + " Terminal · " + esc((tab && tab.title) || "Run") + "</span>"
+      + '<span class="meta">' + esc((tab && tab.runId) || "") + (t.envName ? " · " + esc(t.envName) : "") + (t.browser ? " · " + esc(t.browser) : "") + "</span>"
+      + '<span class="fw-term-win"><button type="button" title="Minimize" data-tact="min">–</button><button type="button" title="Maximize" data-tact="max">□</button><button type="button" title="Close" data-tact="close">✕</button></span></div>';
+  }
+  function termTabsHtml() {
+    const t = ensureTermState();
+    return '<div class="fw-term-tabs">' + t.tabs.map(function (tab, i) {
+      return '<button type="button" class="tab' + (i === t.active ? " on" : "") + '" data-tabi="' + i + '">'
+        + (tab.status === "running" ? '<span class="dot"></span>' : "") + esc(tab.title) + "</button>";
+    }).join("") + '<button type="button" class="plus" data-tact="newtab" title="New terminal">＋</button><span class="sp"></span>'
+      + '<button type="button" class="plus" data-tact="split" title="Split view">' + (t.split ? "Unsplit" : "Split") + "</button>"
+      + '<span class="fw-term-win"><button type="button" class="fw-term-gear" data-tact="settings" title="Terminal settings">⚙</button></span></div>';
+  }
+  function termQuickActsHtml() {
+    const t = ensureTermState();
+    return '<div class="fw-term-acts">'
+      + '<button type="button" class="btn on" data-tact="runall">Run all</button>'
+      + '<button type="button" class="btn" data-tact="runfile">Run file</button>'
+      + '<button type="button" class="btn" data-tact="runtc">Run TC</button>'
+      + '<button type="button" class="btn" data-tact="rerun">Rerun failed</button>'
+      + '<button type="button" class="btn" data-tact="runtags">Run with tags</button>'
+      + '<select class="fw-term-pick" id="fwTermBrowser">'
+      + '<option value="chromium"' + (t.browser === "chromium" ? " selected" : "") + '>Chromium</option>'
+      + '<option value="firefox"' + (t.browser === "firefox" ? " selected" : "") + '>Firefox</option>'
+      + '<option value="webkit"' + (t.browser === "webkit" ? " selected" : "") + '>WebKit</option></select>'
+      + '<select class="fw-term-pick" id="fwTermHeaded">'
+      + '<option value="0"' + (!t.headed ? " selected" : "") + '>Headless</option>'
+      + '<option value="1"' + (t.headed ? " selected" : "") + '>Headed</option></select>'
+      + '<select class="fw-term-pick" id="fwTermEnv">'
+      + '<option value="staging"' + (t.envName === "staging" ? " selected" : "") + '>staging</option>'
+      + '<option value="qa"' + (t.envName === "qa" ? " selected" : "") + '>qa</option>'
+      + '<option value="prod"' + (t.envName === "prod" ? " selected" : "") + '>prod</option></select>'
+      + "</div>";
+  }
+  function termToolsHtml() {
+    const t = ensureTermState();
+    const tab = termActive();
+    const n = tab && tab._findCount != null ? tab._findCount : 0;
+    return '<div class="fw-term-tools">'
+      + (t.findOpen ? '<div class="fw-term-find"><b>Ctrl+F</b><input id="fwTermFind" value="' + esc(t.findQ || "") + '" placeholder="Search output"><span class="n">' + (n ? (Math.min(t.findIdx + 1, n) + " / " + n) : "0 / 0") + "</span></div>" : '<button type="button" class="btn" data-tact="find">Ctrl+F</button>')
+      + '<span class="fw-term-seg">'
+      + '<button type="button" class="' + (t.filter === "all" ? "on" : "") + '" data-tfilter="all">All</button>'
+      + '<button type="button" class="' + (t.filter === "failures" ? "on" : "") + '" data-tfilter="failures">Failures</button>'
+      + '<button type="button" class="' + (t.filter === "errors" ? "on" : "") + '" data-tfilter="errors">Errors</button>'
+      + '<button type="button" class="' + (t.filter === "warnings" ? "on" : "") + '" data-tfilter="warnings">Warnings</button></span>'
+      + '<button type="button" class="btn' + (t.wrap ? " on" : "") + '" data-tact="wrap">Wrap</button>'
+      + '<span class="fw-term-fs"><b data-tact="font-">−</b> ' + (t.font || 12) + ' <b data-tact="font+">+</b></span>'
+      + '<button type="button" class="btn' + (t.timestamps ? " on" : "") + '" data-tact="ts">Timestamps</button>'
+      + '<button type="button" class="btn" data-tact="copy">Copy log</button>'
+      + '<button type="button" class="btn" data-tact="download">Download</button>'
+      + '<span style="flex:1"></span>'
+      + '<button type="button" class="btn r" data-tact="stop">■ Stop <kbd style="margin-left:4px;border-color:#ffb4b0;color:#fff">Ctrl+C</kbd></button>'
+      + "</div>";
+  }
+  function termFavsHtml() {
+    const t = ensureTermState();
+    return '<div class="fw-term-favs"><span class="lab">Favorites</span>'
+      + (t.favs || []).map(function (f, i) {
+        return '<button type="button" class="fw-term-chip" data-tfav="' + i + '">' + esc(f.name) + "</button>";
+      }).join("") + "</div>";
+  }
+  function termSplitHtml() {
+    const t = ensureTermState();
+    const a = t.tabs[t.active] || t.tabs[0];
+    const b = t.tabs[t.active + 1] || t.tabs[t.active === 0 ? 1 : 0];
+    return '<div class="fw-term-split">'
+      + '<div class="fw-term-pane"><div class="fw-term-title" style="cursor:default"><span class="ttl">' + (a.status === "running" ? '<span class="dot"></span>' : "") + esc(a.title) + '</span><span class="meta">' + esc(a.runId || a.status) + "</span></div>"
+      + '<div class="fw-term-log' + (t.wrap ? " wrap" : "") + '" id="fwTermLog" style="font-size:' + (t.font || 12) + 'px">' + renderTermLog(a, t) + "</div></div>"
+      + '<div class="fw-term-pane"><div class="fw-term-title" style="cursor:default"><span class="ttl">' + (b.status === "running" ? '<span class="dot"></span>' : "") + esc(b.title) + '</span><span class="meta">' + esc(b.runId || b.status) + "</span></div>"
+      + '<div class="fw-term-log' + (t.wrap ? " wrap" : "") + '" id="fwTermLog2" style="font-size:' + (t.font || 12) + 'px">' + renderTermLog(b, t) + "</div></div>"
+      + "</div>";
+  }
+  function termHistHtml() {
+    const t = ensureTermState();
+    return '<aside class="fw-term-hist open"><div class="cap">History</div>'
+      + ((t.hist || []).slice(0, 12).map(function (h, i) {
+        return '<div class="row' + (i === 0 ? " on" : "") + '" data-thist="' + i + '">' + esc(h.cmd) + '<span class="when">' + esc(h.when || "") + "</span></div>";
+      }).join("") || '<div class="row">No commands yet.</div>')
+      + "</aside>";
+  }
+  function termCmdHtml() {
+    const t = ensureTermState();
+    return '<div class="fw-term-cmd"><span class="pr">❯</span><input id="fwTermCmd" spellcheck="false" autocomplete="off" value="' + esc(t.cmdDraft || "") + '" placeholder="pytest tests/web -m ui"><kbd>↑</kbd> history</div>';
+  }
+  function termAcHtml() {
+    const t = ensureTermState();
+    return '<div class="fw-term-ac" id="fwTermAc">' + (t.acItems || []).map(function (it, i) {
+      return '<div class="row' + (i === t.acSel ? " on" : "") + '" data-tac="' + i + '"><span>' + esc(it.value) + '</span><span class="kind">' + esc(it.kind) + "</span></div>";
+    }).join("") + "</div>";
+  }
+  function termSettingsHtml() {
+    const t = ensureTermState();
+    return '<div class="fw-term-pop" id="fwTermPop"><h3>Terminal settings</h3>'
+      + '<div class="fr"><span class="lab">Dock position</span><div class="picks">'
+      + '<button type="button" class="' + (t.dock === "bottom" ? "on" : "") + '" data-tdock="bottom">Bottom</button>'
+      + '<button type="button" class="' + (t.dock === "right" ? "on" : "") + '" data-tdock="right">Right</button>'
+      + '<button type="button" class="' + (t.dock === "float" ? "on" : "") + '" data-tdock="float">Float</button></div></div>'
+      + '<div class="fr"><span class="lab">Theme</span><div class="picks">'
+      + '<button type="button" class="' + (t.theme === "dark" ? "on" : "") + '" data-ttheme="dark">Dark</button>'
+      + '<button type="button" class="' + (t.theme === "light" ? "on" : "") + '" data-ttheme="light">Light</button>'
+      + '<button type="button" class="' + (t.theme === "follow" ? "on" : "") + '" data-ttheme="follow">Follow app</button></div></div>'
+      + '<div class="fr"><label class="sw">Remember layout <button type="button" class="fw-tog' + (t.remember ? " on" : "") + '" data-tact="remember" aria-pressed="' + (t.remember ? "true" : "false") + '"><i></i></button></label></div>'
+      + '<div class="fr"><span class="lab">Timeout (minutes)</span><input type="number" min="1" max="1440" id="fwTermTimeout" value="' + esc(t.timeoutMin || 30) + '"></div>'
+      + '<div class="fr"><label class="sw">Interactive shell mode (advanced) <button type="button" class="fw-tog' + (t.shell ? " on" : "") + '" data-tact="shell" aria-pressed="' + (t.shell ? "true" : "false") + '"><i></i></button></label>'
+      + '<div class="fw-term-warn"><b>Off by default.</b> Turning this on relaxes the command allowlist so you can type shell commands. Commands still run through exec (no shell). It can change files on the runner — leave it off unless you trust this environment.</div></div></div>';
+  }
+  function termStatusBarHtml() {
+    const tab = termActive();
+    const t = ensureTermState();
+    const live = tab && tab.status === "running";
+    const sum = (tab && tab.summary) || {};
+    const done = sum.passed != null ? ((sum.passed || 0) + (sum.failed || 0) + (sum.skipped || 0)) : "";
+    const label = live
+      ? ("Running" + (tab.runId ? " · " + tab.runId : "") + (tab.startedAt ? " · " + elapsedTerm(tab.startedAt) : ""))
+      : ((tab && tab.status && tab.status !== "idle") ? (tab.status + (done !== "" ? " · " + (sum.passed || 0) + " passed / " + (sum.failed || 0) + " failed" : "")) : "Terminal idle");
+    return '<div class="fw-term-statbar"><span class="dot" style="' + (live ? "" : "background:#8b949e;box-shadow:none") + '"></span>'
+      + '<span class="run">' + esc(label) + "</span>"
+      + '<span class="meta">' + esc((tab && tab.runId) || "") + (t.envName ? " · " + esc(t.envName) : "") + (t.browser ? " · " + esc(t.browser) + (t.headed ? " headed" : " headless") : "") + "</span>"
+      + '<button type="button" class="btn" data-tact="restore">Restore</button>'
+      + (live ? '<button type="button" class="btn" data-tact="stop">■ Stop</button>' : "") + "</div>";
+  }
+  function elapsedTerm(ts) {
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (r < 10 ? "0" : "") + r;
+  }
+  function scrollTermLog() {
+    const el = $("#fwTermLog");
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+  function updateTermLog() {
+    const t = ensureTermState();
+    const el = $("#fwTermLog");
+    if (el) { el.innerHTML = renderTermLog(termActive(), t); scrollTermLog(); }
+    const el2 = $("#fwTermLog2");
+    if (el2 && t.tabs.length > 1) {
+      const b = t.tabs[t.active + 1] || t.tabs[t.active === 0 ? 1 : 0];
+      el2.innerHTML = renderTermLog(b, t);
+    }
+    const n = $("#fwTermRoot .fw-term-find .n");
+    if (n && termActive()) {
+      const c = termActive()._findCount || 0;
+      n.textContent = c ? (Math.min(t.findIdx + 1, c) + " / " + c) : "0 / 0";
+    }
+  }
+  function bindTermChrome(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-tact]").forEach(function (b) {
+      b.onclick = function (e) { e.preventDefault(); termAction(b.getAttribute("data-tact")); };
+    });
+    root.querySelectorAll("[data-tabi]").forEach(function (b) {
+      b.onclick = function () { ensureTermState().active = +b.getAttribute("data-tabi"); paintTerm(); };
+    });
+    root.querySelectorAll("[data-tfilter]").forEach(function (b) {
+      b.onclick = function () { ensureTermState().filter = b.getAttribute("data-tfilter"); paintTerm(); };
+    });
+    root.querySelectorAll("[data-tfav]").forEach(function (b) {
+      b.onclick = function () {
+        const t = ensureTermState();
+        const f = t.favs[+b.getAttribute("data-tfav")];
+        if (f) { t.cmdDraft = f.cmd; startTermCommand(f.cmd, f.name); }
+      };
+    });
+    root.querySelectorAll("[data-thist]").forEach(function (b) {
+      b.onclick = function () {
+        const t = ensureTermState();
+        const h = t.hist[+b.getAttribute("data-thist")];
+        if (h) { t.cmdDraft = h.cmd; paintTerm(); const inp = $("#fwTermCmd"); if (inp) inp.focus(); }
+      };
+    });
+    root.querySelectorAll("[data-tac]").forEach(function (b) {
+      b.onclick = function () { acceptTermAc(+b.getAttribute("data-tac")); };
+    });
+    root.querySelectorAll("[data-tdock]").forEach(function (b) {
+      b.onclick = function () { const t = ensureTermState(); t.dock = b.getAttribute("data-tdock"); t.collapsed = false; saveTermLayout(); mountTerm(); };
+    });
+    root.querySelectorAll("[data-ttheme]").forEach(function (b) {
+      b.onclick = function () { ensureTermState().theme = b.getAttribute("data-ttheme"); saveTermLayout(); paintTerm(); };
+    });
+    root.querySelectorAll(".fw-term-link").forEach(function (a) {
+      a.onclick = function (e) {
+        e.preventDefault();
+        openTermLink(a.getAttribute("data-tpath"), a.getAttribute("data-tline"));
+      };
+    });
+    const br = $("#fwTermBrowser", root); if (br) br.onchange = function () { ensureTermState().browser = br.value; saveTermLayout(); };
+    const hd = $("#fwTermHeaded", root); if (hd) hd.onchange = function () { ensureTermState().headed = hd.value === "1"; saveTermLayout(); };
+    const ev = $("#fwTermEnv", root); if (ev) ev.onchange = function () { ensureTermState().envName = ev.value; saveTermLayout(); };
+    const to = $("#fwTermTimeout", root); if (to) to.onchange = function () { ensureTermState().timeoutMin = Math.max(1, parseInt(to.value, 10) || 30); saveTermLayout(); };
+    const find = $("#fwTermFind", root);
+    if (find) {
+      find.oninput = function () { ensureTermState().findQ = find.value; updateTermLog(); };
+      find.onkeydown = function (e) { if (e.key === "Escape") { ensureTermState().findOpen = false; paintTerm(); } e.stopPropagation(); };
+      setTimeout(function () { find.focus(); find.select(); }, 0);
+    }
+    const cmd = $("#fwTermCmd", root);
+    if (cmd) {
+      cmd.oninput = function () { ensureTermState().cmdDraft = cmd.value; maybeTermAc(cmd.value); };
+      cmd.onkeydown = function (e) { onTermCmdKey(e, cmd); };
+      cmd.onfocus = function () { ensureTermState().histIdx = -1; };
+    }
+    bindTermResize();
+    bindTermDrag();
+  }
+  function termAction(act) {
+    const t = ensureTermState();
+    if (act === "newtab") { t.tabs.push(newTermTab("Terminal " + (t.tabs.length + 1), "cmd")); t.active = t.tabs.length - 1; paintTerm(); return; }
+    if (act === "split") { t.split = !t.split; paintTerm(); return; }
+    if (act === "settings") { t.settingsOpen = !t.settingsOpen; paintTerm(); return; }
+    if (act === "min") { t.collapsed = true; t.maximized = false; mountTerm(); return; }
+    if (act === "max") { t.maximized = !t.maximized; t.collapsed = false; if (t.dock !== "float") t.dock = "float"; mountTerm(); return; }
+    if (act === "close") { toggleTerm(false); return; }
+    if (act === "restore") { t.collapsed = false; t.open = true; mountTerm(); return; }
+    if (act === "find") { t.findOpen = true; paintTerm(); return; }
+    if (act === "wrap") { t.wrap = !t.wrap; saveTermLayout(); paintTerm(); return; }
+    if (act === "ts") { t.timestamps = !t.timestamps; saveTermLayout(); paintTerm(); return; }
+    if (act === "font+") { t.font = Math.min(20, (t.font || 12) + 1); saveTermLayout(); paintTerm(); return; }
+    if (act === "font-") { t.font = Math.max(10, (t.font || 12) - 1); saveTermLayout(); paintTerm(); return; }
+    if (act === "remember") { t.remember = !t.remember; saveTermLayout(); paintTerm(); return; }
+    if (act === "shell") { t.shell = !t.shell; saveTermLayout(); paintTerm(); return; }
+    if (act === "copy") { copyTermLog(); return; }
+    if (act === "download") { downloadTermLog(); return; }
+    if (act === "stop") { stopTermRun(); return; }
+    if (act === "runall") { startTermCommand(buildQuickCommand("all"), "Run all"); return; }
+    if (act === "runfile") { startTermCommand(buildQuickCommand("file"), "Run file"); return; }
+    if (act === "runtc") { startTermCommand(buildQuickCommand("tc"), "Run TC"); return; }
+    if (act === "rerun") { startTermCommand(buildQuickCommand("lf"), "Rerun failed"); return; }
+    if (act === "runtags") { startTermCommand(buildQuickCommand("tags"), "Run with tags"); return; }
+  }
+  function termExtraArgs() {
+    const t = ensureTermState();
+    const parts = [];
+    if (t.headed) parts.push("--headed");
+    if (t.browser) parts.push("--browser", t.browser);
+    return parts;
+  }
+  function buildQuickCommand(kind) {
+    const extra = termExtraArgs();
+    if (kind === "all") return ["pytest", "-v", "tests"].concat(extra).join(" ");
+    if (kind === "file") {
+      const path = FW.path || "";
+      if (path && /\.(py|robot|js|ts)$/.test(path)) return ["pytest", "-v", path].concat(extra).join(" ");
+      toast("Open a test file first, or type a path in the command box.");
+      return "";
+    }
+    if (kind === "tc") {
+      const used = (FW.file && FW.file.used_by) || [];
+      const tc = FW.fromTc || (used[0] && (used[0].id || used[0].tc_id || used[0])) || "";
+      const id = typeof tc === "string" ? tc : (tc.id || "");
+      if (!id) { toast("No test case is selected. Open a linked test or type -k TC-xxxx."); return ""; }
+      const tab = termActive();
+      if (tab) tab.title = id;
+      return ["pytest", "-v", "-k", id].concat(extra).join(" ");
+    }
+    if (kind === "lf") return ["pytest", "--lf"].concat(extra).join(" ");
+    if (kind === "tags") {
+      const t = ensureTermState();
+      if (!/-m\s/.test(t.cmdDraft || "")) {
+        t.cmdDraft = "pytest -m ui";
+        t.histOpen = true;
+        paintTerm();
+        const inp = $("#fwTermCmd"); if (inp) { inp.focus(); inp.setSelectionRange(10, inp.value.length); }
+        toast("Add a -m marker (for example ui) and press Enter, or pick a favorite.");
+        return "";
+      }
+      return t.cmdDraft;
+    }
+    return "pytest -v tests";
+  }
+  async function startTermCommand(cmd, title) {
+    cmd = String(cmd || "").trim();
+    if (!cmd) return;
+    const t = ensureTermState();
+    if (!t.open) { t.open = true; t.collapsed = false; }
+    let tab = termActive();
+    if (!tab) { t.tabs = [newTermTab(title || "Run", "cmd")]; t.active = 0; tab = t.tabs[0]; }
+    if (title) tab.title = title;
+    tab.cmd = cmd;
+    tab.log = "";
+    tab.lineTimes = [];
+    tab.status = "running";
+    tab.exitCode = null;
+    tab.summary = null;
+    tab.startedAt = Date.now();
+    t.cmdDraft = cmd;
+    t.histOpen = true;
+    t.hist = [{ cmd: cmd, when: istStamp() }].concat((t.hist || []).filter(function (h) { return h.cmd !== cmd; })).slice(0, 30);
+    t.histIdx = -1;
+    saveTermLayout();
+    mountTerm();
+    try {
+      await ensureFramework();
+      const body = {
+        framework_id: FW.fid,
+        command: cmd,
+        env: {},
+        env_name: t.envName || "",
+        headless: !t.headed,
+        browser: t.browser || "chromium",
+        timeout: Math.max(5, (t.timeoutMin || 30) * 60),
+        shell: !!t.shell,
+        stream: true,
+        scope: { source: "terminal", env_name: t.envName || "" },
+      };
+      const r = await fwApi("/runs", { method: "POST", body: body });
+      tab.runId = r.run && r.run.id;
+      tab.log = "Started " + (tab.runId || "") + "  " + ((r.run && r.run.command) || cmd) + "\n";
+      assignLineTimes(tab, tab.log);
+      updateTermLog();
+      FW.run = r.run;
+      streamTermRun(tab);
+    } catch (e) {
+      tab.status = "failed";
+      tab.log = (tab.log || "") + (e.message || String(e)) + "\n";
+      updateTermLog();
+      paintTerm();
+      toast(e.message || String(e));
+    }
+  }
+  function closeTermStream(tab) {
+    if (!tab) return;
+    if (tab._es) { try { tab._es.close(); } catch (e1) {} tab._es = null; }
+    if (tab._ws) { try { tab._ws.close(); } catch (e2) {} tab._ws = null; }
+    if (tab._poll) { clearInterval(tab._poll); tab._poll = 0; }
+  }
+  function applyTermEvent(tab, j) {
+    if (!tab || !j) return;
+    if (j.log != null) { tab.log = j.log; assignLineTimes(tab, tab.log); }
+    if (j.status) tab.status = j.running ? "running" : j.status;
+    if (j.summary) tab.summary = j.summary;
+    if (j.exit_code != null) tab.exitCode = j.exit_code;
+    if (!j.running && j.status && j.status !== "running") {
+      tab.status = j.status;
+      closeTermStream(tab);
+    }
+    updateTermLog();
+    const stat = $("#fwTermRoot .fw-term-statbar .run") || $("#fwTermRoot .fw-term-tabs .tab.on");
+    if (ensureTermState().collapsed) paintTerm();
+  }
+  function streamTermRun(tab) {
+    closeTermStream(tab);
+    const id = tab.runId;
+    if (!id) return;
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    let usedWs = false;
+    try {
+      const ws = new WebSocket(proto + "//" + location.host + "/api/automation/runs/" + encodeURIComponent(id) + "/ws");
+      tab._ws = ws;
+      ws.onopen = function () { usedWs = true; };
+      ws.onmessage = function (ev) {
+        try { applyTermEvent(tab, JSON.parse(ev.data)); } catch (e) {}
+      };
+      ws.onerror = function () {
+        if (!usedWs) { try { ws.close(); } catch (e1) {} tab._ws = null; startTermSse(tab); }
+      };
+      ws.onclose = function () {
+        if (!usedWs && tab.status === "running") startTermSse(tab);
+      };
+    } catch (e) {
+      startTermSse(tab);
+    }
+  }
+  function startTermSse(tab) {
+    const id = tab.runId;
+    if (!id) return;
+    if (typeof EventSource === "function") {
+      try {
+        const es = new EventSource("/api/automation/runs/" + encodeURIComponent(id) + "/events");
+        tab._es = es;
+        es.onmessage = function (ev) {
+          try { applyTermEvent(tab, JSON.parse(ev.data)); } catch (e) {}
+        };
+        es.onerror = function () { es.close(); tab._es = null; startTermPoll(tab); };
+        return;
+      } catch (e) {}
+    }
+    startTermPoll(tab);
+  }
+  function startTermPoll(tab) {
+    if (tab._poll) clearInterval(tab._poll);
+    tab._poll = setInterval(async function () {
+      if (!tab.runId) return;
+      try {
+        const j = await fwApi("/runs/" + encodeURIComponent(tab.runId));
+        applyTermEvent(tab, { log: j.run && j.run.log, status: j.run && j.run.status, summary: j.run && j.run.summary, exit_code: j.run && j.run.exit_code, running: j.run && j.run.status === "running" });
+        if (j.run && j.run.status && j.run.status !== "running") closeTermStream(tab);
+      } catch (e) { closeTermStream(tab); }
+    }, 1000);
+  }
+  async function stopTermRun() {
+    const tab = termActive();
+    if (!tab || !tab.runId) return;
+    try {
+      await fwApi("/runs/" + encodeURIComponent(tab.runId) + "/stop", { method: "POST", body: {} });
+      tab.status = "stopped";
+      tab.log = (tab.log || "") + "\n[stopped]\n";
+      updateTermLog();
+    } catch (e) { toast(e.message || String(e)); }
+  }
+  function copyTermLog() {
+    const tab = termActive();
+    const text = (tab && tab.log) || "";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast("Log copied"); }).catch(function () { fallbackCopy(text); });
+    } else fallbackCopy(text);
+  }
+  function fallbackCopy(text) {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("Log copied"); } catch (e) { toast("Could not copy"); }
+    ta.remove();
+  }
+  function downloadTermLog() {
+    const tab = termActive();
+    const text = (tab && tab.log) || "";
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (tab && tab.runId ? tab.runId : "terminal") + ".log";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+  async function openTermLink(path, line) {
+    path = String(path || "").replace(/\\/g, "/");
+    if (path.startsWith("./")) path = path.slice(2);
+    const tree = FW.tree || [];
+    let hit = tree.find(function (r) { return r.path === path; });
+    if (!hit) hit = tree.find(function (r) { return (r.path || "").endsWith("/" + path) || r.path === path || (r.path || "").endsWith(path); });
+    const dest = hit ? hit.path : path;
+    FW.revealLine = parseInt(line, 10) || 1;
+    try { await openFile(dest); } catch (e) { toast("Could not open " + dest); }
+  }
+  function onTermCmdKey(e, cmd) {
+    const t = ensureTermState();
+    if (t.acOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      const n = (t.acItems || []).length;
+      if (!n) return;
+      t.acSel = (t.acSel + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+      paintTerm();
+      const inp = $("#fwTermCmd"); if (inp) { inp.focus(); inp.value = t.cmdDraft; }
+      return;
+    }
+    if (t.acOpen && (e.key === "Enter" || e.key === "Tab") && t.acItems && t.acItems[t.acSel]) {
+      e.preventDefault();
+      acceptTermAc(t.acSel);
+      return;
+    }
+    if (e.key === "Escape") {
+      if (t.acOpen) { t.acOpen = false; paintTerm(); e.preventDefault(); return; }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      t.acOpen = false;
+      startTermCommand(cmd.value);
+      return;
+    }
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      if (!t.hist || !t.hist.length) return;
+      e.preventDefault();
+      if (t.histIdx < 0) t._draftBak = cmd.value;
+      if (e.key === "ArrowUp") t.histIdx = Math.min((t.histIdx < 0 ? 0 : t.histIdx + 1), t.hist.length - 1);
+      else t.histIdx = t.histIdx <= 0 ? -1 : t.histIdx - 1;
+      t.cmdDraft = t.histIdx < 0 ? (t._draftBak || "") : t.hist[t.histIdx].cmd;
+      cmd.value = t.cmdDraft;
+      return;
+    }
+  }
+  function acceptTermAc(i) {
+    const t = ensureTermState();
+    const item = (t.acItems || [])[i];
+    if (!item) return;
+    const cur = t.cmdDraft || "";
+    const parts = cur.split(/\s+/);
+    if (parts.length && !cur.endsWith(" ")) parts.pop();
+    const next = (parts.join(" ") + " " + item.value).trim();
+    t.cmdDraft = next + (item.kind === "flag" && item.value === "-m" ? " " : " ");
+    t.acOpen = false;
+    paintTerm();
+    const inp = $("#fwTermCmd"); if (inp) { inp.focus(); inp.value = t.cmdDraft; inp.selectionStart = inp.selectionEnd = inp.value.length; }
+  }
+  async function maybeTermAc(q) {
+    const t = ensureTermState();
+    const token = String(q || "").split(/\s+/).pop() || "";
+    if (!token) { t.acOpen = false; const ac = $("#fwTermAc"); if (ac) ac.remove(); return; }
+    let items = [];
+    TERM_FLAGS.forEach(function (f) { if (f.indexOf(token) === 0 || f.indexOf(token) >= 0) items.push({ value: f, kind: "flag" }); });
+    try {
+      if (FW.fid) {
+        const j = await fwApi("/term/suggest?framework_id=" + encodeURIComponent(FW.fid) + "&q=" + encodeURIComponent(token));
+        (j.flags || []).forEach(function (f) { if (!items.some(function (x) { return x.value === f; })) items.push({ value: f, kind: "flag" }); });
+        (j.markers || []).forEach(function (m) { items.push({ value: "-m " + m, kind: "marker" }); });
+        (j.paths || []).forEach(function (p) { items.push({ value: p, kind: "path" }); });
+      }
+    } catch (e) {}
+    items = items.filter(function (it, i, arr) { return arr.findIndex(function (x) { return x.value === it.value; }) === i; }).slice(0, 12);
+    t.acItems = items;
+    t.acSel = 0;
+    t.acOpen = items.length > 0;
+    const cmdVal = t.cmdDraft;
+    const had = document.activeElement && document.activeElement.id === "fwTermCmd";
+    paintTerm();
+    const inp = $("#fwTermCmd");
+    if (inp && had) { inp.focus(); inp.value = cmdVal; inp.selectionStart = inp.selectionEnd = inp.value.length; }
+  }
+  function bindTermResize() {
+    const grip = $("#fwTermGrip");
+    if (!grip || grip._bound) return;
+    grip._bound = true;
+    grip.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      const t = ensureTermState();
+      const startY = e.clientY, startX = e.clientX, h0 = t.height, w0 = t.width, fl = Object.assign({}, t.float);
+      function move(ev) {
+        if (t.dock === "bottom") {
+          t.height = Math.max(140, Math.min(window.innerHeight * 0.7, h0 - (ev.clientY - startY)));
+        } else if (t.dock === "right") {
+          t.width = Math.max(240, Math.min(window.innerWidth * 0.6, w0 - (ev.clientX - startX)));
+        } else if (t.dock === "float") {
+          t.float.h = Math.max(180, fl.h + (ev.clientY - startY));
+        }
+        applyTermLayout();
+      }
+      function up() {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        saveTermLayout();
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+  function bindTermDrag() {
+    const title = $("#fwTermTitle");
+    const t = ensureTermState();
+    if (!title || t.dock !== "float" || t.maximized || title._bound) return;
+    title._bound = true;
+    title.addEventListener("mousedown", function (e) {
+      if (e.target && e.target.closest && e.target.closest("[data-tact]")) return;
+      e.preventDefault();
+      const fl = Object.assign({}, t.float);
+      const sx = e.clientX, sy = e.clientY;
+      function move(ev) {
+        t.float.left = Math.max(8, fl.left + (ev.clientX - sx));
+        t.float.top = Math.max(8, fl.top + (ev.clientY - sy));
+        applyTermLayout();
+      }
+      function up() {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        saveTermLayout();
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+  function onTermGlobalKey(e) {
+    if (!$(".fw-shell")) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key === "`") { e.preventDefault(); toggleTerm(); return; }
+    const inTerm = e.target && e.target.closest && e.target.closest("#fwTermRoot");
+    if (!inTerm || !ensureTermState().open) return;
+    if (mod && (e.key === "f" || e.key === "F")) {
+      e.preventDefault();
+      ensureTermState().findOpen = true;
+      paintTerm();
+      return;
+    }
+    if (mod && (e.key === "c" || e.key === "C")) {
+      const sel = window.getSelection && String(window.getSelection());
+      if (sel) return;
+      const tab = termActive();
+      if (tab && tab.status === "running") { e.preventDefault(); stopTermRun(); }
+    }
+  }
+
+
 })();
