@@ -41,6 +41,11 @@
     symbols: null,
     dataMode: {},
     acFromKey: false,
+    showLibs: false,
+    libIndex: null,
+    libCache: {},
+    libTimer: 0,
+    acSeq: 0,
   };
 
   function projectId() {
@@ -523,11 +528,13 @@
     if (typeof hideAutocomplete === "function") hideAutocomplete();
     const split = !!FW.split && FW.path && !(FW.file && FW.file.is_dir);
     const full = FW.full && FW.path && !(FW.file && FW.file.is_dir);
-    const used = !!(FW.showUsed && FW.fromTc && FW.panel !== "versions") && !split && !full;
-    host.innerHTML = '<div class="fw-body' + (split ? " split" : "") + (full ? " full" : "") + (used ? " used" : "") + '" id="fwBody">'
+    const libs = !!FW.showLibs && !split && !full;
+    const used = !!(FW.showUsed && FW.fromTc && FW.panel !== "versions") && !split && !full && !libs;
+    host.innerHTML = '<div class="fw-body' + (split ? " split" : "") + (full ? " full" : "") + (libs ? " libs" : "") + (used ? " used" : "") + '" id="fwBody">'
       + '<div class="fw-tree" id="fwTree">' + treePanel() + "</div>"
       + paneHtml("fwMain", FW.path, FW.file, "left")
       + (split ? paneHtml("fwMain2", FW.splitPath, FW.splitFile, "right") : "")
+      + (libs ? libsPanelHtml(FW.libIndex) : "")
       + (used ? whereUsedHtml(FW.usage) : "")
       + "</div>";
     const body = $("#fwBody");
@@ -535,6 +542,7 @@
     bindTree($("#fwTree"));
     bindMain($("#fwMain"), "left");
     if (split) bindMain($("#fwMain2"), "right");
+    if (libs) bindLibsPanel($("#fwLibsP"));
     if (used) bindWhereUsed($("#fwUsedP"));
     paintCrumb();
   }
@@ -542,6 +550,7 @@
   function treePanel() {
     return '<div class="fw-th"><span class="fw-ttl">Files</span><span class="fw-th-acts">'
       + '<button type="button" class="btn g sm" id="fwNormBtn" title="Fold duplicate ui/ and tests/web/ folders into pages/ and tests/…">Normalize folders</button>'
+      + '<button type="button" class="btn g sm' + (FW.showLibs ? " on" : "") + '" id="fwLibBtn" title="Library autocomplete from the project venv">Libraries</button>'
       + '<button type="button" class="btn fw-new" id="fwTreeNew">＋ New</button></span></div>'
       + '<input class="fw-search" id="fwTreeQ" type="search" placeholder="Search files" value="' + esc(FW.treeQ || "") + '">'
       + '<div class="fw-t" id="fwT">' + treeHtml(FW.tree) + "</div>";
@@ -628,6 +637,8 @@
     }
     const norm = $("#fwNormBtn", tree);
     if (norm) norm.onclick = function (e) { e.stopPropagation(); openNormalize(); };
+    const lib = $("#fwLibBtn", tree);
+    if (lib) lib.onclick = function (e) { e.stopPropagation(); toggleLibraries(); };
     const neu = $("#fwTreeNew", tree);
     if (neu) neu.onclick = function (e) {
       e.stopPropagation();
@@ -880,7 +891,8 @@
     const hint = isEditing(side)
       ? "Ctrl+Space for suggestions"
       : "Double-click a line or start typing to edit · Ctrl+Space for suggestions";
-    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">" + mid + "</span><span class=\"fw-edithint\">" + hint + "</span><span style=\"margin-left:auto\">" + esc(path) + "</span></div>";
+    const pkgs = FW.libIndex && FW.libIndex.package_count != null ? (" · " + FW.libIndex.package_count + " pkgs") : "";
+    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">" + mid + "</span><span class=\"fw-edithint\">" + hint + '</span><span class="fw-stat-right"><button type="button" class="fw-libbtn" data-act="libs" title="Library autocomplete">' + (FW.showLibs ? "Libraries ▾" : "Libraries") + pkgs + "</button><span>" + esc(path) + "</span></span></div>";
   }
 
   function codeHtml(path, side) {
@@ -1306,6 +1318,8 @@
     if (fullBtn) fullBtn.onclick = function () { FW.full = !FW.full; paintProject($("#fwHost")); };
     const histBtn = act("hist");
     if (histBtn) histBtn.onclick = function () { if (side === "left") { FW.showHist = !FW.showHist; paintProject($("#fwHost")); } };
+    const libsBtn = act("libs") || main.querySelector(".fw-libbtn");
+    if (libsBtn) libsBtn.onclick = function () { toggleLibraries(); };
     const saveBtn = act("save");
     if (saveBtn) saveBtn.onclick = function () { saveCurrent(side); };
     const regenBtn = act("regen");
@@ -2590,6 +2604,321 @@
     }
   }
 
+
+  function isPyEditor() {
+    return String(FW.lang || langLabel() || "").toLowerCase().indexOf("python") === 0;
+  }
+
+  function libSourceLabel(src) {
+    if (src === "venv") return "project venv";
+    if (src === "runner_python") return "runner_python";
+    return "app Python";
+  }
+
+  function libsPanelHtml(info) {
+    info = info || FW.libIndex;
+    let body;
+    if (!isPyEditor()) {
+      body = '<p class="sub">Library autocomplete is available for Python projects.</p>';
+    } else if (!info) {
+      body = '<p class="sub">Loading index…</p>';
+    } else {
+      const exe = info.interpreter || "";
+      const src = libSourceLabel(info.interpreter_source);
+      const n = info.package_count != null ? info.package_count : 0;
+      const miss = info.venv_missing
+        ? '<p class="sub fw-lib-warn">No project venv was found' + (info.venv_root ? " at " + esc(info.venv_root) : "") + ". Indexing the " + esc(src) + " instead. Create a venv, install requirements, then Re-index.</p>"
+        : "";
+      const err = info.error ? '<p class="sub fw-lib-warn">' + esc(info.error) + "</p>" : "";
+      const only = info.only_requirements !== false;
+      const excl = (info.exclude || []).map(function (name, i) {
+        return '<span class="fw-lib-chip">' + esc(name) + '<button type="button" data-ex="' + i + '" title="Remove">×</button></span>';
+      }).join("") || '<span class="sub">None</span>';
+      body = '<div class="blk"><div class="lab">Python indexed</div>'
+        + '<div class="fw-lib-exe" title="' + esc(exe) + '">' + esc(exe || "—") + "</div>"
+        + '<div class="sub">' + esc(src) + (info.python ? " · Python " + esc(info.python) : "") + "</div>"
+        + miss + err + "</div>"
+        + '<div class="blk"><div class="lab">Indexed packages</div>'
+        + "<div><b>" + n + "</b> package" + (n === 1 ? "" : "s") + "</div>"
+        + '<div style="margin-top:8px"><button type="button" class="btn sm pri" id="fwLibReindex">Re-index</button></div></div>'
+        + '<div class="blk"><label class="fw-lib-tog"><input type="checkbox" id="fwLibOnlyReq"' + (only ? " checked" : "") + "> Only requirements.txt packages</label></div>"
+        + '<div class="blk"><div class="lab">Exclude</div>'
+        + '<div class="fw-lib-chips" id="fwLibExcl">' + excl + "</div>"
+        + '<div class="fw-lib-add"><input id="fwLibExclIn" type="text" placeholder="Package name"><button type="button" class="btn sm" id="fwLibExclAdd">Add</button></div>'
+        + '<p class="sub">Default excludes include pywin32 and app/server libraries (uvicorn, FastAPI, SQLAlchemy, …).</p></div>'
+        + '<div class="blk"><div class="lab">Install libraries</div>'
+        + '<p class="sub">In the project venv: <span class="mono">source .venv/bin/activate</span> (Windows: <span class="mono">.venv\\Scripts\\activate</span>) then <span class="mono">pip install -r requirements.txt</span>. Or use the terminal’s allowed <span class="mono">pip install -r requirements.txt</span> command. Then Re-index.</p></div>';
+    }
+    return '<aside class="fw-usedp fw-libp" id="fwLibsP"><div class="fw-lib-hd"><h3>Libraries</h3>'
+      + '<button type="button" class="btn g sm" id="fwLibClose" title="Close">Close</button></div>' + body + "</aside>";
+  }
+
+  function bindLibsPanel(root) {
+    if (!root) return;
+    const close = $("#fwLibClose", root);
+    if (close) close.onclick = function () { FW.showLibs = false; const host = $("#fwHost"); if (host) paintProject(host); };
+    const re = $("#fwLibReindex", root);
+    if (re) re.onclick = function () { saveLibIndex({ reindex: true }).then(function () { toast("Library index refreshed"); }); };
+    const tog = $("#fwLibOnlyReq", root);
+    if (tog) tog.onchange = function () { saveLibIndex({ only_requirements: !!tog.checked, reindex: false }); };
+    const add = $("#fwLibExclAdd", root);
+    const inp = $("#fwLibExclIn", root);
+    function addExcl() {
+      const name = ((inp && inp.value) || "").trim();
+      if (!name) return;
+      const excl = ((FW.libIndex && FW.libIndex.exclude) || []).slice();
+      if (excl.some(function (x) { return String(x).toLowerCase() === name.toLowerCase(); })) { if (inp) inp.value = ""; return; }
+      excl.push(name);
+      if (inp) inp.value = "";
+      saveLibIndex({ exclude: excl, reindex: false });
+    }
+    if (add) add.onclick = addExcl;
+    if (inp) inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); addExcl(); } };
+    $$("[data-ex]", root).forEach(function (b) {
+      b.onclick = function () {
+        const excl = ((FW.libIndex && FW.libIndex.exclude) || []).slice();
+        excl.splice(+b.dataset.ex, 1);
+        saveLibIndex({ exclude: excl, reindex: false });
+      };
+    });
+  }
+
+  function refreshLibsPanel() {
+    const p = $("#fwLibsP");
+    if (!p || !FW.showLibs) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = libsPanelHtml(FW.libIndex);
+    const next = tmp.firstElementChild;
+    if (next) { p.replaceWith(next); bindLibsPanel(next); }
+  }
+
+  function toggleLibraries() {
+    FW.showLibs = !FW.showLibs;
+    const host = $("#fwHost");
+    if (host) paintProject(host);
+    if (FW.showLibs) {
+      loadLibIndex(false).then(function () { refreshLibsPanel(); });
+    }
+  }
+
+  async function loadLibIndex(force) {
+    if (!FW.fid) return null;
+    try {
+      const j = force
+        ? await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/libindex", { method: "POST", body: libIndexBody({ reindex: true }) })
+        : await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/libindex");
+      FW.libIndex = j;
+      return j;
+    } catch (e) {
+      FW.libIndex = { ok: false, error: e.message || String(e), package_count: 0, exclude: (FW.libIndex && FW.libIndex.exclude) || [], only_requirements: true };
+      return FW.libIndex;
+    }
+  }
+
+  function libIndexBody(extra) {
+    const cur = FW.libIndex || {};
+    const body = {
+      only_requirements: cur.only_requirements !== false,
+      exclude: cur.exclude || [],
+    };
+    Object.keys(extra || {}).forEach(function (k) { body[k] = extra[k]; });
+    return body;
+  }
+
+  async function saveLibIndex(extra) {
+    if (!FW.fid) return null;
+    try {
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/libindex", { method: "POST", body: libIndexBody(extra) });
+      FW.libIndex = j;
+      FW.libCache = {};
+      refreshLibsPanel();
+      return j;
+    } catch (e) {
+      toast(e.message || String(e));
+      return null;
+    }
+  }
+
+  function parsePyImports(text) {
+    const map = {};
+    const lines = String(text || "").split(/\n/);
+    lines.forEach(function (line) {
+      let m = line.match(/^\s*import\s+(.+)$/);
+      if (m) {
+        m[1].split(",").forEach(function (part) {
+          const bit = part.trim().split("#")[0].trim();
+          if (!bit) return;
+          const as = bit.split(/\s+as\s+/);
+          const mod = (as[0] || "").trim();
+          const alias = ((as[1] || mod).trim());
+          if (mod && alias) map[alias] = mod;
+        });
+        return;
+      }
+      m = line.match(/^\s*from\s+([A-Za-z_][\w.]*)\s+import\s+(.+)$/);
+      if (m) {
+        if (/^\s*\(/.test(m[2]) || /\*/.test(m[2])) return;
+        m[2].split(",").forEach(function (part) {
+          const bit = part.trim().split("#")[0].trim();
+          if (!bit) return;
+          const as = bit.split(/\s+as\s+/);
+          const name = (as[0] || "").trim();
+          const alias = ((as[1] || name).trim());
+          if (name && alias) map[alias] = m[1] + "." + name;
+        });
+      }
+    });
+    return map;
+  }
+
+  function lastAssign(text, name) {
+    if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return "";
+    const re = new RegExp("(?:^|\\n)\\s*" + name + "\\s*=\\s*([^\\n]+)", "g");
+    let m, last = "";
+    while ((m = re.exec(text || ""))) last = m[1];
+    return last.trim();
+  }
+
+  function stripCall(expr) {
+    return String(expr || "").trim().replace(/\([\s\S]*$/, "").replace(/\[[\s\S]*$/, "").trim();
+  }
+
+  function qualifyReturn(ret, current) {
+    ret = String(ret || "").trim();
+    if (!ret) return "";
+    if (ret === "None" || ret === "NoneType") return "";
+    if (ret.indexOf(".") >= 0) return ret;
+    const cur = String(current || "");
+    const cut = cur.lastIndexOf(".");
+    if (cut > 0) return cur.slice(0, cut + 1) + ret;
+    if (cur) return cur + "." + ret;
+    return ret;
+  }
+
+  function acContext(ta, word) {
+    const w = word || wordAtCaret(ta);
+    const v = ta.value || "";
+    const pos = w.pos != null ? w.pos : (ta.selectionStart || 0);
+    const lineStart = v.lastIndexOf("\n", pos - 1) + 1;
+    const left = v.slice(lineStart, pos);
+    let m = left.match(/^\s*from\s+([A-Za-z_][\w.]*)\s+import\s+(?:[A-Za-z0-9_+\s,]*,\s*)?([A-Za-z0-9_]*)$/);
+    if (m) {
+      return { mode: "from", module: m[1], prefix: m[2] || "", token: w.token || m[2] || "", start: w.start, end: w.end, pos: pos, show: true, needLib: true };
+    }
+    m = left.match(/^\s*import\s+(?:[A-Za-z0-9_.,\s]*,\s*)?([A-Za-z0-9_]*)$/);
+    if (m) {
+      return { mode: "import", module: "", prefix: m[1] || "", token: w.token || m[1] || "", start: w.start, end: w.end, pos: pos, show: true, needLib: true };
+    }
+    const dotted = String(w.token || "");
+    const afterDot = dotted.indexOf(".") >= 0;
+    const obj = afterDot ? dotted.replace(/\.[A-Za-z0-9_]*$/, "").replace(/\.$/, "") : "";
+    const show = afterDot || !!(w.prefix && w.prefix.length >= 1);
+    return {
+      mode: afterDot ? "attr" : "plain",
+      module: obj,
+      prefix: w.prefix || "",
+      token: dotted,
+      start: w.start,
+      end: w.end,
+      pos: pos,
+      show: show,
+      needLib: afterDot || (w.prefix && w.prefix.length >= 2),
+    };
+  }
+
+  async function loadLibItems(module, prefix) {
+    if (!FW.fid || !isPyEditor()) return [];
+    const key = String(module || "") + "|" + String(prefix || "");
+    if (FW.libCache && Object.prototype.hasOwnProperty.call(FW.libCache, key)) return FW.libCache[key];
+    try {
+      let url = "/frameworks/" + encodeURIComponent(FW.fid) + "/libsymbols?";
+      if (module) url += "module=" + encodeURIComponent(module) + "&";
+      if (prefix) url += "prefix=" + encodeURIComponent(prefix);
+      const j = await fwApi(url);
+      const items = j.items || [];
+      FW.libCache = FW.libCache || {};
+      FW.libCache[key] = items;
+      if (j.package_count != null || j.interpreter) {
+        /* keep a stale status if we haven't loaded the panel */
+      }
+      return items;
+    } catch (e) {
+      FW.libCache = FW.libCache || {};
+      FW.libCache[key] = [];
+      return [];
+    }
+  }
+
+
+  async function returnOfDotted(dotted) {
+    const s = String(dotted || "");
+    const cut = s.lastIndexOf(".");
+    if (cut < 0) return s;
+    const owner = s.slice(0, cut);
+    const name = s.slice(cut + 1);
+    const mems = await loadLibItems(owner, "");
+    const hit = mems.find(function (it) { return it.name === name; });
+    if (!hit) return s;
+    if (hit.kind === "class" || hit.kind === "module") {
+      const base = hit.module || owner;
+      if (hit.kind === "module") return base.split(".").pop() === hit.name ? base : (base + "." + name);
+      return base.endsWith("." + name) ? base : (base + "." + name);
+    }
+    if (hit.returns) return qualifyReturn(hit.returns, owner);
+    return s;
+  }
+
+  async function attrTarget(owner, attr) {
+    owner = String(owner || "");
+    if (!owner) return "";
+    const mems = await loadLibItems(owner, "");
+    const hit = mems.find(function (it) { return it.name === attr; });
+    if (!hit) return owner + "." + attr;
+    if (hit.returns) return qualifyReturn(hit.returns, owner);
+    if (hit.kind === "class" || hit.kind === "module") {
+      const base = hit.module || owner;
+      return base.endsWith("." + hit.name) ? base : (base + "." + hit.name);
+    }
+    return owner + "." + attr;
+  }
+
+  async function resolveLibExpr(expr, imports) {
+    const bits = String(expr || "").split(".").filter(Boolean);
+    if (!bits.length) return "";
+    const head = bits[0];
+    if (imports[head] && bits.length === 1) return await returnOfDotted(imports[head]);
+    let owner = imports[head] || head;
+    for (let i = 1; i < bits.length; i++) {
+      owner = await attrTarget(owner, bits[i]);
+      if (!owner) return "";
+    }
+    // Assignment RHS like openpyxl.load_workbook(...) should become the return type.
+    if (bits.length >= 1) owner = await returnOfDotted(owner);
+    return owner;
+  }
+
+  async function inferLibTarget(ta, objChain) {
+    const chain = String(objChain || "").replace(/\.$/, "");
+    if (!chain) return "";
+    const parts = chain.split(".").filter(Boolean);
+    if (!parts.length) return "";
+    const imports = parsePyImports(ta.value || "");
+    const head = parts[0];
+    let cur = "";
+    if (imports[head]) cur = imports[head];
+    else {
+      const expr = stripCall(lastAssign(ta.value || "", head));
+      if (!expr) return "";
+      cur = await resolveLibExpr(expr, imports);
+    }
+    if (!cur) return "";
+    for (let i = 1; i < parts.length; i++) {
+      cur = await attrTarget(cur, parts[i]);
+      if (!cur) return "";
+    }
+    return cur;
+  }
+
   async function ensureSymbols() {
     if (FW.symbols) return FW.symbols;
     if (!FW.fid) return [];
@@ -2669,71 +2998,157 @@
     FW.acFromKey = false;
   }
 
-  function acItems(prefix, token, symbols) {
+
+  function acItems(prefix, token, symbols, libItems, ctx) {
     const q = String(prefix || "").toLowerCase();
     const dotted = String(token || "");
-    const afterDot = dotted.indexOf(".") >= 0;
-    const obj = afterDot ? dotted.split(".").slice(0, -1).join(".") : "";
+    const afterDot = dotted.indexOf(".") >= 0 || (ctx && ctx.mode === "attr");
+    const importMode = ctx && (ctx.mode === "import" || ctx.mode === "from");
     const out = [];
     function add(it) {
       const name = it.name || "";
       if (q && name.toLowerCase().indexOf(q) !== 0) return;
       out.push(it);
     }
-    (symbols || []).forEach(function (s) {
-      if (afterDot && (s.kind === "method" || s.kind === "locator")) {
-        if (obj && s.page && s.page.toLowerCase() !== obj.toLowerCase() && s.page.toLowerCase().indexOf(obj.toLowerCase()) < 0) {
-          /* still include locators/methods that match the prefix */
-        }
-        add({ name: s.name, kind: s.kind, detail: s.detail, path: s.path, line: s.line, insert: s.name + (s.kind === "method" ? "()" : "") });
-      } else if (!afterDot) {
-        add({ name: s.name, kind: s.kind, detail: s.detail, path: s.path, line: s.line, insert: s.name });
-      }
+    (libItems || []).forEach(function (s) {
+      add({
+        name: s.name,
+        kind: s.kind || "attr",
+        detail: s.detail || s.badge || "",
+        badge: s.badge || "",
+        path: s.path || "",
+        line: s.line || 0,
+        insert: s.insert || s.name,
+        source: s.source || "library",
+        signature: s.signature || "",
+        doc: s.doc || "",
+        returns: s.returns || "",
+        module: s.module || "",
+      });
     });
-    if (!afterDot) {
-      PY_KEYWORDS().forEach(function (k) { add({ name: k, kind: "keyword", detail: "Python", insert: k }); });
+    if (!importMode) {
+      (symbols || []).forEach(function (s) {
+        if (afterDot && (s.kind === "method" || s.kind === "locator")) {
+          if (ctx && ctx.module && s.page && s.page.toLowerCase() !== String(ctx.module).toLowerCase() && String(s.page).toLowerCase().indexOf(String(ctx.module).toLowerCase()) < 0) {
+            /* still include locators/methods that match the prefix */
+          }
+          add({ name: s.name, kind: s.kind, detail: s.detail, path: s.path, line: s.line, insert: s.name + (s.kind === "method" ? "()" : ""), source: "project" });
+        } else if (!afterDot) {
+          add({ name: s.name, kind: s.kind, detail: s.detail, path: s.path, line: s.line, insert: s.name, source: "project" });
+        }
+      });
     }
-    PW_APIS().forEach(function (k) { add({ name: k.name, kind: "playwright", detail: k.detail, insert: k.name + "()" }); });
+    if (!afterDot && !importMode) {
+      PY_KEYWORDS().forEach(function (k) { add({ name: k, kind: "keyword", detail: "Python", insert: k, source: "keyword" }); });
+    }
+    if (!importMode) {
+      PW_APIS().forEach(function (k) { add({ name: k.name, kind: "playwright", detail: k.detail, insert: k.name + "()", source: "playwright" }); });
+    }
     const seen = {};
     const uniq = [];
     out.forEach(function (it) {
-      const key = it.kind + ":" + it.name;
+      const key = (it.source || it.kind) + ":" + it.name;
       if (seen[key]) return;
       seen[key] = 1;
       uniq.push(it);
     });
     uniq.sort(function (a, b) {
-      const rank = { method: 0, class: 1, locator: 2, function: 3, playwright: 4, keyword: 5 };
-      return (rank[a.kind] || 9) - (rank[b.kind] || 9) || a.name.localeCompare(b.name);
+      const rank = { library: 0, method: 1, class: 2, locator: 3, function: 4, module: 5, property: 6, playwright: 7, project: 8, keyword: 9 };
+      const ra = (a.source === "library" ? 0 : (rank[a.kind] != null ? rank[a.kind] : 9));
+      const rb = (b.source === "library" ? 0 : (rank[b.kind] != null ? rank[b.kind] : 9));
+      return ra - rb || a.name.localeCompare(b.name);
     });
-    return uniq.slice(0, 12);
+    if (afterDot) {
+      const libOrProj = uniq.filter(function (it) { return it.source !== "playwright"; }).slice(0, 10);
+      const pw = uniq.filter(function (it) { return it.source === "playwright"; }).slice(0, 4);
+      return libOrProj.concat(pw);
+    }
+    return uniq.slice(0, 14);
   }
 
   async function maybeAutocomplete(ta, view, fromKey) {
     if (fromKey) FW.acFromKey = true;
     const w = wordAtCaret(ta);
-    if (!fromKey && (!w.prefix || w.prefix.length < 1) && !/\.$/.test(w.token)) { hideAutocomplete(); return; }
+    const ctx = acContext(ta, w);
+    if (!fromKey && !ctx.show && !(ctx.mode === "import" || ctx.mode === "from")) { hideAutocomplete(); return; }
+    const seq = ++FW.acSeq;
     const symbols = await ensureSymbols();
-    const items = acItems(w.prefix, w.token, symbols);
-    showAutocomplete(ta, view, items, w, !!fromKey || FW.acFromKey);
+    if (seq !== FW.acSeq) return;
+    let libItems = [];
+    const local = acItems(ctx.prefix, ctx.token, symbols, [], ctx);
+    if (!ctx.needLib || !isPyEditor()) {
+      showAutocomplete(ta, view, local, w, !!fromKey || FW.acFromKey, ctx);
+      return;
+    }
+    if (local.length || fromKey || FW.acFromKey) showAutocomplete(ta, view, local, w, !!fromKey || FW.acFromKey, ctx);
+    try {
+      if (ctx.mode === "import") libItems = await loadLibItems("", ctx.prefix);
+      else if (ctx.mode === "from") libItems = await loadLibItems(ctx.module, ctx.prefix);
+      else if (ctx.mode === "attr") {
+        const target = await inferLibTarget(ta, ctx.module);
+        if (target) libItems = await loadLibItems(target, ctx.prefix);
+      } else {
+        libItems = await loadLibItems("", ctx.prefix);
+      }
+    } catch (e) { libItems = []; }
+    if (seq !== FW.acSeq) return;
+    const items = acItems(ctx.prefix, ctx.token, symbols, libItems, ctx);
+    showAutocomplete(ta, view, items, w, !!fromKey || FW.acFromKey, ctx);
   }
 
-  function showAutocomplete(ta, view, items, word, withAi) {
+  function acKindIcon(kind, source) {
+    if (source === "ai" || kind === "ai") return { t: "AI", c: "ai" };
+    if (kind === "class") return { t: "C", c: "cls" };
+    if (kind === "function" || kind === "method") return { t: "f", c: "fn" };
+    if (kind === "module") return { t: "M", c: "mod" };
+    if (kind === "keyword") return { t: "k", c: "kw" };
+    if (kind === "playwright") return { t: "P", c: "pw" };
+    if (kind === "locator") return { t: "L", c: "loc" };
+    if (kind === "property") return { t: "p", c: "pr" };
+    if (source === "project") return { t: "S", c: "proj" };
+    return { t: "·", c: "at" };
+  }
+
+  function acLegendHtml() {
+    return '<div class="fw-ac-leg">'
+      + '<span><i class="proj"></i>Project</span>'
+      + '<span><i class="lib"></i>Library</span>'
+      + '<span><i class="kw"></i>Python keyword</span>'
+      + '<span><i class="pw"></i>Playwright</span>'
+      + '<span><i class="ai"></i>Ask AI (Ctrl+Space)</span>'
+      + "</div>";
+  }
+
+  function acDetailHtml(it) {
+    if (!it) return '<div class="empty">No details</div>';
+    const sig = it.signature ? '<div class="sig">' + esc(it.name + it.signature) + "</div>" : (it.kind ? '<div class="sig">' + esc(it.name) + "</div>" : "");
+    const doc = it.doc ? '<div class="doc">' + esc(it.doc) + "</div>" : "";
+    const badge = it.badge ? '<div class="badge">' + esc(it.badge) + "</div>" : "";
+    const extra = !doc && (it.detail || it.path) ? '<div class="doc">' + esc(it.detail || it.path) + "</div>" : "";
+    return badge + sig + doc + extra || '<div class="empty">No details</div>';
+  }
+
+  function showAutocomplete(ta, view, items, word, withAi, ctx) {
     hideAutocomplete();
     if (!items.length && !withAi) return;
     const box = document.createElement("div");
-    box.className = "fw-ac"; box.id = "fwAc";
+    const hasDetail = items.some(function (it) { return it.signature || it.doc || it.badge; });
+    box.className = "fw-ac" + (hasDetail ? " fw-ac-split" : "");
+    box.id = "fwAc";
     const rows = items.map(function (it, i) {
-      return '<div class="row' + (i === 0 ? " on" : "") + '" data-i="' + i + '"><span class="name">' + esc(it.name) + '</span><span class="sub">' + esc(it.detail || "") + '</span><span class="kind">' + esc(it.kind) + "</span></div>";
+      const ico = acKindIcon(it.kind, it.source);
+      const badge = it.badge ? '<span class="badge">' + esc(it.badge) + "</span>" : (it.source === "library" ? '<span class="badge">' + esc(it.detail || "library") + "</span>" : "");
+      return '<div class="row' + (i === 0 ? " on" : "") + '" data-i="' + i + '" data-src="' + esc(it.source || "") + '"><span class="fw-ac-ico ' + ico.c + '">' + ico.t + '</span><span class="name">' + esc(it.name) + "</span>" + badge + '<span class="kind">' + esc(it.kind) + "</span></div>";
     }).join("");
-    const ai = withAi ? '<div class="row ai" data-ai="1"><span class="name">✨ Ask AI for a suggestion</span><span class="kind">AI</span></div>' : "";
-    box.innerHTML = rows + ai;
+    const ai = withAi ? '<div class="row ai" data-ai="1"><span class="fw-ac-ico ai">AI</span><span class="name">Ask AI for a suggestion</span><span class="kind">AI</span></div>' : "";
+    const detail = hasDetail ? '<div class="fw-ac-detail" id="fwAcDetail">' + acDetailHtml(items[0]) + "</div>" : "";
+    box.innerHTML = '<div class="fw-ac-body"><div class="fw-ac-list">' + rows + ai + "</div>" + detail + "</div>" + acLegendHtml();
     document.body.appendChild(box);
     const c = caretViewport(ta);
     let left = c.left || 48;
     let top = (c.bottom || ((c.top || 24) + 18)) + 4;
     box.style.position = "fixed";
-    box.style.zIndex = "120";
+    box.style.zIndex = "140";
     box.style.top = top + "px";
     box.style.left = left + "px";
     const br = box.getBoundingClientRect();
@@ -2747,9 +3162,15 @@
     }
     if (left < 8) box.style.left = "8px";
     let sel = 0;
-    const all = box.querySelectorAll(".row");
+    const all = box.querySelectorAll(".fw-ac-list .row");
     function paintSel() {
       all.forEach(function (r, i) { r.classList.toggle("on", i === sel); });
+      const detailEl = box.querySelector("#fwAcDetail");
+      if (detailEl) {
+        const row = all[sel];
+        if (row && row.dataset.ai) detailEl.innerHTML = '<div class="doc">On-demand AI completion (Ctrl+Space). Does not run while you type.</div>';
+        else detailEl.innerHTML = acDetailHtml(items[sel]);
+      }
     }
     function accept(i) {
       const row = all[i];

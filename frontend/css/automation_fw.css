@@ -506,3 +506,44 @@
 .fw-term[data-theme="light"] .fw-term-win .fw-term-ctrl,
 .fw-term[data-theme="light"] .fw-term-gear{background:#fff;color:#1f2328;border-color:#d0d7de}
 .fw-term[data-theme="light"] .fw-term-win .fw-term-ctrl:hover{background:#f6f8fa}
+
+.fw-body.libs{grid-template-columns:220px minmax(0,1fr) 300px}
+.fw-th-acts .btn.sm.on{background:#eef2ff;border-color:#4361ee;color:#3046c4}
+.fw-stat{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fw-stat-right{margin-left:auto;display:inline-flex;align-items:center;gap:8px;min-width:0}
+.fw-stat-right>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px;color:#8b93a7;font-size:11.5px}
+.fw-libbtn{border:0;background:transparent;color:#4361ee;font:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0 2px;font-family:inherit}
+.fw-libbtn:hover{text-decoration:underline}
+.fw-libp .fw-lib-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px}
+.fw-libp h3{margin:0}
+.fw-lib-exe{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;word-break:break-all;color:#1e2433}
+.fw-lib-warn{color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 8px}
+.fw-lib-tog{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650;color:#1e2433;cursor:pointer}
+.fw-lib-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.fw-lib-chip{display:inline-flex;align-items:center;gap:4px;background:#f4f6fb;border:1px solid #e3e7f0;border-radius:999px;padding:2px 4px 2px 8px;font-size:12px;font-weight:650}
+.fw-lib-chip button{border:0;background:transparent;color:#6b7385;cursor:pointer;font-size:14px;line-height:1;padding:0 4px;font-family:inherit}
+.fw-lib-add{display:flex;gap:6px}
+.fw-lib-add input{flex:1;min-width:0;border:1px solid #d5dae6;border-radius:8px;padding:5px 8px;font:inherit;font-size:12.5px}
+.fw-libp .mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+.fw-ac{width:min(460px,92vw);max-height:none;overflow:hidden;display:flex;flex-direction:column}
+.fw-ac.fw-ac-split{width:min(640px,94vw)}
+.fw-ac-body{display:flex;min-height:0;max-height:min(280px,50vh)}
+.fw-ac-list{flex:1;min-width:0;overflow:auto}
+.fw-ac-detail{width:220px;flex-shrink:0;border-left:1px solid #eef1f7;padding:8px 10px;overflow:auto;background:#fafbfe}
+.fw-ac-detail .badge{display:inline-block;background:#eef2ff;color:#3046c4;border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:750;margin:0 0 6px}
+.fw-ac-detail .sig{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;font-weight:700;color:#1e2433;margin:0 0 6px;white-space:pre-wrap;word-break:break-word}
+.fw-ac-detail .doc{font-size:11.5px;color:#5b6475;line-height:1.4}
+.fw-ac-detail .empty{font-size:11.5px;color:#8b93a7}
+.fw-ac .row{display:flex;align-items:center;gap:7px;padding:5px 10px;cursor:pointer}
+.fw-ac .badge{flex-shrink:0;background:#eef2ff;color:#3046c4;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:750;white-space:nowrap}
+.fw-ac .name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fw-ac-ico{width:16px;height:16px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0;line-height:1;color:#fff}
+.fw-ac-ico.cls{background:#7c3aed}.fw-ac-ico.fn{background:#2563eb}.fw-ac-ico.mod{background:#0f766e}
+.fw-ac-ico.kw{background:#6b7385}.fw-ac-ico.pw{background:#d97706}.fw-ac-ico.loc{background:#0e7490}
+.fw-ac-ico.pr{background:#9333ea}.fw-ac-ico.proj{background:#334155}.fw-ac-ico.at{background:#94a3b8}
+.fw-ac-ico.ai{background:#5b21b6}
+.fw-ac-leg{display:flex;flex-wrap:wrap;gap:8px 12px;padding:6px 10px;border-top:1px solid #eef1f7;background:#f7f8fc;font-size:10.5px;font-weight:650;color:#5b6475}
+.fw-ac-leg span{display:inline-flex;align-items:center;gap:5px}
+.fw-ac-leg i{width:8px;height:8px;border-radius:2px;display:inline-block;flex-shrink:0}
+.fw-ac-leg i.proj{background:#334155}.fw-ac-leg i.lib{background:#2563eb}.fw-ac-leg i.kw{background:#6b7385}
+.fw-ac-leg i.pw{background:#d97706}.fw-ac-leg i.ai{background:#5b21b6}
