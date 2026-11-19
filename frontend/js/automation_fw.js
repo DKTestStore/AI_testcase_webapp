@@ -520,6 +520,7 @@
   }
 
   function paintProject(host) {
+    if (typeof hideAutocomplete === "function") hideAutocomplete();
     const split = !!FW.split && FW.path && !(FW.file && FW.file.is_dir);
     const full = FW.full && FW.path && !(FW.file && FW.file.is_dir);
     const used = !!(FW.showUsed && FW.fromTc && FW.panel !== "versions") && !split && !full;
@@ -539,7 +540,9 @@
   }
 
   function treePanel() {
-    return '<div class="fw-th"><span class="fw-ttl">Files</span><button type="button" class="btn fw-new" id="fwTreeNew">＋ New</button></div>'
+    return '<div class="fw-th"><span class="fw-ttl">Files</span><span class="fw-th-acts">'
+      + '<button type="button" class="btn g sm" id="fwNormBtn" title="Fold duplicate ui/ and tests/web/ folders into pages/ and tests/…">Normalize folders</button>'
+      + '<button type="button" class="btn fw-new" id="fwTreeNew">＋ New</button></span></div>'
       + '<input class="fw-search" id="fwTreeQ" type="search" placeholder="Search files" value="' + esc(FW.treeQ || "") + '">'
       + '<div class="fw-t" id="fwT">' + treeHtml(FW.tree) + "</div>";
   }
@@ -623,6 +626,8 @@
         if (box) { box.innerHTML = treeHtml(FW.tree); bindTreeRows(box); }
       };
     }
+    const norm = $("#fwNormBtn", tree);
+    if (norm) norm.onclick = function (e) { e.stopPropagation(); openNormalize(); };
     const neu = $("#fwTreeNew", tree);
     if (neu) neu.onclick = function (e) {
       e.stopPropagation();
@@ -872,7 +877,10 @@
     const line = side === "right" ? (FW.cursorLineR || 1) : (FW.cursorLine || 1);
     const col = side === "right" ? (FW.cursorColR || 1) : (FW.cursorCol || 1);
     const mid = isEditing(side) ? ("Ln " + line + ", Col " + col) : (visText(currentContent(path)).split("\n").length + " lines");
-    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">" + mid + "</span><span style=\"margin-left:auto\">" + esc(path) + "</span></div>";
+    const hint = isEditing(side)
+      ? "Ctrl+Space for suggestions"
+      : "Double-click a line or start typing to edit · Ctrl+Space for suggestions";
+    return '<div class="fw-stat" data-stat="' + side + '"><b>' + esc(langLabel()) + "</b><span>UTF-8</span><span class=\"fw-lncol\">" + mid + "</span><span class=\"fw-edithint\">" + hint + "</span><span style=\"margin-left:auto\">" + esc(path) + "</span></div>";
   }
 
   function codeHtml(path, side) {
@@ -911,7 +919,7 @@
       return '<tr><td class="fw-cln">' + (i + 1) + '</td><td class="fw-ccode">' + (html || "") + "</td></tr>";
     }).join("");
     return '<div class="fw-codeview" data-theme="' + theme + '" data-ed="' + side + '" data-path="' + esc(path) + '">' + bar
-      + '<div class="fw-cscroll"><table class="fw-ctable" aria-label="File contents"><tbody>' + rows + "</tbody></table></div></div>";
+      + '<div class="fw-cscroll" tabindex="0"><table class="fw-ctable" aria-label="File contents"><tbody>' + rows + "</tbody></table></div></div>";
   }
 
   function highlightCode(raw, ext) {
@@ -1374,7 +1382,7 @@
     };
     if (cact("save")) cact("save").onclick = function () { saveCurrent(side); };
     const ta = view.querySelector("textarea.fw-edit-ta");
-    if (!ta) return;
+    if (!ta) { bindReadOnlyCode(view, side, path); return; }
     const gut = view.querySelector(".fw-ln");
     function caretPos() {
       const v = ta.value;
@@ -1427,6 +1435,67 @@
       ro.observe(ta);
     }
     syncScroll();
+    const pend = FW.pendingEdit;
+    if (pend && pend.side === side) {
+      FW.pendingEdit = null;
+      const line = Math.max(1, pend.line || 1);
+      const lines = String(ta.value || "").split("\n");
+      let pos = 0;
+      for (let i = 0; i < line - 1 && i < lines.length; i++) pos += lines[i].length + 1;
+      const lineText = lines[line - 1] || "";
+      const col = Math.max(0, Math.min(pend.col || 0, lineText.length));
+      pos += col;
+      if (pend.insert) {
+        ta.value = ta.value.slice(0, pos) + pend.insert + ta.value.slice(pos);
+        pos += String(pend.insert).length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      } else {
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        caretPos();
+        renderGutter();
+        syncScroll();
+      }
+    }
+  }
+
+  function bindReadOnlyCode(view, side, path) {
+    if (!view) return;
+    const scroll = view.querySelector(".fw-cscroll") || view;
+    const rows = view.querySelectorAll(".fw-ctable tr");
+    rows.forEach(function (tr, i) {
+      tr.addEventListener("click", function () {
+        if (side === "right") FW.clickLineR = i + 1;
+        else FW.clickLine = i + 1;
+        if (scroll && scroll.focus) scroll.focus();
+      });
+      tr.addEventListener("dblclick", function (e) {
+        e.preventDefault();
+        enterEditAt(side, path, i + 1, 0, "");
+      });
+    });
+    function onKey(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "Tab" || e.key === "Escape" || e.key === "Enter" || e.key === "Backspace") return;
+      if (e.key.length !== 1) return;
+      const tag = (e.target && e.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return;
+      e.preventDefault();
+      const line = side === "right" ? (FW.clickLineR || 1) : (FW.clickLine || 1);
+      enterEditAt(side, path, line, 0, e.key);
+    }
+    scroll.addEventListener("keydown", onKey);
+  }
+
+  function enterEditAt(side, path, line, col, insert) {
+    FW.pendingEdit = { side: side, line: line || 1, col: col || 0, insert: insert || "" };
+    if (side === "right") { FW.cursorLineR = line || 1; FW.cursorColR = (col || 0) + 1; }
+    else { FW.cursorLine = line || 1; FW.cursorCol = (col || 0) + 1; }
+    setEditing(side, true);
+    const host = $("#fwHost");
+    if (host) paintProject(host);
   }
 
   function paneOriginal(path, side) {
@@ -1834,7 +1903,7 @@
       const mine = c.current != null ? c.current : existingContent(c.path);
       const edited = c.edited ? ' <span class="fw-mk e">edited</span>' : "";
       return '<tr><td><input type="checkbox" data-inc="' + i + '"' + (c.include !== false ? " checked" : "") + "></td>"
-        + "<td>" + esc(c.path) + ' <span class="fw-kind ' + kind + '">' + esc(kind.charAt(0).toUpperCase() + kind.slice(1)) + "</span>" + edited + "</td>"
+        + "<td>" + esc(c.path) + (c.from_path ? ' <span class="sub">from ' + esc(c.from_path) + "</span>" : "") + ' <span class="fw-kind ' + kind + '">' + esc(kind.charAt(0).toUpperCase() + kind.slice(1)) + "</span>" + edited + "</td>"
         + "<td>" + esc((c.tc_ids || []).join(", ")) + "</td>"
         + '<td><button type="button" class="btn g sm" data-diff="' + i + '">' + (c.show ? "Hide changes" : (regen ? "Show AI vs mine" : "Show changes")) + "</button></td></tr>"
         + (c.show ? '<tr><td colspan="4">' + diffHtml(mine, c.content || "") + "</td></tr>" : "");
@@ -1913,6 +1982,104 @@
       FW.symbols = null;
       await reloadTree();
       if (FW.wiz && FW.wiz.mode === "regen") closeWiz();
+    } catch (e) { toast(e.message || String(e)); }
+  }
+
+  async function openNormalize() {
+    try {
+      await ensureFramework();
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/normalize");
+      const items = j.items || [];
+      if (!items.length) {
+        toast(j.message || "Folders already match the project layout.");
+        return;
+      }
+      FW.norm = { items: items.map(function (it) { return Object.assign({}, it); }) };
+      paintNormalize();
+    } catch (e) { toast(e.message || String(e)); }
+  }
+  function paintNormalize() {
+    let ov = $("#fwWiz");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.className = "fw-wiz"; ov.id = "fwWiz";
+      ov.innerHTML = '<div class="box"><div class="hd"><h2>Normalize folders</h2><span style="flex:1"></span></div><div class="bd" id="fwWizBd"></div><div class="ft" id="fwWizFt"></div></div>';
+      document.body.appendChild(ov);
+    }
+    const h2 = $("#fwWiz h2"); if (h2) h2.textContent = "Normalize folders";
+    const items = (FW.norm && FW.norm.items) || [];
+    const rows = items.map(function (it, i) {
+      const st = it.status === "differs" ? "differs" : (it.status === "same" ? "same" : "new");
+      const label = it.action === "conflict" ? "Contents differ" : (it.action === "reuse" ? "Same content" : "Move");
+      let res = "";
+      if (it.action === "conflict") {
+        const r = it.resolution || "keep";
+        res = '<div class="fw-norm-res">'
+          + '<label><input type="radio" name="nres' + i + '" value="keep"' + (r === "keep" ? " checked" : "") + '> Keep mine</label>'
+          + '<label><input type="radio" name="nres' + i + '" value="take"' + (r === "take" ? " checked" : "") + '> Take incoming</label>'
+          + '<label><input type="radio" name="nres' + i + '" value="merge"' + (r === "merge" ? " checked" : "") + '> Merge</label></div>';
+        if (r === "merge") {
+          const draft = it.merged_content != null ? it.merged_content : defaultMergeDraft(it);
+          res += '<textarea class="fw-norm-merge" data-nmerge="' + i + '">' + esc(draft) + "</textarea>";
+        }
+        res += '<button type="button" class="btn g sm" data-ndiff="' + i + '">' + (it.show ? "Hide changes" : "Show changes") + "</button>";
+      }
+      return '<tr><td><input type="checkbox" data-ninc="' + i + '"' + (it.include !== false ? " checked" : "") + "></td>"
+        + "<td>" + esc(it.from) + ' → <b>' + esc(it.to) + "</b> <span class=\"fw-kind " + (st === "differs" ? "changed" : (st === "same" ? "reused" : "new")) + '">' + esc(label) + "</span>"
+        + ' <span class="sub">' + esc(it.kind || "") + "</span></td><td>" + res + "</td></tr>"
+        + (it.show ? '<tr><td colspan="3">' + diffHtml(it.to_content || "", it.from_content || "") + "</td></tr>" : "");
+    }).join("") || '<tr><td colspan="3">Nothing to normalize.</td></tr>';
+    $("#fwWizBd").innerHTML = '<p class="sub" style="margin-top:0">These files sit in a duplicate tree (<code>ui/</code> or <code>tests/web/</code>). Confirm each move into the existing <code>pages/</code> and <code>tests/&lt;area&gt;/</code> folders. Nothing is deleted until you apply. When contents differ, choose Keep mine, Take incoming, or Merge.</p>'
+      + '<table class="fw-chg"><thead><tr><th style="width:36px"></th><th>Move</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>";
+    $("#fwWizFt").innerHTML = '<button type="button" class="btn g" id="fwWizX">Cancel</button>'
+      + '<button type="button" class="btn" id="fwNormApply">Apply selected</button>';
+    if ($("#fwWizX")) $("#fwWizX").onclick = closeWiz;
+    $$("[data-ninc]").forEach(function (ck) { ck.onchange = function () { FW.norm.items[+ck.dataset.ninc].include = ck.checked; }; });
+    $$("[data-ndiff]").forEach(function (b) { b.onclick = function () { FW.norm.items[+b.dataset.ndiff].show = !FW.norm.items[+b.dataset.ndiff].show; paintNormalize(); }; });
+    $$("input[name^=nres]").forEach(function (r) {
+      r.onchange = function () {
+        const i = +r.name.replace("nres", "");
+        FW.norm.items[i].resolution = r.value;
+        if (r.value === "merge" && FW.norm.items[i].merged_content == null) FW.norm.items[i].merged_content = defaultMergeDraft(FW.norm.items[i]);
+        paintNormalize();
+      };
+    });
+    $$("[data-nmerge]").forEach(function (ta) {
+      ta.oninput = function () { FW.norm.items[+ta.dataset.nmerge].merged_content = ta.value; };
+    });
+    if ($("#fwNormApply")) $("#fwNormApply").onclick = applyNormalize;
+  }
+  function defaultMergeDraft(it) {
+    const mine = it.to_content || "";
+    const incoming = it.from_content || "";
+    return "# --- current (keep) ---\\n" + mine + (mine && !/\\n$/.test(mine) ? "\\n" : "") + "\\n# --- incoming ---\\n" + incoming;
+  }
+  async function applyNormalize() {
+    const items = ((FW.norm && FW.norm.items) || []).filter(function (it) { return it.include !== false; });
+    if (!items.length) { toast("Select at least one move to apply."); return; }
+    const missing = items.filter(function (it) { return it.action === "conflict" && it.resolution === "merge" && !String(it.merged_content || "").trim(); });
+    if (missing.length) { toast("Add merged content for each Merge row, or choose Keep mine / Take incoming."); return; }
+    try {
+      const payload = {
+        confirm: true,
+        author: "You",
+        items: items.map(function (it) {
+          return {
+            from: it.from,
+            to: it.to,
+            include: true,
+            resolution: it.resolution || (it.action === "conflict" ? "keep" : "take"),
+            merged_content: it.merged_content || "",
+          };
+        }),
+      };
+      const j = await fwApi("/frameworks/" + encodeURIComponent(FW.fid) + "/normalize", { method: "POST", body: payload });
+      toast("Folder layout updated (" + ((j.applied || []).length) + " move" + ((j.applied || []).length === 1 ? "" : "s") + ").");
+      closeWiz();
+      FW.norm = null;
+      FW.symbols = null;
+      if (j.tree) FW.tree = j.tree;
+      await reloadTree();
     } catch (e) { toast(e.message || String(e)); }
   }
 
@@ -2561,18 +2728,24 @@
     }).join("");
     const ai = withAi ? '<div class="row ai" data-ai="1"><span class="name">✨ Ask AI for a suggestion</span><span class="kind">AI</span></div>' : "";
     box.innerHTML = rows + ai;
-    const parent = view || ta.closest(".fw-codeview") || ta.parentElement;
-    if (parent && getComputedStyle(parent).position === "static") parent.style.position = "relative";
-    (parent || document.body).appendChild(box);
-    const c = caretOffsetInView(ta, parent);
-    const top = Math.min((c.top || 24) + 18, (parent.clientHeight || 240) - 8);
+    document.body.appendChild(box);
+    const c = caretViewport(ta);
     let left = c.left || 48;
+    let top = (c.bottom || ((c.top || 24) + 18)) + 4;
+    box.style.position = "fixed";
+    box.style.zIndex = "120";
     box.style.top = top + "px";
     box.style.left = left + "px";
     const br = box.getBoundingClientRect();
-    const pr = parent.getBoundingClientRect();
-    if (br.right > pr.right - 8) box.style.left = Math.max(8, pr.width - br.width - 8) + "px";
-    if (br.bottom > pr.bottom - 4 && top > 120) box.style.top = Math.max(8, (c.top || 24) - br.height - 6) + "px";
+    if (top + br.height > window.innerHeight - 8) {
+      top = Math.max(8, (c.top || 24) - br.height - 4);
+      box.style.top = top + "px";
+    }
+    if (left + br.width > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - br.width - 8);
+      box.style.left = left + "px";
+    }
+    if (left < 8) box.style.left = "8px";
     let sel = 0;
     const all = box.querySelectorAll(".row");
     function paintSel() {
@@ -2620,6 +2793,16 @@
     const left = (sRect.left - dRect.left) - ta.scrollLeft + (taRect.left - pRect.left);
     div.remove();
     return { top: top, left: left };
+  }
+
+  function caretViewport(ta) {
+    const rel = caretOffsetInView(ta, ta);
+    const taRect = ta.getBoundingClientRect();
+    const st = window.getComputedStyle(ta);
+    const lh = parseFloat(st.lineHeight) || 20;
+    const top = taRect.top + (rel.top || 0);
+    const left = taRect.left + (rel.left || 0);
+    return { top: top, left: left, bottom: top + lh, height: lh };
   }
 
   function insertCompletion(ta, word, text) {
@@ -3124,12 +3307,24 @@
     bindTermChrome(root);
     scrollTermLog();
   }
+  function termWinBtns(opts) {
+    const t = ensureTermState();
+    const maxed = !!t.maximized && t.dock === "float";
+    const maxLab = maxed ? "Restore" : "Maximize";
+    const maxIcon = maxed ? "❐" : "□";
+    return '<span class="fw-term-win">'
+      + '<button type="button" class="fw-term-ctrl" data-tact="min" title="Minimize the terminal to a status bar">– Minimize</button>'
+      + '<button type="button" class="fw-term-ctrl" data-tact="max" title="' + maxLab + ' the terminal">' + maxIcon + " " + maxLab + "</button>"
+      + '<button type="button" class="fw-term-ctrl" data-tact="close" title="Close the terminal">✕ Close</button>'
+      + ((opts && opts.gear) ? '<button type="button" class="fw-term-gear" data-tact="settings" title="Terminal settings">⚙</button>' : "")
+      + "</span>";
+  }
   function termTitleHtml(tab) {
     const t = ensureTermState();
     const live = tab && tab.status === "running";
     return '<div class="fw-term-title" id="fwTermTitle"><span class="ttl">' + (live ? '<span class="dot"></span>' : "") + " Terminal · " + esc((tab && tab.title) || "Run") + "</span>"
       + '<span class="meta">' + esc((tab && tab.runId) || "") + (t.envName ? " · " + esc(t.envName) : "") + (t.browser ? " · " + esc(t.browser) : "") + "</span>"
-      + '<span class="fw-term-win"><button type="button" title="Minimize" data-tact="min">–</button><button type="button" title="Maximize" data-tact="max">□</button><button type="button" title="Close" data-tact="close">✕</button></span></div>';
+      + termWinBtns() + "</div>";
   }
   function termTabsHtml() {
     const t = ensureTermState();
@@ -3138,7 +3333,8 @@
         + (tab.status === "running" ? '<span class="dot"></span>' : "") + esc(tab.title) + "</button>";
     }).join("") + '<button type="button" class="plus" data-tact="newtab" title="New terminal">＋</button><span class="sp"></span>'
       + '<button type="button" class="plus" data-tact="split" title="Split view">' + (t.split ? "Unsplit" : "Split") + "</button>"
-      + '<span class="fw-term-win"><button type="button" class="fw-term-gear" data-tact="settings" title="Terminal settings">⚙</button></span></div>';
+      + (t.dock === "float" ? '<span class="fw-term-win"><button type="button" class="fw-term-gear" data-tact="settings" title="Terminal settings">⚙</button></span>' : termWinBtns({ gear: true }))
+      + "</div>";
   }
   function termQuickActsHtml() {
     const t = ensureTermState();
@@ -3177,6 +3373,7 @@
       + '<button type="button" class="btn' + (t.timestamps ? " on" : "") + '" data-tact="ts">Timestamps</button>'
       + '<button type="button" class="btn" data-tact="copy">Copy log</button>'
       + '<button type="button" class="btn" data-tact="download">Download</button>'
+      + '<button type="button" class="btn' + (t.histOpen ? " on" : "") + '" data-tact="hist" title="Show or hide command history">History</button>'
       + '<span style="flex:1"></span>'
       + '<button type="button" class="btn r" data-tact="stop">■ Stop <kbd style="margin-left:4px;border-color:#ffb4b0;color:#fff">Ctrl+C</kbd></button>'
       + "</div>";
@@ -3245,7 +3442,8 @@
     return '<div class="fw-term-statbar"><span class="dot" style="' + (live ? "" : "background:#8b949e;box-shadow:none") + '"></span>'
       + '<span class="run">' + esc(label) + "</span>"
       + '<span class="meta">' + esc((tab && tab.runId) || "") + (t.envName ? " · " + esc(t.envName) : "") + (t.browser ? " · " + esc(t.browser) + (t.headed ? " headed" : " headless") : "") + "</span>"
-      + '<button type="button" class="btn" data-tact="restore">Restore</button>'
+      + '<button type="button" class="btn" data-tact="restore" title="Restore the terminal">Restore</button>'
+      + '<button type="button" class="btn" data-tact="close" title="Close the terminal">✕ Close</button>'
       + (live ? '<button type="button" class="btn" data-tact="stop">■ Stop</button>' : "") + "</div>";
   }
   function elapsedTerm(ts) {
@@ -3341,6 +3539,7 @@
     if (act === "max") { t.maximized = !t.maximized; t.collapsed = false; if (t.dock !== "float") t.dock = "float"; mountTerm(); return; }
     if (act === "close") { toggleTerm(false); return; }
     if (act === "restore") { t.collapsed = false; t.open = true; mountTerm(); return; }
+    if (act === "hist") { t.histOpen = !t.histOpen; paintTerm(); return; }
     if (act === "find") { t.findOpen = true; paintTerm(); return; }
     if (act === "wrap") { t.wrap = !t.wrap; saveTermLayout(); paintTerm(); return; }
     if (act === "ts") { t.timestamps = !t.timestamps; saveTermLayout(); paintTerm(); return; }
@@ -3387,7 +3586,6 @@
       const t = ensureTermState();
       if (!/-m\s/.test(t.cmdDraft || "")) {
         t.cmdDraft = "pytest -m ui";
-        t.histOpen = true;
         paintTerm();
         const inp = $("#fwTermCmd"); if (inp) { inp.focus(); inp.setSelectionRange(10, inp.value.length); }
         toast("Add a -m marker (for example ui) and press Enter, or pick a favorite.");
@@ -3413,7 +3611,6 @@
     tab.summary = null;
     tab.startedAt = Date.now();
     t.cmdDraft = cmd;
-    t.histOpen = true;
     t.hist = [{ cmd: cmd, when: istStamp() }].concat((t.hist || []).filter(function (h) { return h.cmd !== cmd; })).slice(0, 30);
     t.histIdx = -1;
     saveTermLayout();
