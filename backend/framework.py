@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from . import script_options as so
 from . import services, token_usage
+from . import framework_layout as fl
 from .config import env
 from .db.engine import session_scope
 from .db.models import (
@@ -900,6 +901,62 @@ def _parse_py_symbols(path: str, content: str) -> List[Dict[str, Any]]:
     return out
 
 
+
+def _delete_fw_path(session: Session, fid: str, path: str) -> None:
+    """Delete a file or folder row and its versions. Caller must confirm."""
+    path = safe_path(path)
+    row = _file_row(session, fid, path)
+    if not row:
+        return
+    prefix = path
+    rows = (
+        session.query(FrameworkFile)
+        .filter(FrameworkFile.framework_id == fid, FrameworkFile.path.startswith(prefix))
+        .all()
+    )
+    ids = [r.id for r in rows]
+    if ids:
+        session.query(FrameworkFileVersion).filter(FrameworkFileVersion.file_id.in_(ids)).delete(synchronize_session=False)
+    for r in rows:
+        session.delete(r)
+    session.flush()
+
+
+def _repoint_maps(session: Session, fid: str, src: str, dest: str) -> None:
+    if not src or src == dest:
+        return
+    now = now_ist()
+    # Test-case script map: unique on (tc_id, framework, path)
+    rows = (
+        session.query(TcScriptMap)
+        .filter(TcScriptMap.framework_id == fid, TcScriptMap.file_path == src)
+        .all()
+    )
+    for r in rows:
+        clash = (
+            session.query(TcScriptMap)
+            .filter(
+                TcScriptMap.tc_id == r.tc_id,
+                TcScriptMap.framework_id == fid,
+                TcScriptMap.file_path == dest,
+            )
+            .one_or_none()
+        )
+        if clash and clash.id != r.id:
+            session.delete(r)
+        else:
+            r.file_path = dest
+            r.updated = now
+    maps = (
+        session.query(FrameworkMapping)
+        .filter(FrameworkMapping.framework_id == fid, FrameworkMapping.file_path == src)
+        .all()
+    )
+    for r in maps:
+        r.file_path = dest
+    session.flush()
+
+
 def attach(parent: APIRouter, current) -> None:
 
     """Register framework routes on the existing /api/automation router."""
@@ -1104,15 +1161,8 @@ def attach(parent: APIRouter, current) -> None:
                 .all()
             )
             existing = {r.path: (r.content or "") for r in existing_rows}
-            shared = {p: c for p, c in existing.items() if p.startswith(("pages/", "fixtures/", "config/", "utils/", "src/", "resources/", "keywords/"))}
             fw_lang, fw_fw, fw_types = fw.language, fw.framework, list(fw.types or [])
-        blob = (
-            "The project already has this folder structure. Reuse existing page objects, "
-            "fixtures, and config. Only add new tests and update shared files when a new method is required.\n\n"
-            "Existing shared files:\n"
-        )
-        for p, c in list(shared.items())[:30]:
-            blob += f"\n--- {p} ---\n{c[:4000]}\n"
+        blob = fl.framework_tree_context(existing, fw_types)
         payload = dict(data or {})
         payload["additional_context"] = (payload.get("additional_context") or "") + "\n\n" + blob
         if not payload.get("language"):
@@ -1123,7 +1173,12 @@ def attach(parent: APIRouter, current) -> None:
             payload["types"] = fw_types
         result = auto.generate_impl(payload, sess)
         incoming = result.get("files_map") or {f["path"]: f["content"] for f in (result.get("files") or [])}
-        changes = classify_files(existing, incoming, result.get("mapping") or [])
+        incoming, mapping, sources = fl.remap_files_map(existing, incoming, result.get("mapping") or [], fw_types)
+        result["mapping"] = mapping
+        result["files_map"] = incoming
+        result["files"] = [{"path": p, "content": c} for p, c in incoming.items()]
+        changes = classify_files(existing, incoming, mapping)
+        fl.attach_remap_meta(changes, sources)
         with session_scope() as session:
             _fw_or_404(session, fid)
             baselines = _baselines(session, fid)
@@ -1143,6 +1198,28 @@ def attach(parent: APIRouter, current) -> None:
         author = str(data.get("author") or "AI")
         with session_scope() as session:
             fw = _fw_or_404(session, fid)
+            existing = {
+                r.path: (r.content or "")
+                for r in session.query(FrameworkFile).filter(
+                    FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False)
+                )
+            }
+            fw_types = list(fw.types or [])
+            for ch in changes:
+                raw = str(ch.get("path") or "")
+                if not raw:
+                    continue
+                try:
+                    ch["path"] = fl.remap_path(safe_path(raw), existing, fw_types)
+                except ServiceError:
+                    continue
+            for m in data.get("mapping") or []:
+                for key in ("file", "path"):
+                    if m.get(key):
+                        try:
+                            m[key] = fl.remap_path(safe_path(str(m.get(key))), existing, fw_types)
+                        except ServiceError:
+                            pass
             applied = []
             seen_map = set()
             def _map_once(tid, p):
@@ -1396,7 +1473,7 @@ def attach(parent: APIRouter, current) -> None:
         if not sid:
             raise ServiceError("script_id is required.")
         with session_scope() as session:
-            _fw_or_404(session, fid)
+            fw = _fw_or_404(session, fid)
             script = session.get(AutomationScript, sid)
             if not script:
                 raise ServiceError("Script not found.", 404)
@@ -1408,7 +1485,10 @@ def attach(parent: APIRouter, current) -> None:
             existing = {r.path: (r.content or "") for r in existing_rows}
             incoming = _files_dict(script.files)
             mapping = list(script.mapping or [])
+            fw_types = list(fw.types or [])
+            incoming, mapping, sources = fl.remap_files_map(existing, incoming, mapping, fw_types)
             changes = classify_files(existing, incoming, mapping)
+            fl.attach_remap_meta(changes, sources)
             linked = list(script.linked_ids or [])
             if linked:
                 for ch in changes:
@@ -1422,6 +1502,138 @@ def attach(parent: APIRouter, current) -> None:
                 "linked_ids": linked,
                 "mapping": mapping,
                 "changes": changes,
+            }
+
+
+    @parent.get("/frameworks/{fid}/normalize")
+    def preview_normalize(fid: str):
+        """Propose moves/merges to fold duplicate ui/ and tests/web/ trees into the project layout."""
+        with session_scope() as session:
+            _fw_or_404(session, fid)
+            existing = {
+                r.path: (r.content or "")
+                for r in session.query(FrameworkFile).filter(
+                    FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False)
+                )
+            }
+            items = fl.normalize_proposals(existing)
+            return {
+                "ok": True,
+                "framework_id": fid,
+                "count": len(items),
+                "items": items,
+                "message": (
+                    "No duplicate folders to fold into pages/ and tests/<area>/."
+                    if not items else
+                    "Review each move. Nothing is changed until you confirm."
+                ),
+            }
+
+    @parent.post("/frameworks/{fid}/normalize")
+    def apply_normalize(fid: str, data: Dict[str, Any] = Body(...)):
+        """Apply confirmed Normalize folders items. Nothing is deleted without confirm=true."""
+        if not data.get("confirm"):
+            raise ServiceError("Confirm the folder moves before applying.")
+        items = data.get("items") or []
+        author = str(data.get("author") or "You")
+        with session_scope() as session:
+            fw = _fw_or_404(session, fid)
+            existing = {
+                r.path: (r.content or "")
+                for r in session.query(FrameworkFile).filter(
+                    FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False)
+                )
+            }
+            # Recompute proposals so clients cannot invent arbitrary deletes.
+            allowed = {it["from"]: it for it in fl.normalize_proposals(existing)}
+            applied = []
+            moves: List[tuple] = []
+            sources: List[str] = []
+            for raw in items:
+                if raw.get("include") is False:
+                    continue
+                src = str(raw.get("from") or raw.get("src") or "").strip()
+                if src not in allowed:
+                    raise ServiceError(f"Not a proposed move: {src or '(empty path)'}")
+                prop = allowed[src]
+                dest = str(raw.get("to") or prop["to"])
+                if dest != prop["to"]:
+                    # Only allow the server-computed destination.
+                    dest = prop["to"]
+                try:
+                    src_p = safe_path(src, allow_dir=False)
+                    dest_p = safe_path(dest, allow_dir=False)
+                except ServiceError:
+                    raise
+                action = prop["action"]
+                resolution = str(raw.get("resolution") or prop.get("resolution") or "keep").lower()
+                if action == "conflict" and resolution not in ("keep", "take", "merge"):
+                    resolution = "keep"
+                if action == "move":
+                    resolution = "take"
+                if action == "reuse":
+                    # Identical contents: keep dest, drop the duplicate source.
+                    resolution = "keep"
+                content = prop.get("from_content") or ""
+                if resolution == "merge":
+                    content = str(raw.get("merged_content") or raw.get("content") or "")
+                    if not content:
+                        raise ServiceError(f"Merged content is required for {src_p} → {dest_p}.")
+                elif resolution == "keep":
+                    content = existing.get(dest_p, existing.get(src_p, ""))
+                else:  # take
+                    content = prop.get("from_content") or existing.get(src_p, "")
+                if resolution != "keep" or dest_p not in existing:
+                    _upsert_file(session, fid, dest_p, content, author=author, note="Normalized folders")
+                _repoint_maps(session, fid, src_p, dest_p)
+                moves.append((src_p, dest_p))
+                if src_p != dest_p:
+                    sources.append(src_p)
+                applied.append({"from": src_p, "to": dest_p, "resolution": resolution, "action": action})
+
+            if not applied:
+                raise ServiceError("No folder moves were selected.")
+
+            remaining_old = [p for p in existing if p not in sources]
+            pairs = fl.import_pairs(moves, remaining_old)
+            if pairs:
+                rows = (
+                    session.query(FrameworkFile)
+                    .filter(FrameworkFile.framework_id == fid, FrameworkFile.is_dir.is_(False))
+                    .all()
+                )
+                for row in rows:
+                    if not (row.path or "").endswith(".py"):
+                        continue
+                    if row.path in sources:
+                        continue
+                    new_text = fl.rewrite_imports(row.content or "", pairs)
+                    if new_text != (row.content or ""):
+                        _upsert_file(session, fid, row.path, new_text, author=author, note="Updated imports after normalize")
+
+            for src_p in sources:
+                # Do not delete a path that is also a destination of another move.
+                if any(d == src_p for _s, d in moves):
+                    continue
+                _delete_fw_path(session, fid, src_p)
+
+            leftover_rows = (
+                session.query(FrameworkFile)
+                .filter(FrameworkFile.framework_id == fid)
+                .all()
+            )
+            leftover_paths = [r.path for r in leftover_rows]
+            for d in fl.empty_leftover_dirs(leftover_paths, sources):
+                _delete_fw_path(session, fid, d)
+
+            fw.updated = now_ist()
+            session.commit()
+            return {
+                "ok": True,
+                "applied": applied,
+                "imports_updated": bool(pairs),
+                "removed_dirs": fl.empty_leftover_dirs(leftover_paths, sources),
+                "tree": _tree_payload(session, fid),
             }
 
     @parent.post("/update-script")
