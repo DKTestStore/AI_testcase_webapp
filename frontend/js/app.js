@@ -255,7 +255,7 @@ async function viewGenerate(v) {
   const r = S.run; const src = genSrc(); const custom = src === "custom";
   const selModel = r.model || (typeof defaultProvider === "function" ? defaultProvider() : "gemini");
   const L = genLabel(src); const lbl = custom ? "Custom" : "Default";
-  v.innerHTML = `<h1>Generate Test Cases</h1><div class="sub">${r.story_id ? "Story " + esc(r.story_id) + " · " : ""}${r.source === "jira" ? "Jira input" : "Local input"} · ${r.feature_text.length.toLocaleString()} characters of requirements loaded</div>
+  v.innerHTML = `<h1>Generate Test Cases</h1><div class="sub">${r.story_id ? "Story " + esc(r.story_id) + " · " : ""}${r.source === "jira" ? "Jira input" : r.source === "screenshot" ? "Screenshot + Notes" : "Local input"} · ${r.feature_text.length.toLocaleString()} characters of requirements loaded</div>
   <div class="row"><div style="flex:1.5"><div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">
       <div><label style="margin-top:0">Prompt source</label><div class="seg" id="promptSeg"><button data-p="default" class="${src === "default" ? "a" : ""}">Default prompt</button><button data-p="templates" class="${src === "templates" ? "a" : ""}">Templates</button><button data-p="custom" class="${custom ? "a" : ""}">Custom prompt</button></div></div>
@@ -309,9 +309,11 @@ async function viewGenerate(v) {
   $("#runRev").onchange = (e) => { S.run.run_reviewer = e.target.checked; if (window._genEstRefresh) _genEstRefresh(); };
   renderPromptArea(custom, src);
   loadTokens();
+  if (typeof ssEnhanceGenerate === "function") ssEnhanceGenerate(v);
   $("#genBtn").onclick = () => {
     const n = (S.run.test_cases || []).length;
-    if (n && (S.localDirty || S.run.dirty) && !confirm(`Regenerate? This replaces the current ${n} test cases (including unsaved review edits).`)) return;
+    const skip = typeof ssSkipReplaceConfirm === "function" && ssSkipReplaceConfirm();
+    if (!skip && n && (S.localDirty || S.run.dirty) && !confirm(`Regenerate? This replaces the current ${n} test cases (including unsaved review edits).`)) return;
     genRun();
   };
   const genRun = () => guarded($("#genBtn"), async () => {
@@ -320,7 +322,9 @@ async function viewGenerate(v) {
     st.innerHTML = `<div style="margin-top:12px"><div class="bar ind"><div></div></div><div class="sub" style="margin:6px 0 0" id="elapsed">Generating… 0s</div></div>`;
     const timer = setInterval(() => { const e = $("#elapsed"); if (e) e.textContent = `Generating${$("#model") && $("#model").value === "ollama" ? " with Ollama (local), this can take a few minutes" : ""}${S.run.run_reviewer ? " + reviewing" : ""}… ${Math.round((Date.now() - t0) / 1000)}s`; }, 1000);
     try {
-      const j = await api("/api/generate", { method: "POST", body: { model: $("#model").value, model_name: ($("#genModel") && $("#genModel").value) || "", prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] } });
+      const body = { model: $("#model").value, model_name: ($("#genModel") && $("#genModel").value) || "", prompt_mode: S.run.prompt_mode, custom_prompt: S.run.custom_prompt, run_reviewer: $("#runRev").checked, template_ids: src === "templates" ? genTplIds() : ["default"] };
+      if (typeof ssGenerateBody === "function") Object.assign(body, ssGenerateBody());
+      const j = await api("/api/generate", { method: "POST", body });
       S.localDirty = false; S.cases = []; if (typeof RV !== "undefined") { RV.open.clear(); RV.sel.clear(); RV.page = 0; }
       let msg = `<div class="note">✅ Generated <b>${j.count}</b> test cases in ${Math.round((Date.now() - t0) / 1000)}s.${j.template_appended ? " (Required output template was appended to your custom prompt.)" : ""}</div>`;
       if (j.review) msg += j.review.error ? `<div class="warn">AI Reviewer failed: ${esc(j.review.error)}</div>` : `<div class="note">🤖 AI Reviewer produced ${j.review.test_cases.length} test cases — compare and apply them on the Review step.</div>`;
@@ -894,7 +898,7 @@ async function viewSettings(v) {
 
 // ------------------------------------------------------------------ modal / logout / new run
 function modal(html) { $("#modal").innerHTML = html; $("#modalBg").classList.add("open"); }
-function closeModal() { const m = $("#modal"); if (m) m.classList.remove("wide", "as-wide"); $("#modalBg").classList.remove("open"); }
+function closeModal() { const m = $("#modal"); if (m) m.classList.remove("wide", "as-wide", "ss-lb", "ss-choice"); $("#modalBg").classList.remove("open"); }
 function unsavedSummary() {
   const r = S.run || {}; const parts = [];
   if (S.localDirty) parts.push("unsaved edits in the Review table");
@@ -917,7 +921,7 @@ function newRunDialog() {
     ${u.length ? `<div class="warn" style="margin-bottom:18px">⚠ You have ${u.map(esc).join(", ")}.</div>` : ""}
     <div style="text-align:right"><button class="btn g" id="mCancel">Cancel</button> <button class="btn" id="mOk">Start new run</button></div>`);
   $("#mCancel").onclick = closeModal;
-  $("#mOk").onclick = () => guarded($("#mOk"), async () => { await api("/api/run/new", { method: "POST" }); Object.assign(S, { localDirty: false, cases: [], inputMode: null, localText: "", localFile: null, payloadPreview: null, qtab: "upload" }); closeModal(); go("input"); if (window.refreshHistoryCount) refreshHistoryCount(); });
+  $("#mOk").onclick = () => guarded($("#mOk"), async () => { await api("/api/run/new", { method: "POST" }); Object.assign(S, { localDirty: false, cases: [], inputMode: null, localText: "", localFile: null, payloadPreview: null, qtab: "upload" }); if (typeof ssReset === "function") ssReset(); closeModal(); go("input"); if (window.refreshHistoryCount) refreshHistoryCount(); });
 }
 
 // ------------------------------------------------------------------ boot

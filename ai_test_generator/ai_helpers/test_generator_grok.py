@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -47,15 +47,17 @@ def _usage_from(resp) -> Dict[str, Any]:
 
 
 def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
-             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None,
+             images: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, Dict[str, Any]]:
     model = (model_name or "").strip() or _model()
     if not model:
         raise ProviderError("GROK_MODEL is not set. Enter a model ID in Settings (from your xAI console).")
     print(f"Generating with Grok (model={model}, host={XAI_BASE})... please wait.\n")
+    from .vision_content import openai_responses_input
     kwargs: Dict[str, Any] = {
         "model": model,
         "instructions": system_prompt or None,
-        "input": user_content,
+        "input": openai_responses_input(user_content, images),
         "temperature": temperature,
     }
     if max_output_tokens:

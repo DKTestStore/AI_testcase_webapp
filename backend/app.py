@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import config  # noqa: F401  (sys.path + .env)
-from . import excel_io, history_store, parsing, services, session_store, settings_store
+from . import excel_io, history_store, parsing, services, session_store, settings_store, vision
 from . import token_usage
 from . import prompt_templates as ptpl
 from .config import FRONTEND_DIR, GENERATOR_PROMPT_FILE, LOG_DIR, RUNS_DIR, env
@@ -148,7 +148,8 @@ def _tok(sess, action, usage, run=None, item=None, estimate=None):
 def _steps(run) -> Dict[str, bool]:
     """Which steps have data (used to enable Next / sidebar progress)."""
     return {
-        "input": bool(run.get("feature_text")) or bool(run.get("imported")),
+        "input": bool(run.get("feature_text")) or bool(run.get("imported"))
+                 or bool((run.get("screenshot") or {}).get("images")),
         "generate": bool(run.get("test_cases")),
         "review": bool(run.get("test_cases")),  # Bug 01: Excel download no longer required
         "qtest": bool(run.get("upload")),
@@ -311,6 +312,67 @@ def input_local(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     return {"ok": True, "run": _public_run(run)}
 
 
+@app.get("/api/vision")
+def vision_check(provider: str = "", model: str = "", sess=Depends(current)):
+    """Whether the selected provider/model is treated as vision-capable."""
+    info = vision.vision_supported(provider, model)
+    return {"ok": True, **info, "limits": {
+        "max_images": vision.MAX_IMAGES, "max_bytes_each": vision.MAX_BYTES_EACH,
+        "max_bytes_total": vision.MAX_BYTES_TOTAL}}
+
+
+@app.post("/api/input/screenshots")
+def input_screenshots(data: Dict[str, Any] = Body(...), sess=Depends(current)):
+    """Save Screenshot + Notes input (images stay on the live run only)."""
+    try:
+        images = vision.normalize_images(data.get("images") or data.get("screenshots") or [])
+    except vision.VisionError as ex:
+        raise ServiceError(ex.message, ex.status)
+    notes = str(data.get("notes") or data.get("text") or "")
+    module = str(data.get("module") or data.get("feature") or "").strip()[:200]
+    story_id = str(data.get("story_id") or "").strip()[:80]
+    focus = data.get("focus") or []
+    if not isinstance(focus, list):
+        focus = [str(focus)]
+    focus = [str(f).strip()[:40] for f in focus if str(f).strip()][:8]
+    mode = str(data.get("mode") or "").strip().lower()
+    if mode not in ("", "same", "new"):
+        mode = ""
+    if not images and not notes.strip():
+        raise ServiceError("Add at least one screenshot or some feature notes.")
+    run = _run(sess)
+    prev = run.get("screenshot") if isinstance(run.get("screenshot"), dict) else {}
+    active_id = str(data.get("active_tc_id") or prev.get("active_tc_id") or "").strip()
+    if not active_id and (run.get("test_cases") or []):
+        active_id = str((run["test_cases"][0] or {}).get("id") or "")
+    active = vision.find_case(run.get("test_cases") or [], active_id)
+    feature_text = vision.compose_feature_text(
+        notes=notes, module=module, story_id=story_id, focus=focus,
+        images=images, mode=mode, active=active)
+    if len(feature_text) > MAX_TEXT:
+        raise ServiceError(f"Feature notes are too long (max {MAX_TEXT:,} characters).")
+    generated = int(prev.get("generated_count") or 0)
+    iteration = generated + 1 if generated else 1
+    ss = {
+        "notes": notes[: vision.MAX_NOTES],
+        "module": module,
+        "story_id": story_id,
+        "focus": focus,
+        "images": images,
+        "image_count": len(images),
+        "mode": mode,
+        "active_tc_id": active_id,
+        "generated_count": generated,
+        "iteration": iteration,
+        "active_title": (active or {}).get("name") or "",
+    }
+    run.update({"source": "screenshot", "story_id": story_id, "jira": None,
+                "feature_text": feature_text, "local_filename": "", "screenshot": ss})
+    _save(sess)
+    # Public run includes images so the Input tab can restore thumbnails for this session.
+    return {"ok": True, "run": _public_run(run), "image_count": len(images), "iteration": iteration}
+
+
 @app.post("/api/input/feature_text")
 def update_feature_text(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     """Lets the user edit the 'Will be sent to generator' text for Jira input too."""
@@ -358,14 +420,23 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
                 "prompt_mode": mode, "custom_prompt": custom, "run_reviewer": run_reviewer})
     _save(sess)
 
+    images, ss_mode = _screenshot_payload(run, data)
+    if images:
+        vchk = vision.vision_supported(model, model_name)
+        if not vchk["ok"] and os_env_live():
+            raise ServiceError(
+                f"{vchk['reason']} {vchk['hint']} Selected: {model}"
+                + (f" / {model_name}" if model_name else "") + ".",
+                422)
     tpl_ids = _tpl_ids_for(run, data) if mode == "default" else None
     tpl_res = None
     if tpl_ids:   # prompt templates (additive): only when something other than the built-in Default is selected
-        tpl_res = _tpl_generate(run, model, tpl_ids)
+        tpl_res = _tpl_generate(run, model, tpl_ids, images=images)
         result, cases, appended = tpl_res["result"], tpl_res["cases"], False
     else:
         prompt, appended = services.build_prompt(mode, custom)
-        result = services.generate(model, run["feature_text"], prompt, model_name=run.get("model_name") or "")
+        result = services.generate(model, run["feature_text"], prompt,
+                                   model_name=run.get("model_name") or "", images=images)
         cases = parsing.markdown_to_test_cases(result["markdown"])
         run["prompts_used"] = [{"id": ptpl.DEFAULT_ID if mode == "default" else "custom",
                                 "name": "Default" if mode == "default" else "Custom", "prompt": prompt}]
@@ -379,13 +450,15 @@ def generate(data: Dict[str, Any] = Body(...), sess=Depends(current)):
     run["ac_list"] = _ac_list(run)
     parsing.suggest_acs(cases, run["ac_list"])
     cases = parsing.sanitize_cases(cases)
+    cases, active_id = _apply_screenshot_iteration(run, cases, ss_mode)
     run.update({"imported": False, "markdown": result["markdown"], "test_cases": cases, "dirty": True, "excel_path": "",
                 "review": None, "upload": None, "rtm": [], "last_usage": result["usage"],
                 "model_name": (result.get("usage") or {}).get("model_name") or services.model_name_for(model)})
     review_info = None
     if run_reviewer:
         try:
-            rv = services.review(model, run["feature_text"], result["markdown"], model_name=run.get("model_name") or "")
+            rv = services.review(model, run["feature_text"], result["markdown"],
+                                 model_name=run.get("model_name") or "", images=images)
             rv_cases = parsing.markdown_to_test_cases(rv["markdown"])
             review_info = {"markdown": rv["markdown"], "test_cases": rv_cases, "usage": rv["usage"]}
         except ServiceError as ex:
@@ -1771,7 +1844,47 @@ def _tpl_ids_for(run, data) -> Optional[List[str]]:
     return None if ids == [ptpl.DEFAULT_ID] else ids
 
 
-def _tpl_generate(run, model, ids) -> Dict[str, Any]:
+
+def os_env_live() -> bool:
+    """False only when ATG_MOCK_GEMINI=1 (offline tests); vision check is skipped then."""
+    import os
+    return os.environ.get("ATG_MOCK_GEMINI") != "1"
+
+
+def _screenshot_payload(run, data=None):
+    """Images already saved on the run, plus optional mode from the generate request."""
+    ss = run.get("screenshot") if isinstance(run.get("screenshot"), dict) else {}
+    images = ss.get("images") or []
+    mode = ""
+    if isinstance(data, dict):
+        mode = str(data.get("screenshot_mode") or data.get("mode") or "").strip().lower()
+    if not mode:
+        mode = str(ss.get("mode") or "").strip().lower()
+    if mode not in ("same", "new"):
+        mode = ""
+    return (images or None), mode
+
+
+def _apply_screenshot_iteration(run, cases, mode):
+    """First iteration replaces; later iterations merge (same) or append (new)."""
+    ss = run.get("screenshot") if isinstance(run.get("screenshot"), dict) else None
+    if not ss:
+        return cases, ""
+    existing = list(run.get("test_cases") or [])
+    active_id = str(ss.get("active_tc_id") or "")
+    merged, active_id = vision.apply_iteration(existing, cases, mode, active_id)
+    ss["active_tc_id"] = active_id
+    ss["generated_count"] = int(ss.get("generated_count") or 0) + 1
+    ss["iteration"] = ss["generated_count"]
+    ss["last_mode"] = mode if mode else ("first" if not existing else "new")
+    if active_id:
+        hit = vision.find_case(merged, active_id)
+        ss["active_title"] = (hit or {}).get("name") or ss.get("active_title") or ""
+    run["screenshot"] = ss
+    return merged, active_id
+
+
+def _tpl_generate(run, model, ids, images=None) -> Dict[str, Any]:
     """Call the model once per template, tag each case with its source template, merge, renumber TC IDs."""
     ctx = ptpl.context_from_run(run)
     merged, usages, mds, prompts = [], [], [], []
@@ -1783,7 +1896,8 @@ def _tpl_generate(run, model, ids) -> Dict[str, Any]:
         prompt = ptpl.fill(t, ctx)
         prompts.append({"id": tid, "name": t["name"], "prompt": prompt})
         try:
-            res = services.generate(model, run["feature_text"], prompt, tag="" if tid == ptpl.DEFAULT_ID else t["name"], model_name=run.get("model_name") or "")
+            res = services.generate(model, run["feature_text"], prompt, tag="" if tid == ptpl.DEFAULT_ID else t["name"],
+                                    model_name=run.get("model_name") or "", images=images)
         except ServiceError as ex:
             raise ServiceError(f"Template '{t['name']}': {ex.message}", ex.status)
         cs = parsing.markdown_to_test_cases(res["markdown"])

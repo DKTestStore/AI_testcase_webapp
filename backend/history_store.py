@@ -67,7 +67,7 @@ def _session() -> Iterator[Session]:
 def _source(run):
     if run.get("imported") and not run.get("markdown"):
         return "Excel upload"
-    return {"jira": "Jira", "local": "Local text", "record": "Recorded", "repo": "Repo"}.get(run.get("source") or "", "Excel upload" if run.get("imported") else "Local text")
+    return {"jira": "Jira", "local": "Local text", "record": "Recorded", "repo": "Repo", "screenshot": "Screenshot + Notes"}.get(run.get("source") or "", "Excel upload" if run.get("imported") else "Local text")
 
 
 def _title(run):
@@ -189,6 +189,12 @@ def _bump(seqmap: Dict[str, int], day: str) -> int:
 
 def _upsert_snapshot(session: Session, hid: str, run_id: str, payload: Any) -> None:
     row = session.get(HistorySnapshot, (hid, run_id))
+    # Screenshot bytes stay on the live session only — history keeps captions/notes/count.
+    try:
+        from . import vision as _vision
+        payload = _vision.strip_bytes_for_history(payload)
+    except Exception:
+        pass
     data = _jsonable(payload)
     if row is None:
         session.add(HistorySnapshot(hid=hid, run_id=run_id, payload=data))

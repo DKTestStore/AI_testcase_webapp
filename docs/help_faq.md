@@ -4,13 +4,17 @@ Short answers for the in-app Help Assistant. These notes complement the README a
 
 ## How to generate test cases
 
-1. On **Input**, fetch a **Jira Story**, paste **Local text**, or **Upload Excel** (Excel skips Generate).
+1. On **Input**, fetch a **Jira Story**, paste **Local text**, use **Screenshot + Notes**, or **Upload Excel** (Excel skips Generate).
 2. Optionally pick prompt templates on Input, or use **Record** to capture steps.
 3. On **Generate**, choose a **Provider** (Gemini, Grok, Groq, NVIDIA, Claude, OpenAI, Codex, or Ollama) and Default / Custom prompt.
 4. Optionally turn on **Also run AI Reviewer after generation**.
 5. When it finishes, continue to **Review** to edit, map acceptance criteria, generate test data, boost coverage, and export (including Gherkin).
 
 A sidebar step unlocks once the previous one has data. Configure API keys on **Settings → AI Providers**.
+
+## Screenshot + Notes
+
+On **Input**, choose **Screenshot + Notes**. Paste (`Ctrl+V`), drop, or browse screenshots, add feature notes, optional captions / module / Story ID, and focus chips, then **Continue to Generate →** (Generate itself stays on Step 2). Use a vision-capable model such as Gemini or OpenAI GPT-4o — a text-only model shows a warning and will not be sent the images silently. After you generate once, you can come back and add more: **Generate a New Test Case** creates another case, **Continue as Same Test** appends steps to the active test (for example TC-001). The Review screen is unchanged. History stores captions and notes, not the screenshot files.
 
 ## Connect Jira
 

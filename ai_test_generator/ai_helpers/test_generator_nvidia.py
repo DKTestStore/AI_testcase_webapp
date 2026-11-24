@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -168,14 +168,16 @@ def _text_from(resp) -> str:
 
 def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
              max_output_tokens: Optional[int] = None, model_name: Optional[str] = None,
+             images: Optional[List[Dict[str, Any]]] = None,
              _sleep=time.sleep) -> Tuple[str, Dict[str, Any]]:
     model = (model_name or "").strip() or _model()
     base = _base_url()
     print(f"Generating with NVIDIA (model={model}, host={base})... please wait.\n")
+    from .vision_content import openai_chat_user_content
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "user", "content": openai_chat_user_content(user_content, images)})
     temp = _settings_temperature()
     if temp is None:
         temp = temperature
