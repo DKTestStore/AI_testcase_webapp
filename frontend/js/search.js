@@ -180,7 +180,7 @@ function gsRemember(q) { q = (q || "").trim(); if (!q) return; const r = gsRecen
 function gsForget(q) { localStorage.setItem(GS_KEY, JSON.stringify(gsRecent().filter((x) => x.q !== q))); }
 const gsAgo = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const GS_PAGES = [
-  ["input", "📝", "Input", "Step 1 · Jira / local text / Excel"], ["generate", "⚡", "Generate", "Step 2"], ["review", "✅", "Review test cases", "Step 3"],
+  ["input", "📝", "Input", "Step 1 · Jira / local text / screenshots / Excel"], ["generate", "⚡", "Generate", "Step 2"], ["review", "✅", "Review test cases", "Step 3"],
   ["acs", "🔎", "Acceptance criteria search", "Search ACs, coverage & linked test cases"], ["qtest", "⬆", "qTest Upload", "Step 4 · upload & RTM"],
   ["history", "🕘", "Run history", "Past runs and batches"], ["tokens", "📊", "Token Usage", "Gemini token ledger"], ["setup", "✓", "Setup checklist", "Configuration status"],
   ["settings", "⚙", "Settings", "Gemini key & model, Jira, qTest, default prompt, history limit"],

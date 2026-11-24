@@ -27,6 +27,7 @@ An AI-assisted manual test case generator. Turn a **Jira story** (or pasted / up
 15. [Prompt templates](#prompt-templates-multi-select)
 16. [Review tools](#review-tools-export-edit-mode-traceability-matrix-type-tags-version-history-quality-score)
 17. [Record (Playwright)](#record-feature--record-on-the-input-step--extra-setup)
+    · [Screenshot + Notes](#screenshot--notes-input)
 18. [Voice input](#voice-input)
 19. [Help Assistant](#help-assistant)
 20. [Floating windows](#floating-windows)
@@ -89,6 +90,14 @@ python -m playwright install chromium  # Chromium + ffmpeg for evidence video
 
 - **Windows / macOS:** visible window; falls back to installed Chrome/Edge if Playwright Chromium is missing.
 - **Linux:** needs `DISPLAY` / `WAYLAND_DISPLAY`. Headless-only hosts cannot interact with Record. `ATG_REC_HEADLESS=1` forces headless (CI). `ATG_REC_CHROME=<path>` selects a Chrome executable.
+
+### Screenshot + Notes input
+
+On **Input**, the **Screenshot + Notes** tab sits next to Jira / Local text / Record. Paste (`Ctrl+V`), drag-and-drop, or browse one or more screenshots (up to 12; large images are downscaled in the browser), add captions, optional feature notes, a module / Story ID, and focus chips. There is no Generate button on Step 1 — **Continue to Generate →** opens the existing Generate screen with a compact summary (mode · iteration · screenshot count).
+
+Use a **vision-capable** model (Gemini, OpenAI GPT-4o, Claude, or a vision model on Groq / NVIDIA / Ollama). A text-only model shows a warning with a quick switch and the API returns a clear error instead of a silent failure. Optional overrides: `ATG_VISION_MODELS` and `ATG_TEXT_ONLY_MODELS` (comma-separated name substrings).
+
+After the first generation you can return to Input, add more screenshots, and continue. On iteration 2+ a choice appears: **Generate a New Test Case** (appends a new case) or **Continue as Same Test** (extends the active test, e.g. TC-001, with new steps). Results still land on the existing **Review** screen. Screenshot bytes stay on the live session only — run history keeps captions, notes, and the count, not the image data.
 
 ### Configuration keys (`ai_test_generator/.env`)
 
@@ -169,6 +178,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit, 
 | Token usage | Per-provider ledger (Mode, provider, model, action, date filters; pagination 10/25/50/100; delete / delete-older; Export CSV). **Calculator** tab (`#tokens/calculator`) counts tokens (coloured tokens, Token IDs, compare enabled models, over-limit). New rows store estimated vs actual tokens, cost, and `rate_source` (`model` or `legacy_global`); older rows stay on workspace-wide global rates. Dashboard AI token totals still use those global rates. Estimates appear on Generate, AI Review, Regenerate, Automation script and Help; Test data / Boost show **No AI call**. Gemini daily quota file is separate and is not reset by deletes. |
 | Prompt templates | Multi-select templates; Custom prompt overrides |
 | Record | Playwright capture → steps |
+| Screenshot + Notes | Paste/upload screenshots + notes → generate test cases (vision model) |
 | Jira / qTest | Story fetch; upload + RTM (Excel export, retry failed) |
 | Voice input | Teal mic in the header opens a draggable **Voice input** window (minimize / maximize / close). Dictate into whichever field you click on any screen; Start / Pause / Resume / Stop, `Ctrl+Shift+Space`, language picker, configurable voice commands. Browser Web Speech API (Chrome / Edge) — no AI model, no API key. See [Voice input](#voice-input) |
 | Help Assistant | Dark-blue robot-headset icon in the header (right after the voice mic) opens a draggable **Help Assistant** window (minimize to a pill / maximize with conversation history / close). Answers are grounded in this README and `docs/help_faq.md`. **Use Generate provider** follows the current run’s saved provider, or **Settings → Preferences → Default provider** when the run has none (Repo / Excel). Quick-question chips, source citations, and jump buttons to the matching screen or Settings tab. Prefs stay in this browser. See [Help Assistant](#help-assistant) |
@@ -182,7 +192,7 @@ Non-secret app settings (history limit, duplicate threshold, token rates/limit, 
 
 The sidebar is grouped (no section captions): **Dashboard** and **Setup checklist**; workflow steps 1–4 (**Input**, **Generate**, **Review**, **qTest Upload**) plus **Run history**; **Requirements**, **Test Case Repo**, **Automation Scripts**, **Test Runs**; **Prompt templates**, **Token Usage**, **Settings**. A step unlocks once the previous one has data. Projects / Traceability stay hidden (reachable from the Requirements area). “NEW” badges are not shown; the Run history count badge remains. Each step page can show the **Ticket / Story ID** pill. The sidebar footer shows run id / story / case count. The project switcher stays under the brand, with Lucide icons on every visible item (workflow steps also show numbered badges 1–4).
 
-1. **Input:** *Jira Story* (fetch), *Local text*, or *Upload Excel* (skips Generate). Optional **Record**.
+1. **Input:** *Jira Story* (fetch), *Local text*, *Screenshot + Notes*, or *Upload Excel* (skips Generate). Optional **Record**.
 2. **Generate:** pick **Provider** + Default / Custom prompt (or templates from Input). Optional AI Reviewer. Token usage card.
 3. **Review:** edit, map ACs, generate test data, boost coverage, save Excel; **Save to Test Case Repo** / **Execute now**; **Generate Automation Script** (also on the bulk bar and in the Test Case Repo). The Review badge shows the Generate provider (or the Settings default when a Repo / Excel run has none).
 4. **qTest Upload:** Preview payload → Confirm Upload; **RTM** tab for Story → AC → TC → qTest IDs. Test data is appended into each step description so it reaches qTest without a new column.

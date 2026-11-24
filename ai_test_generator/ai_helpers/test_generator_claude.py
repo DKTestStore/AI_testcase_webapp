@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -39,8 +39,15 @@ def _max_tokens() -> int:
         return 8192
 
 
+
+def __claude_content(user_content, images=None):
+    from .vision_content import claude_user_content
+    return claude_user_content(user_content, images)
+
+
 def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
-             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+             max_output_tokens: Optional[int] = None, model_name: Optional[str] = None,
+             images: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, Dict[str, Any]]:
     key = _key()
     model = (model_name or "").strip() or _model()
     if not key:
@@ -58,7 +65,7 @@ def complete(system_prompt: str, user_content: str, *, temperature: float = 0.2,
         "model": model,
         "max_tokens": max_tok,
         "temperature": temperature,
-        "messages": [{"role": "user", "content": user_content}],
+        "messages": [{"role": "user", "content": __claude_content(user_content, images)}],
     }
     if system_prompt:
         body["system"] = system_prompt

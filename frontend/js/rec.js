@@ -29,7 +29,7 @@ function recAddTab(v) {
   const local = $('button[data-m="local"]', seg); local ? local.after(b) : seg.appendChild(b);
 }
 function recSeg() {
-  return `<div class="seg"><button data-m="jira">Jira Story</button><button data-m="local">Local text</button><button data-m="record" class="rec-tab a">⏺ Record</button><button data-m="excel">⬆ Upload test cases (Excel)</button><button data-m="batch" class="bm-tab" title="Open the separate Batch workspace (multiple stories)">▦ Batch mode</button></div>`;
+  return `<div class="seg"><button data-m="jira">Jira Story</button><button data-m="local">Local text</button><button data-m="record" class="rec-tab a">⏺ Record</button><button data-m="screenshot">Screenshot + Notes</button><button data-m="excel">⬆ Upload test cases (Excel)</button><button data-m="batch" class="bm-tab" title="Open the separate Batch workspace (multiple stories)">▦ Batch mode</button></div>`;
 }
 function recBindSeg(v) {
   $$(".seg button", v).forEach((b) => (b.onclick = () => { if (b.dataset.m === "record") return; if (b.dataset.m === "batch") return guarded(b, enterBatch); S.inputMode = b.dataset.m; render(); }));
